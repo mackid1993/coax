@@ -1,21 +1,23 @@
 name: image
 
-# Builds linux/amd64 + linux/arm64 and publishes to ghcr.io/mackid1993/coax.
-#   push to main  -> :main (testing only)
-#   tag v1.2.3    -> :1.2.3 and :1.2
-# No "latest" tag is ever published.
+# Two paths share one Dockerfile:
+#   push to main / manual run -> build linux/amd64, smoke-test it, and upload it as a
+#                                 workflow artifact (coax-image.tar.gz). Nothing is published.
+#   tag v1.2.3                 -> build linux/amd64 + linux/arm64 and publish
+#                                 ghcr.io/mackid1993/coax:1.2.3 and :1.2. No "latest" tag.
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: image-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -27,11 +29,70 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - run: |
-          python -m pip install --require-hashes --no-deps --only-binary=:all: -r requirements.txt
-      - run: python -m unittest discover tests -v
+      - name: Install pinned dependencies
+        run: "python -m pip install --require-hashes --no-deps --only-binary=:all: -r requirements.txt"
+      - name: Unit tests
+        run: python -m unittest discover tests -v
 
-  image:
+  # Test build: amd64 only, started once and checked, saved as an artifact. Not published.
+  test-image:
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build (amd64)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: coax:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -eu
+          # Let Docker create ./data as root, the way a first-time user would.
+          docker run -d --name coax -p 7780:7780 -v "$PWD/data:/data" coax:test
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7780/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:7780/healthz
+          curl -fsS http://127.0.0.1:7780/ | grep -qi "coax"
+          curl -fsS http://127.0.0.1:7780/api/config >/dev/null
+          docker exec coax ffmpeg -hide_banner -encoders | grep -E "h264_(vaapi|nvenc)"
+          docker exec coax python -c "import cryptography, requests; print('python deps ok')"
+          test -f data/config.json
+
+      - name: Container log
+        if: always()
+        run: docker logs coax 2>&1 | tail -n 100 || true
+
+      - name: Save image
+        run: docker save coax:test | gzip -1 > coax-image.tar.gz && ls -lh coax-image.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coax-image-${{ github.sha }}
+          path: coax-image.tar.gz
+          retention-days: 7
+          compression-level: 0
+
+  # Release: multi-arch, published to GHCR. Only for version tags.
+  release:
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -63,7 +124,6 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
