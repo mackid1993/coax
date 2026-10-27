@@ -953,7 +953,7 @@ function streamsModal(c) {
   });
   const el = m.el;
   const draw = () => {
-    $("#bList", el).innerHTML = streams.length ? streams.map((s, i) => `<div class="backup-item ${i === 0 ? "primary" : ""} ${s.missing ? "missing" : ""}" draggable="true" data-i="${i}">
+    $("#bList", el).innerHTML = streams.length ? streams.map((s, i) => `<div class="backup-item ${i === 0 ? "primary" : ""} ${s.missing ? "missing" : ""}" data-i="${i}">
       <button class="drag-handle" data-bdrag aria-label="Move ${esc(s.name || s.stream_id)}, Alt plus arrow keys">${icon("grip")}</button>
       <span class="order">${i + 1}</span>
       <span style="flex:1;min-width:0"><span class="ellip" style="display:block;font-weight:560" data-pop="${esc(s.name || s.stream_id)}">${esc(s.name || s.stream_id)}</span><span class="faint small">${esc(providerName(S.providers, s.provider))} · <span class="num">${esc(s.stream_id)}</span>${s.missing ? ' · <span style="color:var(--bad)">vanished</span>' : ""}</span></span>
@@ -968,19 +968,45 @@ function streamsModal(c) {
   };
   const resultHtml = (s, extra = "") => `<button type="button" class="result" data-add='${esc(JSON.stringify({ provider: s.provider, stream_id: String(s.stream_id), name: s.name, group: s.group }))}'>${logo(s.logo, s.name, "logo-sm")}<span class="r-main"><span class="r-title ellip">${esc(s.name)}</span><br><span class="r-sub">${esc(providerName(S.providers, s.provider))}${s.group ? ` · ${esc(s.group)}` : ""}${s.reason ? ` · ${esc(s.reason)}` : ""}</span></span>${extra ? `<span class="badge">${esc(extra)}</span>` : ""}${icon("plus", 'style="width:16px;height:16px;color:var(--accent)"')}</button>`;
   draw();
-  let dragI = null;
-  el.addEventListener("dragstart", (e) => { const it = e.target.closest(".backup-item"); if (it) { dragI = Number(it.dataset.i); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "x"); it.classList.add("dragging"); } });
-  el.addEventListener("dragover", (e) => { if (dragI != null && e.target.closest(".backup-item")) e.preventDefault(); });
-  el.addEventListener("drop", (e) => {
+  // Reorder with pointer events instead of HTML drag-and-drop: the list reorders live as you move,
+  // gaps between items and dropping outside an item still count, and it works the same in every browser.
+  const list = $("#bList", el);
+  let drag = null;
+  list.addEventListener("pointerdown", (e) => {
     const it = e.target.closest(".backup-item");
-    if (!it || dragI == null) return;
-    e.preventDefault();
-    const to = Number(it.dataset.i);
-    const [x] = streams.splice(dragI, 1);
-    streams.splice(to, 0, x);
-    dragI = null; draw();
+    if (!it || e.button !== 0 || e.target.closest("[data-rm]")) return;
+    drag = { i: Number(it.dataset.i), y: e.clientY, on: false, id: e.pointerId };
   });
-  el.addEventListener("dragend", () => { dragI = null; $$(".dragging", el).forEach((x) => x.classList.remove("dragging")); });
+  list.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.on) {
+      if (Math.abs(e.clientY - drag.y) < 4) return;
+      drag.on = true;
+      list.setPointerCapture(e.pointerId);
+      list.classList.add("reordering");
+      list.querySelector(`.backup-item[data-i="${drag.i}"]`)?.classList.add("dragging");
+    }
+    e.preventDefault();
+    const items = [...list.querySelectorAll(".backup-item")];
+    // New position = how many of the other rows have their middle above the pointer.
+    let to = 0;
+    items.forEach((it, k) => { if (k !== drag.i) { const r = it.getBoundingClientRect(); if (e.clientY > r.top + r.height / 2) to++; } });
+    if (to === drag.i) return;
+    const [x] = streams.splice(drag.i, 1);
+    streams.splice(to, 0, x);
+    drag.i = to;
+    draw();
+    list.querySelector(`.backup-item[data-i="${to}"]`)?.classList.add("dragging");
+  });
+  const endDrag = (e) => {
+    if (!drag || (e && e.pointerId !== drag.id)) return;
+    if (drag.on) { try { list.releasePointerCapture(drag.id); } catch {} }
+    drag = null;
+    list.classList.remove("reordering");
+    $$(".dragging", list).forEach((x) => x.classList.remove("dragging"));
+  };
+  list.addEventListener("pointerup", endDrag);
+  list.addEventListener("pointercancel", endDrag);
   el.addEventListener("keydown", (e) => {
     const h = e.target.closest("[data-bdrag]");
     if (!h || !e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;

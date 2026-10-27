@@ -1424,7 +1424,7 @@ class Handler(BaseHTTPRequestHandler):
         limit = parse_int(self.query.get("limit"), "limit", 200, 1, 5000)
         items = load_xmltv_ids(self.app.store.data_dir, pid)
         if text:
-            items = [i for i in items if text in i["id"].lower() or text in i["name"].lower()]
+            items = search_xmltv_items(items, text)
         return {"provider": pid, "total": len(items), "items": items[:limit]}
 
     # ------------------------------------------------------------ XMLTV sources
@@ -1902,6 +1902,36 @@ def wake_scheduler():
             scheduler.wake()
     except Exception:  # noqa: BLE001 - the scheduler is optional
         pass
+
+
+_XWORD = re.compile(r"[a-z0-9]+")
+
+
+def _xwords(text):
+    """Lowercase words of an XMLTV id or name, without provider prefixes like "US|" or "ENG|"."""
+    text = re.sub(r"^\s*[A-Za-z.]{1,6}\s*\|\s*", "", text or "")
+    return _XWORD.findall(text.lower())
+
+
+def search_xmltv_items(items, text):
+    """Word search: every item sharing a word with the query, best first.
+
+    The whole phrase is not required, so "Chicago Bears" finds "CBS 2 CHICAGO IL (WBBM)" even though the
+    guide never says "Bears". Ranked by how many query words match, then whole-phrase hits, then shorter names.
+    """
+    words = [w for w in _xwords(text) if w]
+    if not words:
+        return items
+    phrase = " ".join(words)
+    scored = []
+    for item in items:
+        hay = set(_xwords(item["id"])) | set(_xwords(item["name"]))
+        joined = " ".join(_xwords(item["name"]))
+        hits = sum(1 for w in words if w in hay or any(h.startswith(w) for h in hay))
+        if hits:
+            scored.append((-hits, 0 if phrase in joined else 1, len(item["name"]), item))
+    scored.sort(key=lambda x: x[:3])
+    return [x[3] for x in scored]
 
 
 def load_xmltv_ids(data_dir, provider_id):

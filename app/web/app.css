@@ -686,3 +686,9 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
 .lineup-title h3 { font-size: 16px; margin: 0; }
 .lineup-head > .row { flex: none; }
 .lineup-card .btn { white-space: nowrap; }
+
+/* Backup order: drag anywhere on a row; the list reorders live. */
+#bList .backup-item { cursor: grab; touch-action: none; user-select: none; }
+#bList .backup-item [data-rm] { cursor: pointer; }
+#bList.reordering, #bList.reordering .backup-item { cursor: grabbing; }
+#bList .backup-item.dragging { opacity: .85; border-color: var(--accent); box-shadow: 0 6px 18px rgb(0 0 0 / .35); }

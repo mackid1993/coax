@@ -628,3 +628,18 @@ class InternalAndStream(ApiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class XmltvWordSearchTest(unittest.TestCase):
+    def test_partial_phrase_matches_by_words(self):
+        from app.server import search_xmltv_items
+        items = [
+            {"id": "loc.CBS (WBBM) Chicago, IL", "name": "US| CBS 2 CHICAGO IL (WBBM)"},
+            {"id": "NFLNetwork.us", "name": "US| NFL NETWORK HD"},
+            {"id": "FOX32WFLD.us", "name": "ENG| FOX CHICAGO (WFLD)"},
+        ]
+        got = [i["id"] for i in search_xmltv_items(items, "Chicago Bears")]
+        self.assertEqual(set(got), {"loc.CBS (WBBM) Chicago, IL", "FOX32WFLD.us"})
+        self.assertEqual(search_xmltv_items(items, "cbs chicago")[0]["id"], "loc.CBS (WBBM) Chicago, IL")
+        self.assertEqual(search_xmltv_items(items, "nfl net")[0]["id"], "NFLNetwork.us")
+        self.assertEqual(search_xmltv_items(items, "zzz"), [])
