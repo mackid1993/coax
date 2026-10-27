@@ -185,6 +185,25 @@ confidence, XMLTV id picker), **Lineups**, **Settings** (base URL, Channels DVR 
 help text, join-behind and shutdown delay), **Status** (live sessions, line usage, last refresh results, log
 tail).
 
+**One-screen channel setup (the main screen).** Picking channels, Gracenote mapping and backup streams happen
+together on one screen, in one pass, so setting up a lineup takes minutes:
+- Left: the catalog for the selected groups, searchable, multi-select. "Add selected" creates channels.
+- Main table, one row per channel: logo, number, name, enabled toggle, **Guide** cell (Gracenote match with
+  confidence badge, or XMLTV id, or none), **Backups** cell (ordered chips of backup streams with provider name),
+  drag handle for order.
+- **One button, "Auto-match", runs both matchers for every selected row at once**: Gracenote suggestions
+  (`app/guide/gracenote.bulk_suggest`, ported from the reference matchers) and backup-stream suggestions
+  (`app/backups.py`: `suggest(channel, catalogs) -> [{"provider","stream_id","name","score","reason"}]`, ported
+  from `reference/dispatcharr_backup_streams.py` `find_backups`: name cleaning, tvg-id match, similarity, across
+  every provider and line, excluding the channel's own streams). Results fill the table as pending suggestions.
+- High-confidence suggestions are pre-checked; the user reviews, then "Accept all checked" saves everything in one
+  request. Each cell can be opened to pick a different candidate, search Gracenote by hand, or add/reorder/remove
+  backups by drag and drop.
+- Filters: unmatched guide, no backups, low confidence. Counters at the top ("212 channels, 198 guide matched,
+  180 with backups").
+- API: `POST /api/automatch` with channel ids -> `{channel_id: {"guide": [...], "backups": [...]}}`, and
+  `POST /api/channels/apply` to save guide and backup choices for many channels at once.
+
 **It must look great, not like a default admin page.** Spend real effort on design:
 - A deliberate visual identity that alludes to coaxial cable and broadcast TV without using any trademarked
   names: a dark theme by default with a light theme toggle, one confident accent color, subtle depth (layered
