@@ -137,6 +137,7 @@ function renderFrame() {
       <button class="btn btn-primary" data-act="automatch" title="Gracenote and backup suggestions for the selected rows (or all visible)">${icon("wand")}Auto-match</button>
     </div>
   </div>
+  ${S.config && !(S.config.server?.base_url || "").trim() ? `<div class="callout" style="margin-bottom:14px">${icon("alert")}<div><b>Set the Base URL first.</b> Channels DVR needs it to reach coax. <a href="#/settings">Open Settings</a></div></div>` : ""}
   <div class="counters">
     ${counter("Channels", k.total, `${fmtInt(k.enabled)} enabled`)}
     ${counter("Guide matched", k.guide, pctOf(k.guide, k.total), "unmatched")}

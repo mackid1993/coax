@@ -368,6 +368,29 @@ def find_lineup(cfg, lineup_id):
     raise not_found("unknown lineup %s" % lineup_id)
 
 
+def fix_url(value):
+    """Trim, repair 'http:/host' to 'http://host', drop trailing slashes."""
+    text = str(value or "").strip()
+    text = re.sub(r"^(https?):/*", lambda m: m.group(1).lower() + "://", text, flags=re.I)
+    return text.rstrip("/")
+
+
+def check_base_url(url):
+    """Refuse a Base URL coax cannot reach itself at (catches typos and wrong ports)."""
+    if os.environ.get("COAX_SKIP_URL_CHECK") == "1":  # unit tests use fake hosts
+        return
+    if not re.match(r"^https?://[^\s/]+", url):
+        raise bad_request("Base URL must look like http://192.168.1.50:7780")
+    try:
+        with urllib.request.urlopen(url + "/healthz", timeout=4) as r:
+            if r.status == 200 and r.read(16).strip() == b"ok":
+                return
+    except Exception as exc:  # noqa: BLE001
+        raise bad_request("coax can't reach itself at %s (%s). Check the address and port." %
+                          (url, getattr(exc, "reason", None) or type(exc).__name__))
+    raise bad_request("%s answered, but it is not this coax" % url)
+
+
 def channel_fields_from_stream(provider_id, stream):
     from app.names import clean_name
     tvg_id = stream.get("tvg_id") or ""
@@ -643,10 +666,7 @@ class Handler(BaseHTTPRequestHandler):
         cfg = self.app.store.get()
         find_lineup(cfg, lineup_id)
         if not (cfg["server"].get("base_url") or "").strip():
-            host = (self.headers.get("Host") or "").strip()
-            if host:
-                cfg = copy.deepcopy(cfg)
-                cfg["server"]["base_url"] = "http://" + host
+            raise ApiError(409, "Set the Base URL in coax Settings first")
         text = lazy("app.guide.output").m3u(cfg, lineup_id)
         self._send_bytes(200, text.encode("utf-8"), "audio/x-mpegurl; charset=utf-8", {"Cache-Control": "no-cache"})
 
@@ -738,6 +758,18 @@ class Handler(BaseHTTPRequestHandler):
     def h_config_put(self):
         body = self._body_object()
 
+        server = body.get("server") if isinstance(body.get("server"), dict) else None
+        if isinstance(body.get("channels_dvr"), dict) and "url" in body["channels_dvr"]:
+            body["channels_dvr"]["url"] = fix_url(body["channels_dvr"]["url"])
+        if server is not None and "base_url" in server:
+            server["base_url"] = fix_url(server["base_url"])
+            if not server["base_url"]:
+                raise bad_request("Base URL is required: how Channels DVR reaches coax, e.g. http://192.168.1.50:7780")
+            check_base_url(server["base_url"])
+        for src in body.get("xmltv_sources") or []:
+            if isinstance(src, dict) and "url" in src:
+                src["url"] = fix_url(src["url"])
+
         def mutate(merged):
             configmod.unmask(body, merged)
             for key, value in body.items():
@@ -784,7 +816,10 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(provider.get(key), str):
                 provider[key] = provider[key].strip()
         if isinstance(provider.get("server"), str):
-            provider["server"] = provider["server"].rstrip("/")
+            provider["server"] = fix_url(provider["server"])
+            for k in ("m3u_url", "xmltv_url"):
+                if provider.get(k):
+                    provider[k] = fix_url(provider[k])
         if provider.get("type") == "m3u" and not provider.get("lines"):
             provider["lines"] = [dict(configmod.default_line(), name="Default", max_streams=0)]
         lines = provider.get("lines")

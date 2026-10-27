@@ -150,12 +150,12 @@ function editModal(p) {
         <button type="button" class="seg-accent" data-type="m3u" aria-pressed="${d.type === "m3u"}">M3U playlist</button></div></div>
       <div class="form-grid">
         <div class="field"><label for="fName">Name</label><input class="input" id="fName" value="${esc(d.name)}" placeholder="My provider" required autofocus></div>
-        <div class="field" data-x><label for="fServer">Server URL</label><input class="input mono" id="fServer" value="${esc(d.server)}" placeholder="http://host:80"></div>
-        <div class="field" data-m><label for="fM3u">M3U URL</label><input class="input mono" id="fM3u" value="${esc(d.m3u_url)}" placeholder="http://host/playlist.m3u"></div>
-        <div class="field"><label for="fXmltv">XMLTV URL <span class="faint">(optional)</span></label><input class="input mono" id="fXmltv" value="${esc(d.xmltv_url)}" placeholder="Xtream: built from the first line"></div>
+        <div class="field" data-x><label for="fServer">Server URL</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="fServer" value="${esc(d.server)}" placeholder="http://host:80"></div>
+        <div class="field" data-m><label for="fM3u">M3U URL</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="fM3u" value="${esc(d.m3u_url)}" placeholder="http://host/playlist.m3u"></div>
+        <div class="field"><label for="fXmltv">XMLTV URL <span class="faint">(optional)</span></label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="fXmltv" value="${esc(d.xmltv_url)}" placeholder="Xtream: built from the first line"></div>
         <div class="field"><label for="fFormat">Stream format</label><select class="input" id="fFormat"><option value="hls" ${d.format !== "ts" ? "selected" : ""}>HLS (recommended)</option><option value="ts" ${d.format === "ts" ? "selected" : ""}>MPEG-TS</option></select><span class="hint">Which engine reads this provider's streams.</span></div>
         <div class="field"><label for="fMax">Total stream limit</label><input class="input mono" type="number" min="0" id="fMax" value="${esc(d.max_streams ?? 0)}"><span class="hint">Most streams this provider allows at once across all its lines. 0 means only the per-line limits apply.</span></div>
-        <div class="field"><label for="fRefresh">Refresh every (hours)</label><input class="input mono" id="fRefresh" type="number" min="0" max="720" value="${esc(d.refresh_hours ?? 24)}"><span class="hint">0 means refresh only when you press Refresh.</span></div>
+        <div class="field"><label for="fRefresh">Refresh every (hours)</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="fRefresh" type="number" min="0" max="720" value="${esc(d.refresh_hours ?? 24)}"><span class="hint">0 means refresh only when you press Refresh.</span></div>
         <div class="field full">${switchHtml("", d.auto_add, "Automatically add new streams in selected groups as disabled channels", 'id="fAuto"')}</div>
       </div>
       <hr class="divider" style="margin:4px 0">

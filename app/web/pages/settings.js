@@ -39,9 +39,9 @@ function render() {
   root.innerHTML = `<div class="page-head"><div><div class="eyebrow">Appliance</div><h1>Settings</h1><p class="sub">Everything is stored in <code>/data/config.json</code>. coax is for your LAN only: never expose it to the internet.</p></div></div>
   <div class="stack" id="sForm">
     <section class="card"><div class="card-head"><h2>Addresses</h2></div><div class="card-body form-grid">
-      <div class="field"><label for="sBase">Base URL</label><input class="input mono" id="sBase" data-k="base_url" value="${esc(d.base_url)}" placeholder="http://192.168.1.50:7780"><span class="hint">How your DVR reaches coax. Used in the playlist stream URLs.</span></div>
-      <div class="field"><label for="sDvr">DVR server URL</label><input class="input mono" id="sDvr" data-k="dvr" value="${esc(d.dvr)}" placeholder="http://192.168.1.50:8089"><span class="hint">Needed for Gracenote search, shared viewers and recordings. Port is usually 8089.</span></div>
-      <div class="field"><label for="sPort">Port</label><input class="input mono" id="sPort" data-k="port" type="number" min="1" max="65535" value="${esc(d.port)}"><span class="hint">Takes effect after a restart.</span></div>
+      <div class="field"><label for="sBase">Base URL</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="sBase" data-k="base_url" value="${esc(d.base_url)}" placeholder="http://192.168.1.50:7780"><span class="hint">How your DVR reaches coax. Used in the playlist stream URLs.</span></div>
+      <div class="field"><label for="sDvr">DVR server URL</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="sDvr" data-k="dvr" value="${esc(d.dvr)}" placeholder="http://192.168.1.50:8089"><span class="hint">Needed for Gracenote search, shared viewers and recordings. Port is usually 8089.</span></div>
+      <div class="field"><label for="sPort">Port</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="sPort" data-k="port" type="number" min="1" max="65535" value="${esc(d.port)}"><span class="hint">Takes effect after a restart.</span></div>
     </div></section>
 
     <section class="card"><div class="card-head"><h2>Transcode</h2><span class="badge badge-accent num">${esc(d.transcode)}</span></div><div class="card-body grid" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px">
@@ -103,9 +103,12 @@ function drawSave() {
   $("[data-revert]", root).onclick = () => mount(root);
   $("[data-save]", root).onclick = (e) => busy(e.currentTarget, save);
 }
+const fixUrl = (u) => String(u || "").trim().replace(/^(https?):\/*/i, "$1://").replace(/\/+$/, "");
 const urlOk = (u) => !u || /^https?:\/\/[^\s/]+/.test(u);
 async function save() {
   const d = draft;
+  d.base_url = fixUrl(d.base_url); d.dvr = fixUrl(d.dvr);
+  if (!d.base_url) return toast("Base URL is required", "How Channels DVR reaches coax, e.g. http://192.168.1.50:7780", "warn");
   if (!urlOk(d.base_url)) return toast("Base URL looks wrong", "Use http://IP:PORT", "warn");
   if (!urlOk(d.dvr)) return toast("DVR server URL looks wrong", "Use http://IP:8089", "warn");
   if (d.xmltv_sources.some((s) => !s.url || !urlOk(s.url))) return toast("Check XMLTV sources", "Every source needs an http(s) URL.", "warn");

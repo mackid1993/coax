@@ -2,6 +2,9 @@
 
 import http.client
 import json
+import os as _os
+
+_os.environ.setdefault("COAX_SKIP_URL_CHECK", "1")
 import os
 import shutil
 import socket

@@ -1,6 +1,9 @@
 """Tests for app.channels_dvr against a fake Channels DVR server on localhost."""
 
 import json
+import os as _os
+
+_os.environ.setdefault("COAX_SKIP_URL_CHECK", "1")
 import os
 import shutil
 import socketserver
