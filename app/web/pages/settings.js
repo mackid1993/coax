@@ -60,7 +60,7 @@ function render() {
       </div></div></section>
 
 
-    <section class="card"><div class="card-head"><div><h2>Auto-match region</h2><p class="faint small">Where you watch from. Auto-match uses it for guide matching: it only trusts Gracenote stations in this area&#39;s lineups, so a channel never matches a station in another country. Backup stream matching compares channel names across your providers and does not use the region.</p></div><button class="btn btn-sm" data-radd>${icon("plus")}Add region</button></div>
+    <section class="card"><div class="card-head"><div><h2>Auto-match region</h2><p class="faint small">Where you watch from, for guide matching: Auto-match only trusts Gracenote stations in these areas&#39; lineups. Add more than one if you watch channels from several countries. Backup streams come only from the groups you picked for each provider.</p></div><button class="btn btn-sm" data-radd>${icon("plus")}Add region</button></div>
       <div class="card-body stack" id="rgList" style="gap:10px">${regionsHtml()}</div></section>
 
     <section class="card"><div class="card-head"><div><h2>Backups</h2><p class="faint small">Copies of every setting, provider, channel and lineup, kept in <code>/data/backups</code>. Restoring backs up the current state first.</p></div><button class="btn btn-sm" data-bknow>${icon("download")}Back up now</button></div>
@@ -159,7 +159,7 @@ const COUNTRIES = [
   ["CRI", "Costa Rica", "10101"], ["BMU", "Bermuda", "HM11"],
 ];
 function regionsHtml() {
-  if (!draft.regions.length) return `<p class="faint small">No region set: guide matching searches all of Gracenote, so stations from other countries can show up and none are pre-checked. Backup stream matching works either way. Add your country and postal code.</p>`;
+  if (!draft.regions.length) return `<p class="faint small">No region set: guide matching searches all of Gracenote, so stations from other countries can show up. Add your country and postal code.</p>`;
   return draft.regions.map((r, i) => `<div class="line-row" style="grid-template-columns:1fr 160px 36px">
     <div class="field"><label>Country</label><select class="input input-sm" data-rc="${i}">${COUNTRIES.map(([c, n]) => `<option value="${c}" ${r.country === c ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="field"><label>Postal code</label><input class="input input-sm mono" data-rp="${i}" value="${esc(r.postal || "")}" placeholder="e.g. 10001"></div>

@@ -1552,14 +1552,21 @@ class Handler(BaseHTTPRequestHandler):
                 except ApiError:
                     entry = None
                 if entry:
-                    catalogs[provider["id"]] = entry["catalog"]
+                    selected = set(provider.get("groups") or [])
+                    catalog = entry["catalog"]
+                    if selected:
+                        # Only streams from the groups picked for this provider can become backups.
+                        catalog = dict(catalog, streams=[s for s in catalog.get("streams") or []
+                                                         if (s.get("group") or "") in selected])
+                    catalogs[provider["id"]] = catalog
             if job:
                 job["phase"], job["done"] = "backups", len(channels)
             for n, channel in enumerate(channels, 1):
                 if job:
                     job["done"] = len(channels) + n
                 try:
-                    out[str(channel["id"])]["backups"] = list(suggest(copy.deepcopy(channel), catalogs) or [])
+                    out[str(channel["id"])]["backups"] = list(
+                        suggest(copy.deepcopy(channel), catalogs) or [])
                 except Exception as exc:  # noqa: BLE001 - one channel never stops the batch
                     log.warning("automatch: backup suggestions for %s failed: %s", channel["name"], exc)
                     out[str(channel["id"])]["backups_error"] = str(exc)
