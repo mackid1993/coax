@@ -7,13 +7,19 @@ normalized to plain strings before it reaches the catalog.
 
 import json
 import logging
+import time
 from urllib.parse import quote, urlencode
 
-from .net import ProviderError, get, redact, secrets_of
+import requests
+import urllib3
+
+from .net import ProviderError, get, read_body, redact, secrets_of
 
 log = logging.getLogger("coax.providers")
 
 UNCATEGORIZED = "Uncategorized"
+# Overall wall-clock limit per player_api.php call, on top of the per-read timeout.
+API_DEADLINE = 120
 
 
 def base_url(server):
@@ -31,7 +37,9 @@ def base_url(server):
 
 
 def first_line(provider):
-    lines = provider.get("lines") or []
+    """The first enabled line (its credentials are used for catalog API calls)."""
+    lines = [line for line in provider.get("lines") or []
+             if isinstance(line, dict) and line.get("enabled", True) is not False]
     if not lines:
         raise ProviderError("provider %s has no lines configured" % provider.get("id", "?"))
     return lines[0]
@@ -70,9 +78,16 @@ def _api(provider, action=None):
     if action:
         params["action"] = action
     label = "Xtream %s" % (action or "account info")
-    resp = get(base_url(provider.get("server")) + "/player_api.php", provider, params=params, label=label)
-    body = resp.content.decode("utf-8-sig", errors="replace").strip()
-    resp.close()
+    deadline = time.monotonic() + API_DEADLINE
+    resp = get(base_url(provider.get("server")) + "/player_api.php", provider, params=params, label=label,
+               stream=True, deadline=deadline)
+    try:
+        raw = read_body(resp, deadline, label)
+    except (requests.RequestException, urllib3.exceptions.HTTPError, OSError) as exc:
+        raise ProviderError("%s failed while reading: %s" % (label, redact(exc, secrets_of(provider))))
+    finally:
+        resp.close()
+    body = raw.decode("utf-8-sig", errors="replace").strip()
     if not body:
         # Some panels answer an empty body for an empty list or a bad login.
         return None

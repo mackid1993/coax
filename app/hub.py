@@ -76,6 +76,8 @@ class Session:
         self.started_at = time.time()
         self.bytes_out = 0
         self.restarts = []          # monotonic times of engine restarts
+        self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
+        self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
         self.proc = None
         self.closed = False
         self._lock = threading.Lock()  # guards proc and closed
@@ -84,8 +86,13 @@ class Session:
 
     def _spawn(self):
         cmd = self.hub._engine_command(self.fmt, self.url, self.engine_ua, self.channel_id)
+        env = dict(os.environ)
+        env["COAX_PORT"] = str(self.hub._port())
+        # Two DVR connections can run the same channel at once; keep their engine state files
+        # apart. The first session keeps the plain names (so files do not pile up in /tmp).
+        env["COAX_SESSION"] = "~%d" % self.instance if self.instance else ""
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
+                                stderr=subprocess.PIPE, start_new_session=True, bufsize=0, env=env)
         threading.Thread(target=self._pump_stderr, args=(proc,), daemon=True,
                          name="coax-log-%s" % self.channel_id).start()
         return proc
@@ -146,7 +153,12 @@ class Session:
                 if self.closed:
                     return
                 if self.proc is None:
-                    self.proc = self._spawn()
+                    try:
+                        self.proc = self._spawn()
+                    except Exception as exc:  # noqa: BLE001
+                        # End the stream; the caller's close() releases the slot.
+                        log.error("[%s] cannot start the engine: %s", self.name, exc)
+                        return
                 proc = self.proc
             fd = proc.stdout.fileno()
             while True:
@@ -194,6 +206,7 @@ class Hub:
         self._lock = threading.Lock()   # guards _slots and _sessions (ah4c tunerLock)
         self._slots = {}                # (provider_id, line_id) -> [Session]
         self._sessions = []
+        self.port = None                # the port coax listens on; main may set it (else config)
 
     def _config(self):
         try:
@@ -224,14 +237,24 @@ class Hub:
                 return False
         return True
 
+    def _port(self):
+        port = _int(self.port) or _int((self._config().get("server") or {}).get("port"))
+        return port if 0 < port < 65536 else 7780
+
+    def _hold_locked(self, session, key):
+        self._slots.setdefault(key, []).append(session)
+
     def _release(self, session):
+        """Give back the session's main slot and every backup slot it holds."""
         with self._lock:
-            key = (session.provider_id, session.line_id)
-            holders = self._slots.get(key, [])
-            if session in holders:
-                holders.remove(session)
-            if not holders:
-                self._slots.pop(key, None)
+            keys = [(session.provider_id, session.line_id)] + list(session.extra_slots)
+            session.extra_slots = []
+            for key in keys:
+                holders = self._slots.get(key, [])
+                if session in holders:
+                    holders.remove(session)
+                if not holders:
+                    self._slots.pop(key, None)
             if session in self._sessions:
                 self._sessions.remove(session)
 
@@ -251,7 +274,9 @@ class Hub:
                         continue
                     # Reserve before building the URL so a concurrent tune cannot take it.
                     session = Session(self, channel_cfg, provider, line, stream, None, client_ip, user_agent)
-                    self._slots.setdefault((provider.get("id"), line.get("id")), []).append(session)
+                    taken = {s.instance for s in self._sessions if str(s.channel_id) == str(session.channel_id)}
+                    session.instance = next(i for i in range(len(taken) + 1) if i not in taken)
+                    self._hold_locked(session, (provider.get("id"), line.get("id")))
                     self._sessions.append(session)
                 try:
                     session.url = self._stream_url(provider, line, str(stream.get("stream_id")))
@@ -270,9 +295,14 @@ class Hub:
     # -- queries --------------------------------------------------------------------
 
     def backup_urls(self, channel_id):
-        """Every stream of the channel, in order. Streams on the running session's
-        provider use the session's line; other providers use a free line (or their
-        first line; the engine treats busy answers as retry-and-move-on)."""
+        """Every usable stream of the channel, in order, for the engine's failover.
+
+        Streams on the running session's provider use the session's own line (no extra
+        slot). A stream on another provider needs a line slot of its own: the first call
+        reserves one free line per provider for the session (kept in session.extra_slots and
+        released with the session), later calls reuse it. If a provider has no free line,
+        its streams are left out, so no provider ever goes over its line or total limits.
+        Returns [] unless exactly one session runs the channel."""
         cfg = self._config()
         channel_cfg = next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(channel_id)), None)
         if channel_cfg is None:
@@ -280,17 +310,30 @@ class Hub:
         providers = self._providers(cfg)
         plan = []
         with self._lock:
-            own = next((s for s in self._sessions if str(s.channel_id) == str(channel_id)), None)
+            mine = [s for s in self._sessions if str(s.channel_id) == str(channel_id)]
+            if len(mine) != 1:
+                # None: nothing streams this channel, so nothing may connect for it. More than
+                # one (two DVR connections on one channel): the request does not say which
+                # engine asks, so any URL could land on the other session's line. Each engine
+                # then stays on its own stream.
+                return []
+            own = mine[0]
             for stream, provider in self._candidates(channel_cfg, providers):
+                pid = provider.get("id")
                 lines = provider.get("lines") or []
-                if not lines:
-                    continue
-                line = None
-                if own is not None and provider.get("id") == own.provider_id:
+                if pid == own.provider_id:
                     line = next((l for l in lines if l.get("id") == own.line_id), None)
-                if line is None:
-                    line = next((l for l in lines if self._free_locked(provider, l)), lines[0])
-                plan.append((provider, line, str(stream.get("stream_id"))))
+                else:
+                    held = next((lid for p, lid in own.extra_slots if p == pid), None)
+                    line = next((l for l in lines if l.get("id") == held), None) if held is not None else None
+                    if line is None:
+                        line = next((l for l in lines if self._free_locked(provider, l)), None)
+                        if line is not None:
+                            key = (pid, line.get("id"))
+                            self._hold_locked(own, key)
+                            own.extra_slots.append(key)
+                if line is not None:
+                    plan.append((provider, line, str(stream.get("stream_id"))))
         urls = []
         for provider, line, stream_id in plan:
             try:

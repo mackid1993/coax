@@ -1,7 +1,8 @@
 """Catalog cache: download a provider's live streams and keep the last good copy on disk.
 
 Cache file: {data_dir}/cache/catalog-<provider_id>.json
-  {"fetched_at": iso, "groups": [...], "streams": [{"stream_id", "name", "group", "logo", "tvg_id", "url"?}]}
+  {"fetched_at": iso, "groups": [...],
+   "streams": [{"stream_id", "name", "group", "logo", "tvg_id", "url"?, "format"?}]}
 """
 
 import datetime
@@ -138,8 +139,16 @@ def diff(previous, current, selected_groups=()):
     old = {s["stream_id"]: s for s in (previous or {}).get("streams") or []}
     new = {s["stream_id"]: s for s in current.get("streams") or []}
     selected = set(selected_groups or ())
-    added = [sid for sid in new if sid not in old]
-    removed = [sid for sid in old if sid not in new]
+    # Streams whose id changed but whose URL did not (for example the switch from URL-hash ids
+    # to stable M3U ids) are the same stream, not one removal plus one addition.
+    new_by_url = {s["url"]: sid for sid, s in new.items() if s.get("url")}
+    renamed = {}
+    for sid, s in old.items():
+        if sid not in new and s.get("url") in new_by_url and new_by_url[s["url"]] not in old:
+            renamed[sid] = new_by_url[s["url"]]
+    renamed_to = set(renamed.values())
+    added = [sid for sid in new if sid not in old and sid not in renamed_to]
+    removed = [sid for sid in old if sid not in new and sid not in renamed]
     fields = ("name", "logo", "group", "tvg_id", "url")
     updated = sum(1 for sid, s in new.items()
                   if sid in old and any(old[sid].get(f) != s.get(f) for f in fields))
@@ -149,6 +158,7 @@ def diff(previous, current, selected_groups=()):
         "added_selected": [sid for sid in added if new[sid].get("group") in selected],
         "removed_selected": [sid for sid in removed if old[sid].get("group") in selected],
         "updated": updated,
+        "renamed": renamed,  # old stream id -> new stream id, for rewriting channel refs
     }
 
 
@@ -184,6 +194,10 @@ def _load_memo(provider_id):
         return None
     catalog.setdefault("groups", [])
     index = {s.get("stream_id"): s for s in catalog["streams"] if isinstance(s, dict)}
+    # Channel refs saved before stable M3U ids used sha1(url); keep them resolvable.
+    for stream in catalog["streams"]:
+        if isinstance(stream, dict) and stream.get("url"):
+            index.setdefault(m3u.legacy_stream_id(stream["url"]), stream)
     entry = ((path, stat.st_mtime_ns, stat.st_size), catalog, index)
     with _memo_guard:
         _memo[key] = entry

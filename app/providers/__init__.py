@@ -11,11 +11,41 @@ from . import catalog, m3u, scheduler, xtream
 from .net import ProviderError
 
 __all__ = ["catalog", "m3u", "scheduler", "xtream", "ProviderError",
-           "stream_url", "xmltv_url", "test_connection"]
+           "stream_url", "xmltv_url", "test_connection", "stream_format", "usable_lines",
+           "is_enabled"]
 
 
 def _kind(provider):
     return (provider.get("type") or "xtream").lower()
+
+
+def is_enabled(item):
+    """Providers and lines are enabled unless "enabled" is explicitly false."""
+    return isinstance(item, dict) and item.get("enabled", True) is not False
+
+
+def usable_lines(provider):
+    """The provider's enabled lines, in configured order."""
+    return [line for line in (provider or {}).get("lines") or [] if is_enabled(line)]
+
+
+def stream_format(provider, stream):
+    """Engine format for one stream: the stream's own "format" ("hls"/"ts") when the catalog
+    detected one, else the provider's "format".
+
+    `stream` may be a catalog stream dict or a stream id (looked up in the cache).
+    """
+    provider = provider or {}
+    fmt = ""
+    if isinstance(stream, dict):
+        fmt = stream.get("format") or ""
+        if not fmt and stream.get("url"):
+            fmt = m3u.stream_format_for_url(stream["url"])
+    elif stream is not None:
+        cached = catalog.find_stream(provider.get("id"), str(stream))
+        if cached:
+            fmt = cached.get("format") or (m3u.stream_format_for_url(cached["url"]) if cached.get("url") else "")
+    return fmt or (provider.get("format") or "")
 
 
 def stream_url(provider, line, stream_id):
@@ -23,7 +53,8 @@ def stream_url(provider, line, stream_id):
 
     Xtream: {server}/live/{username}/{password}/{stream_id}.ts with the line's credentials.
     M3U: the cached URL, with the line's optional regex search/replace applied.
-    Raises ProviderError when an M3U stream is not in the cache.
+    Raises ProviderError when an M3U stream is not in the cache, or when the line's search
+    pattern does not match the URL (so the caller skips that line).
     """
     if _kind(provider) == "m3u":
         stream = catalog.find_stream(provider.get("id"), stream_id)

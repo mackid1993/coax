@@ -16,7 +16,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Point apt at the fixed snapshot only. Snapshot Release files are past their
 # Valid-Until date by design, so that check is turned off for this archive.
-# intel-media-va-driver-non-free lives in non-free and only exists for amd64.
+# GPU drivers for hardware transcoding:
+#   Intel: intel-media-va-driver-non-free (iHD, Broadwell and newer, non-free) and i965-va-driver
+#          (older Intel graphics). Both exist only for amd64, so they are installed there only.
+#   AMD:   mesa-va-drivers (radeonsi VAAPI), every architecture.
+#   NVIDIA: nothing to install; the NVIDIA Container Toolkit injects the driver libraries at run time.
 RUN set -eux; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*; \
     printf '%s\n' \
@@ -38,7 +42,7 @@ RUN set -eux; \
       > /etc/apt/apt.conf.d/99snapshot; \
     arch="$(dpkg --print-architecture)"; \
     extra=""; \
-    if [ "$arch" = "amd64" ]; then extra="intel-media-va-driver-non-free"; fi; \
+    if [ "$arch" = "amd64" ]; then extra="intel-media-va-driver-non-free i965-va-driver"; fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates \
@@ -50,13 +54,26 @@ RUN set -eux; \
     apt-get dist-clean; \
     rm -rf /var/lib/apt/lists/*
 
+# Fail the build if this ffmpeg cannot drive Intel/AMD (VAAPI) or NVIDIA (NVENC) hardware encoders.
+# Without this, a changed Debian build would silently leave only CPU encoding.
+RUN set -eux; \
+    encoders="$(ffmpeg -hide_banner -encoders)"; \
+    echo "$encoders" | grep -q ' h264_vaapi '; \
+    echo "$encoders" | grep -q ' h264_nvenc '
+
+# NVIDIA Container Toolkit settings (read by the container runtime, not by coax): expose all GPUs and the
+# driver libraries needed for NVENC/NVDEC. They do nothing on hosts without an NVIDIA GPU.
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+
 WORKDIR /opt/coax
 
 COPY requirements.txt ./
 RUN pip install --require-hashes --no-deps --only-binary=:all: -r requirements.txt
 
-# Non-root user. "video" (GID 44 in Debian) is added here; the host's render
-# group GID differs between systems, so pass it with group_add in compose.
+# Non-root user coax (uid/gid 1000). "video" (GID 44 in Debian) is added here; the host's render group
+# GID differs between systems, so docker-entrypoint.sh adds the group of /dev/dri/* at start, and any
+# compose group_add GIDs are kept as well.
 RUN set -eux; \
     groupadd --system --gid 1000 coax; \
     useradd --system --uid 1000 --gid coax --groups video \
@@ -65,8 +82,12 @@ RUN set -eux; \
     chown coax:coax /data
 
 COPY app ./app
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-USER coax
+# No USER line on purpose. The container starts as root only so docker-entrypoint.sh can chown /data
+# (Docker creates a missing ./data owned by root), then it drops to uid/gid 1000 with setpriv before
+# starting coax. coax never runs as root. Running with compose "user: 1000:1000" also works; the
+# entrypoint then skips the chown and just starts coax.
 VOLUME ["/data"]
 EXPOSE 7780
 
@@ -75,5 +96,5 @@ EXPOSE 7780
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:7780/healthz', timeout=4).status == 200 else 1)"]
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "app.main"]

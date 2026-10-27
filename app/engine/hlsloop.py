@@ -68,6 +68,7 @@ def load_settings(path=None):
     tc = c.get("transcode")
     srv = c.get("server")
     port = srv.get("port") if isinstance(srv, dict) else None
+    port = os.environ["COAX_PORT"] if re.fullmatch("[0-9]+", os.environ.get("COAX_PORT", "")) else port  # the port coax really listens on
     try:
         port = int(port)
         if not 0 < port < 65536:
@@ -543,7 +544,7 @@ def fetch(q):
     c = Cipher(algorithms.AES(keys[k[1]]), modes.CBC(iv)).decryptor()
     d = c.update(d) + c.finalize()
     return tsok(q, d[:-d[-1]] if d and 0 < d[-1] <= 16 else d)
-st = "/tmp/hlsloop-" + hashlib.md5(("ch" + chid if chid.isdigit() else src).encode()).hexdigest() + ".json"
+st = "/tmp/hlsloop-" + hashlib.md5(("ch" + chid if chid.isdigit() else src).encode()).hexdigest() + re.sub("[^0-9~]", "", os.environ.get("COAX_SESSION", "")) + ".json"
 last = None
 rseen = None
 seen = collections.deque(maxlen=30)
@@ -775,7 +776,12 @@ def watch():
     jfail = False
     og = None
     jt = None
-    JF = ("/data" if os.access("/data", os.W_OK) else "/tmp") + "/hlsloop-jobs-%s.json" % chid
+    try:
+        os.makedirs("/data/cache", exist_ok=True)
+        JF = "/data/cache" if os.access("/data/cache", os.W_OK) else "/tmp"
+    except Exception:
+        JF = "/tmp"
+    JF += "/hlsloop-jobs-%s.json" % chid
     try:
         for f_ in os.listdir(os.path.dirname(JF)):
             p_ = os.path.join(os.path.dirname(JF), f_)

@@ -186,5 +186,122 @@ class HubTests(unittest.TestCase):
         other.close()
 
 
+    def test_backup_slot_respects_line_limit_and_is_released_once(self):
+        cfg = config([provider("p1", 1), provider("p2", 1)],
+                     [channel(1, [("p1", "a"), ("p2", "b")]), channel(2, [("p2", "c")])])
+        h, _ = make(cfg)
+        s = h.open("uuid-1", "ip", "ua")                          # p1/l1
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])
+        self.assertEqual(s.extra_slots, [("p2", "l1")])
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])  # reused, not doubled
+        used = {(l["provider_id"], l["line_id"]): l["used"] for l in h.line_status()}
+        self.assertEqual(used, {("p1", "l1"): 1, ("p2", "l1"): 1})
+        self.assertIsNone(h.open("uuid-2", "ip", "ua"))           # p2's only line is held for the backup
+        s.close()
+        s.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+        t = h.open("uuid-2", "ip", "ua")
+        self.assertEqual(t.provider_id, "p2")
+        t.close()
+
+    def test_backup_omitted_when_other_provider_is_full(self):
+        cfg = config([provider("p1", 1), provider("p2", 1)],
+                     [channel(1, [("p1", "a"), ("p2", "b")]), channel(2, [("p2", "c")])])
+        h, _ = make(cfg)
+        other = h.open("uuid-2", "ip", "ua")                      # takes p2/l1
+        s = h.open("uuid-1", "ip", "ua")
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a"])
+        self.assertEqual(s.extra_slots, [])
+        other.close()
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])  # free again: reserved now
+        s.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+
+    def test_backup_respects_provider_total_cap(self):
+        p2 = provider("p2", 1, 1)
+        p2["max_streams"] = 1
+        cfg = config([provider("p1", 1), p2], [channel(1, [("p1", "a"), ("p2", "b")]), channel(2, [("p2", "c")])])
+        h, _ = make(cfg)
+        other = h.open("uuid-2", "ip", "ua")                      # p2/l1; p2/l2 is free but p2 is at its cap
+        s = h.open("uuid-1", "ip", "ua")
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a"])
+        for line in h.line_status():
+            if line["provider_id"] == "p2":
+                self.assertLessEqual(line["used"], 1)
+        other.close()
+        s.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+
+    def test_backup_urls_need_exactly_one_session(self):
+        cfg = config([provider("p1", 0), provider("p2", 0)], [channel(1, [("p1", "a"), ("p2", "b")])])
+        h, _ = make(cfg)
+        self.assertEqual(h.backup_urls(1), [])                    # nothing streams it: reserve nothing
+        a = h.open("uuid-1", "ip", "ua")
+        b = h.open("uuid-1", "ip", "ua")
+        self.assertEqual((a.instance, b.instance), (0, 1))
+        self.assertEqual(h.backup_urls(1), [])
+        a.close()
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])
+        b.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+
+    def test_popen_failure_ends_stream_and_close_releases_once(self):
+        h, _ = make(config([provider("p1", 1), provider("p2", 1)], [channel(1, [("p1", "a"), ("p2", "b")])]))
+        real = hubmod.subprocess.Popen
+
+        def boom(*a, **k):
+            raise OSError("no such engine")
+        hubmod.subprocess.Popen = boom
+        try:
+            s = h.open("uuid-1", "ip", "ua")
+            h.backup_urls(1)                                       # also holds p2/l1
+            self.assertEqual(list(s.iter_bytes()), [])
+        finally:
+            hubmod.subprocess.Popen = real
+        self.assertIsNone(s.proc)
+        self.assertEqual(sum(l["used"] for l in h.line_status()), 2)
+        s.close()
+        s.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+        self.assertEqual(h.status(), [])
+
+    def test_engine_env_gets_port_and_session_suffix(self):
+        h, _ = make(config([provider("p1", 0)], [channel(1, [("p1", "a")])]))
+        h.port = 8123
+        seen = []
+        real = hubmod.subprocess.Popen
+
+        def spy(*a, **k):
+            seen.append(k.get("env") or {})
+            return real(*a, **k)
+        hubmod.subprocess.Popen = spy
+        try:
+            a = h.open("uuid-1", "ip", "ua")
+            b = h.open("uuid-1", "ip", "ua")
+            for s in (a, b):
+                next(iter(s.iter_bytes()))
+        finally:
+            hubmod.subprocess.Popen = real
+        a.close()
+        b.close()
+        self.assertEqual([e.get("COAX_PORT") for e in seen], ["8123", "8123"])
+        self.assertEqual([e.get("COAX_SESSION") for e in seen], ["", "~1"])
+        h.port = None
+        h._get_config = lambda: {"server": {"port": 7999}}
+        self.assertEqual(h._port(), 7999)
+
+    def test_shutdown_kills_and_releases(self):
+        h, _ = make(config([provider("p1", 0)], [channel(i, [("p1", str(i))]) for i in (1, 2)]))
+        sessions = [h.open("uuid-%d" % i, "ip", "ua") for i in (1, 2)]
+        readers = [Reader(s) for s in sessions]
+        for r in readers:
+            r.start()
+        self.assertTrue(wait_for(lambda: all(s.proc is not None for s in sessions)))
+        pids = [s.proc.pid for s in sessions]
+        h.shutdown()
+        self.assertFalse(any(alive(pid) for pid in pids))  # synchronous: already reaped
+        self.assertEqual(h.status(), [])
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+
 if __name__ == "__main__":
     unittest.main()

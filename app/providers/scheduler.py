@@ -28,18 +28,44 @@ _wake = threading.Event()
 clock = time.time
 
 
+SAMPLE_IDS = 20  # at most this many ids per list in a stored result (Status page payload)
+
+
 def _refresh_hours(provider):
+    """Hours between automatic refreshes; 0 means manual only. Missing or invalid -> default."""
+    value = provider.get("refresh_hours")
+    if value is None or value == "":
+        return DEFAULT_REFRESH_HOURS
     try:
-        hours = float(provider.get("refresh_hours") or DEFAULT_REFRESH_HOURS)
+        hours = float(value)
     except (TypeError, ValueError):
-        hours = DEFAULT_REFRESH_HOURS
+        return DEFAULT_REFRESH_HOURS
+    if hours != hours or hours < 0:  # NaN or negative
+        return DEFAULT_REFRESH_HOURS
+    if hours == 0:
+        return 0.0
     return max(hours, 0.25)
 
 
+def is_manual(provider):
+    """refresh_hours 0: only refreshed on request (or once when there is no cache)."""
+    return _refresh_hours(provider) == 0
+
+
+def is_enabled(provider):
+    return provider.get("enabled", True) is not False
+
+
+def _summarize_ids(ids):
+    ids = list(ids or [])
+    return len(ids), [str(i) for i in ids[:SAMPLE_IDS]]
+
+
 def last_results():
-    """Copy of the last refresh outcome per provider id."""
+    """Copy of the last refresh outcome per provider id (counts plus a few sample ids)."""
     with _state_lock:
-        return {pid: dict(result) for pid, result in _results.items()}
+        return {pid: {k: (list(v) if isinstance(v, list) else v) for k, v in result.items()}
+                for pid, result in _results.items()}
 
 
 def _record(provider_id, result):
@@ -61,13 +87,20 @@ def refresh_provider(provider, on_refresh=None):
         summary.update(ok=False, error=message, seconds=round(clock() - started, 1))
         _record(pid, summary)
         return summary
-    summary.update(
-        ok=True, error="", seconds=round(clock() - started, 1),
-        streams=len(result["streams"]), groups=len(result["groups"]),
-        added=result["added"], removed=result["removed"],
-        added_selected=result["added_selected"], removed_selected=result["removed_selected"],
-        updated=result["updated"],
-    )
+    summary.update(ok=True, error="", seconds=round(clock() - started, 1),
+                   streams=len(result["streams"]), groups=len(result["groups"]),
+                   updated=result["updated"])
+    # Counts plus a small sample: full id lists of a 50k-stream provider would make every
+    # Status poll multi-megabyte. The on_refresh hook still gets the full result.
+    for key in ("added", "removed", "added_selected", "removed_selected"):
+        count, sample = _summarize_ids(result.get(key))
+        summary[key + "_count"] = count
+        summary[key + "_sample"] = sample
+    # Same shape as the server's manual refresh result (Status page fields).
+    summary["added"] = summary["added_selected_count"]
+    summary["vanished_count"] = summary["removed_count"]
+    summary["vanished"] = summary["removed_sample"]
+    summary["renamed_count"] = len(result.get("renamed") or {})
     _record(pid, summary)
     if on_refresh is not None:
         # Hook for the web layer, e.g. auto_add of new streams as disabled channels.
@@ -93,15 +126,23 @@ def refresh_guide(config):
 
 
 def _is_due(provider, now, next_retry):
-    """Due when the cache is missing or older than refresh_hours, and not in failure backoff."""
+    """Due when the cache is missing or older than refresh_hours, and not in failure backoff.
+
+    Disabled providers are never due. refresh_hours 0 (manual) is due only without a cache.
+    """
+    if not is_enabled(provider):
+        return False
     pid = str(provider.get("id"))
     if now < next_retry.get(pid, 0):
         return False
     cached = catalog.load(pid)
     if cached is None:
         return True
+    hours = _refresh_hours(provider)
+    if hours == 0:
+        return False
     age = catalog.age_hours(cached)
-    return age is None or age >= _refresh_hours(provider)
+    return age is None or age >= hours
 
 
 def run_once(get_config, state, on_refresh=None):
@@ -131,7 +172,8 @@ def run_once(get_config, state, on_refresh=None):
             next_retry.pop(pid, None)
             refreshed = True
         else:
-            wait = min(RETRY_AFTER_FAILURE, _refresh_hours(provider) * 3600)
+            hours = _refresh_hours(provider)
+            wait = RETRY_AFTER_FAILURE if hours == 0 else min(RETRY_AFTER_FAILURE, hours * 3600)
             next_retry[pid] = clock() + wait
 
     guide_due = clock() - state.get("guide_at", 0) >= GUIDE_REFRESH_HOURS * 3600

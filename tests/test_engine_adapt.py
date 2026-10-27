@@ -121,6 +121,8 @@ class LoadSettingsTest(unittest.TestCase):
         self.path = os.path.join(self.tmp.name, "config.json")
         old = os.environ.get("COAX_CONFIG")
         self.addCleanup(lambda: os.environ.__setitem__("COAX_CONFIG", old) if old is not None else os.environ.pop("COAX_CONFIG", None))
+        old_port = os.environ.pop("COAX_PORT", None)
+        self.addCleanup(lambda: os.environ.__setitem__("COAX_PORT", old_port) if old_port is not None else os.environ.pop("COAX_PORT", None))
 
     def write(self, data):
         with open(self.path, "w") as f:
@@ -161,6 +163,29 @@ class LoadSettingsTest(unittest.TestCase):
         for name in ENGINES:
             with self.subTest(engine=name):
                 self.assertEqual(self.load(name, self.path), ("", "off", 8123))
+
+    def test_coax_port_env_overrides_config(self):
+        self.write({"server": {"port": 7999}})
+        for name in ENGINES:
+            for env, want in (("8124", 8124), ("", 7999), ("abc", 7999), ("-5", 7999)):
+                with self.subTest(engine=name, env=env):
+                    os.environ["COAX_PORT"] = env
+                    self.assertEqual(self.load(name, self.path), ("", "off", want))
+
+
+class EngineFilesTest(unittest.TestCase):
+    def test_job_files_live_in_data_cache(self):
+        for name in ENGINES:
+            with self.subTest(engine=name):
+                src = engine_source(name)
+                self.assertIn('os.makedirs("/data/cache", exist_ok=True)', src)
+                self.assertIn('JF += "/%s-jobs-%%s.json" %% chid' % name, src)
+                self.assertNotIn('("/data" if', src)
+
+    def test_state_file_takes_session_suffix(self):
+        for name in ENGINES:
+            with self.subTest(engine=name):
+                self.assertIn('re.sub("[^0-9~]", "", os.environ.get("COAX_SESSION", ""))', engine_source(name))
 
 
 class InternalApiTest(unittest.TestCase):

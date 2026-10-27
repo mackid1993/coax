@@ -161,7 +161,51 @@ class SchedulerTests(CatalogTestCase):
         catalog.atomic_write_json(catalog.cache_path("p1"), data)
         self.set_streams(("1", "A", "1"), ("2", "B", "1"))
         scheduler.run_once(lambda: self.config, {})
-        self.assertEqual(scheduler.last_results()["p1"]["added"], ["2"])
+        result = scheduler.last_results()["p1"]
+        self.assertEqual((result["added_count"], result["added_sample"]), (1, ["2"]))
+        self.assertEqual(result["added"], 1)  # selected new streams, like the manual refresh
+
+    def make_stale(self):
+        old = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=25)
+        catalog.atomic_write_json(catalog.cache_path("p1"), dict(catalog.load("p1"), fetched_at=old.isoformat()))
+
+    def test_manual_only_provider_refreshes_only_without_cache(self):
+        self.set_streams(("1", "A", "1"))
+        self.provider["refresh_hours"] = 0
+        scheduler.run_once(lambda: self.config, {})
+        self.assertIsNotNone(catalog.load("p1"))  # initial refresh still happens
+        self.make_stale()
+        count = len(self.fake.requests)
+        scheduler.run_once(lambda: self.config, {})
+        self.assertEqual(len(self.fake.requests), count)
+        self.assertTrue(scheduler.is_manual(self.provider))
+        self.assertFalse(scheduler.is_manual({"refresh_hours": None}))
+
+    def test_disabled_provider_is_not_refreshed(self):
+        self.set_streams(("1", "A", "1"))
+        self.provider["enabled"] = False
+        scheduler.run_once(lambda: self.config, {})
+        self.assertEqual(self.fake.requests, [])
+        self.assertIsNone(catalog.load("p1"))
+        self.provider["enabled"] = True
+        scheduler.run_once(lambda: self.config, {})
+        self.assertIsNotNone(catalog.load("p1"))
+
+    def test_status_result_is_counts_and_samples(self):
+        self.set_streams(*[(str(i), "S%d" % i, "1") for i in range(1, 101)])
+        scheduler.run_once(lambda: self.config, {})
+        result = scheduler.last_results()["p1"]
+        self.assertEqual(result["added_count"], 100)
+        self.assertEqual(result["added_selected_count"], 100)
+        self.assertEqual(len(result["added_sample"]), 20)
+        self.assertEqual(len(result["added_selected_sample"]), 20)
+        self.assertFalse(any(isinstance(v, list) and len(v) > 20 for v in result.values()))
+        self.make_stale()
+        self.set_streams(("1", "S1", "1"))
+        scheduler.run_once(lambda: self.config, {})
+        result = scheduler.last_results()["p1"]
+        self.assertEqual((result["removed_count"], result["vanished_count"]), (99, 99))
+        self.assertEqual(len(result["removed_sample"]), 20)
 
     def test_failure_is_logged_backed_off_and_never_raises(self):
         self.fake.set("get_live_streams", (500, {}, b"down"))

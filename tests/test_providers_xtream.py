@@ -159,6 +159,53 @@ class XtreamTests(unittest.TestCase):
         provider["xmltv_url"] = "http://epg/x.xml"
         self.assertEqual(providers.xmltv_url(provider), "http://epg/x.xml")
 
+    def test_disabled_first_line_is_not_used_for_api(self):
+        self.provider["lines"][0]["enabled"] = False
+        self.fake.json("get_live_categories", "xtream_categories.json")
+        xtream.get_live_categories(self.provider)
+        self.assertEqual(self.fake.requests[0]["query"]["username"], "user2")
+        self.assertEqual([l["id"] for l in providers.usable_lines(self.provider)], ["l2"])
+        self.provider["lines"][1]["enabled"] = False
+        with self.assertRaises(ProviderError):
+            xtream.get_live_categories(self.provider)
+
+    def test_api_deadline_aborts_trickling_response(self):
+        import socket
+        import threading
+        import time
+
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        stop = threading.Event()
+
+        def trickle():
+            conn, _ = listener.accept()
+            conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n[")
+            while not stop.is_set():
+                try:
+                    conn.sendall(b" ")
+                except OSError:
+                    break
+                time.sleep(0.05)
+            conn.close()
+
+        threading.Thread(target=trickle, daemon=True).start()
+        provider = make_provider("http://127.0.0.1:%d" % listener.getsockname()[1])
+        old = xtream.API_DEADLINE
+        xtream.API_DEADLINE = 0.5
+        try:
+            started = time.monotonic()
+            with self.assertRaises(ProviderError) as ctx:
+                xtream.get_live_streams(provider)
+            self.assertLess(time.monotonic() - started, 5)
+            self.assertIn("deadline", str(ctx.exception))
+        finally:
+            xtream.API_DEADLINE = old
+            stop.set()
+            listener.close()
+
     def test_redact(self):
         self.assertEqual(net.redact("http://h/?username=u&password=abc&x=1"),
                          "http://h/?username=u&password=********&x=1")

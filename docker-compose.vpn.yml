@@ -1,10 +1,16 @@
-# coax behind a WireGuard VPN using Gluetun (https://github.com/qdm12/gluetun, MIT license).
-# All of coax's traffic, including provider streams, goes through the tunnel.
+# coax behind a VPN using Gluetun (https://github.com/qdm12/gluetun, MIT license).
+# All of coax's traffic, including provider logins, playlists and streams, goes through the tunnel.
+# Gluetun setup guide: https://github.com/qdm12/gluetun-wiki
+#
+# This file uses a custom WireGuard config, which works with any WireGuard provider:
+#   https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md
+# For a built-in provider (Mullvad, ProtonVPN, ...) replace the gluetun environment with the settings from
+# that provider's page: https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
 #
 # 1. Put your provider's WireGuard config at ./data/wireguard/wg0.conf
 #    (the Endpoint must be an IP address, not a hostname).
-# 2. Set FIREWALL_OUTBOUND_SUBNETS below to your LAN so coax can still reach
-#    Channels DVR. Without it, Gluetun's firewall blocks LAN traffic.
+# 2. Set FIREWALL_OUTBOUND_SUBNETS below to your LAN so coax can still reach Channels DVR.
+#    Without it, Gluetun's firewall blocks all LAN traffic that is not a reply.
 # 3. docker compose -f docker-compose.vpn.yml up -d
 #    then open http://<this-host>:7780
 services:
@@ -20,14 +26,15 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
-      # Your LAN, comma separated, e.g. 192.168.1.0/24. Must not overlap the VPN's own range.
+      # Your LAN, comma separated, e.g. 192.168.1.0/24. Lets coax reach Channels DVR outside the tunnel.
+      # Must not overlap the VPN's own address range.
       - FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24
       # Your timezone, for Gluetun's log timestamps.
       - TZ=Etc/UTC
     volumes:
       - ./data/wireguard/wg0.conf:/gluetun/wireguard/wg0.conf:ro
     ports:
-      # coax shares Gluetun's network, so its port is published here.
+      # coax shares Gluetun's network, so coax's port is published here, not on the coax service.
       - "7780:7780"
 
   coax:
@@ -35,14 +42,28 @@ services:
     image: ghcr.io/mackid1993/coax:1.0.0
     container_name: coax
     restart: unless-stopped
+    # All traffic goes through Gluetun. No ports: here; they are on the gluetun service.
     network_mode: "service:gluetun"
     depends_on:
       - gluetun
     volumes:
       - ./data:/data
-    # Optional GPU, same as docker-compose.yml:
+
+    # ---- Optional: hardware transcoding (only needed if you turn on Transcode in Settings) ----
+    #
+    # Intel or AMD graphics (VAAPI). Uncomment devices. coax adds the group that owns /dev/dri/renderD128
+    # on its own; group_add is only needed if transcoding still falls back to the CPU. Find the GID on the
+    # host with:  stat -c %g /dev/dri/renderD128
     # devices:
     #   - /dev/dri:/dev/dri
     # group_add:
-    #   - "105"   # render GID on the host (example)
-    #   - "44"    # video GID on the host (example)
+    #   - "105"   # GID from the stat command above (example)
+    #
+    # NVIDIA (NVENC). Needs the NVIDIA driver and NVIDIA Container Toolkit on the host. Uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video, compute, utility]
