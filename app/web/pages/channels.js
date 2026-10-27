@@ -279,7 +279,7 @@ function currentGuide(c) {
     inner = `<span class="badge badge-accent">GN</span>${stationLabel(g)}${g.confidence != null ? confidenceHtml(g.confidence) : ""}`;
     if (mode === "both" && g.xmltv_id) inner += `<span class="badge badge-info">+XMLTV</span>`;
   } else if ((mode === "xmltv" || mode === "both") && g.xmltv_id) {
-    inner = `<span class="badge badge-info">XMLTV</span><span class="mono small ellip">${esc(g.xmltv_id)}</span>`;
+    inner = `<span class="badge badge-info">XMLTV</span><span class="mono small ellip" title="${esc(g.xmltv_id)}">${esc(g.xmltv_id)}</span>`;
   } else {
     inner = `<span class="faint">${mode === "none" ? "No guide" : "Not matched"}</span>`;
   }
@@ -678,7 +678,7 @@ function guideModal(c) {
     try {
       const r = await api.xmltvIds(src, $("#xmQ", el).value.trim());
       if (seq !== xmSeq) return;
-      list.innerHTML = r.length ? r.slice(0, 100).map((x) => `<button type="button" class="result ${x.id === g.xmltv_id ? "picked" : ""}" data-xmid="${esc(x.id)}">${logo(x.icon, x.name || x.id, "logo-sm")}<span class="r-main"><span class="r-title">${esc(x.name || x.id)}</span><br><span class="r-sub mono">${esc(x.id)}</span></span></button>`).join("") : `<div class="faint small">No XMLTV channels match. The feed may not be downloaded yet.</div>`;
+      list.innerHTML = r.length ? r.slice(0, 100).map((x) => `<button type="button" class="result ${x.id === g.xmltv_id ? "picked" : ""}" data-xmid="${esc(x.id)}">${logo(x.icon, x.name || x.id, "logo-sm")}<span class="r-main" title="${esc(x.name || x.id)}"><span class="r-title">${esc(x.name || x.id)}</span><br><span class="r-sub mono">${esc(x.id)}</span></span></button>`).join("") : `<div class="faint small">No XMLTV channels match. The feed may not be downloaded yet.</div>`;
     } catch (e) { if (seq === xmSeq) list.innerHTML = `<div class="callout">${icon("alert")}<div>${esc(e.message)}</div></div>`; }
   }, 250);
   $("#xmQ", el).addEventListener("input", searchXm);
@@ -703,7 +703,7 @@ function candList(list, current) {
     const sub = [s.name && s.call_sign ? s.name : "", s.affiliate, s.type, (s.countries || []).join?.(", ")].filter(Boolean).join(" · ");
     return `<button type="button" class="result ${String(s.station_id) === String(current) ? "picked" : ""}" data-station="${esc(s.station_id)}" data-call="${esc(s.call_sign || "")}" data-name="${esc(s.name || "")}" ${conf != null ? `data-conf="${esc(conf)}"` : ""}>
       ${logo(s.logo, s.call_sign || s.name, "logo-sm")}
-      <span class="r-main"><span class="r-title">${esc(s.call_sign || s.name || s.station_id)} <span class="faint num">${esc(s.station_id)}</span></span><br><span class="r-sub">${esc(sub)}${s.reason ? ` · ${esc(s.reason)}` : ""}</span></span>
+      <span class="r-main" title="${esc(s.call_sign || s.name || s.station_id)}"><span class="r-title">${esc(s.call_sign || s.name || s.station_id)} <span class="faint num">${esc(s.station_id)}</span></span><br><span class="r-sub">${esc(sub)}${s.reason ? ` · ${esc(s.reason)}` : ""}</span></span>
       ${conf != null ? confidenceHtml(conf) : ""}${s.outside ? `<span class="badge badge-warn" title="Outside your lineup area">outside</span>` : ""}</button>`;
   }).join("");
 }
@@ -734,7 +734,7 @@ function streamsModal(c) {
     $("#bList", el).innerHTML = streams.length ? streams.map((s, i) => `<div class="backup-item ${i === 0 ? "primary" : ""} ${s.missing ? "missing" : ""}" draggable="true" data-i="${i}">
       <button class="drag-handle" data-bdrag aria-label="Move ${esc(s.name || s.stream_id)}, Alt plus arrow keys">${icon("grip")}</button>
       <span class="order">${i + 1}</span>
-      <span style="flex:1;min-width:0"><span class="ellip" style="display:block;font-weight:560">${esc(s.name || s.stream_id)}</span><span class="faint small">${esc(providerName(S.providers, s.provider))} · <span class="num">${esc(s.stream_id)}</span>${s.missing ? ' · <span style="color:var(--bad)">vanished</span>' : ""}</span></span>
+      <span style="flex:1;min-width:0"><span class="ellip" style="display:block;font-weight:560" title="${esc(s.name || s.stream_id)}">${esc(s.name || s.stream_id)}</span><span class="faint small">${esc(providerName(S.providers, s.provider))} · <span class="num">${esc(s.stream_id)}</span>${s.missing ? ' · <span style="color:var(--bad)">vanished</span>' : ""}</span></span>
       ${i === 0 ? `<span class="badge badge-accent">Primary</span>` : ""}
       <button class="btn btn-ghost btn-sm btn-icon btn-danger" data-rm="${i}" aria-label="Remove">${icon("x")}</button></div>`).join("") : `<div class="faint small">No streams. Add one from the right.</div>`;
     const sg = $("#bSugg", el);
@@ -962,7 +962,7 @@ function renderCatalogList() {
         const used = (s.channels || []).length;
         return `<div class="cat-row ${c.selected.has(k) ? "on" : ""}" data-k="${esc(k)}" data-idx="${i}" role="checkbox" aria-checked="${c.selected.has(k)}" tabindex="0">
           ${checkHtml(c.selected.has(k), 'tabindex="-1" aria-hidden="true"')}${logo(s.logo, s.name, "logo-sm")}
-          <span class="cat-main"><span class="ellip cat-name">${esc(s.name)}</span><span class="ellip faint small">${esc(s.group || "")}${S.providers.length > 1 ? ` · ${esc(providerName(S.providers, s.provider))}` : ""}</span></span>
+          <span class="cat-main" title="${esc(s.name)}${s.group ? `\n${esc(s.group)}` : ""}"><span class="ellip cat-name">${esc(s.name)}</span><span class="ellip faint small">${esc(s.group || "")}${S.providers.length > 1 ? ` · ${esc(providerName(S.providers, s.provider))}` : ""}</span></span>
           ${used ? `<span class="badge badge-ok" title="Already used by ${used} channel(s)">${icon("check", 'style="width:11px;height:11px"')}in use</span>` : ""}</div>`;
       }).join("");
   }
