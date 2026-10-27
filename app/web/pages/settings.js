@@ -57,10 +57,6 @@ function render() {
         <h4>Why transcode?</h4><p>Every channel leaves coax in the same format, so a backup with a different frame rate never upsets the player, and the video plays at its real speed, except while the reserve refills: if a provider problem keeps the reserve below half for a while, video and audio play 3% slower together (pitch unchanged) until it is back to three quarters. Costs a few seconds more delay and some GPU time. Give the container a GPU (/dev/dri for Intel or AMD, the NVIDIA runtime for NVIDIA); without one it falls back to the CPU.</p>
       </div></div></section>
 
-    <section class="card"><div class="card-head"><h2>Tuner sharing</h2></div><div class="card-body grid grid-2" style="gap:24px">
-      <div class="field"><label for="sBehind">Join behind live</label><div class="range-row"><input type="range" id="sBehind" data-k="behind" min="0" max="120" step="5" value="${esc(d.behind)}"><span class="num" id="vBehind">${esc(d.behind)} s</span></div><span class="hint">A new viewer on a channel that is already playing starts this many seconds back in the shared buffer, so playback starts instantly with a cushion.</span></div>
-      <div class="field"><label for="sDelay">Shutdown delay</label><div class="range-row"><input type="range" id="sDelay" data-k="delay" min="0" max="120" step="5" value="${esc(d.delay)}"><span class="num" id="vDelay">${esc(d.delay)} s</span></div><span class="hint">Keep a channel's engine running this long after the last viewer leaves, so quick channel flips back are instant.</span></div>
-    </div></section>
 
     <section class="card"><div class="card-head"><div><h2>Standalone XMLTV sources</h2><p class="faint small">Extra guide feeds for the per-channel XMLTV picker, besides each provider's own feed.</p></div><button class="btn btn-sm" data-addsrc>${icon("plus")}Add source</button></div>
       <div class="card-body stack" id="xsList" style="gap:10px">${xsHtml()}</div></section>
@@ -120,7 +116,7 @@ async function save() {
   const sources = d.xmltv_sources.map((s, i) => ({ id: s.id || `x${i + 1}`, name: s.name || `XMLTV ${i + 1}`, url: s.url, refresh_hours: Number(s.refresh_hours) || 24 }));
   try {
     cfg = await api.putConfig({
-      server: { base_url: d.base_url.replace(/\/+$/, ""), port: d.port, new_client_behind_seconds: d.behind, channel_shutdown_delay: d.delay },
+      server: { base_url: d.base_url.replace(/\/+$/, ""), port: d.port },
       channels_dvr: { url: d.dvr.replace(/\/+$/, "") },
       transcode: d.transcode,
       xmltv_sources: sources,

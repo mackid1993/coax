@@ -110,7 +110,7 @@ function drawSessions(sessions) {
         <div><div class="stat-label">Bitrate</div><div class="stat-value">${fmtRate(h[h.length - 1] || 0)}</div></div>
         <div><div class="stat-label">Uptime</div><div class="stat-value">${fmtDuration(x.uptime)}</div></div>
       </div>
-      <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.buffer_bytes != null ? `<span>buffer ${fmtBytes(x.buffer_bytes)}</span>` : ""}${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
+      <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
       ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtAgo(c.connected).replace(" ago", "")}</span>` : ""}</span>`).join("")}</div>` : ""}
     </article>`;
   }).join("");
