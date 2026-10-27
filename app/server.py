@@ -506,6 +506,11 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr/sync", "h_lineup_dvr_sync"),
         ("GET", r"/api/status", "h_status"),
         ("GET", r"/api/network", "h_network"),
+        ("GET", r"/api/backups", "h_backups"),
+        ("POST", r"/api/backups", "h_backup_create"),
+        ("POST", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)/restore", "h_backup_restore"),
+        ("GET", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)", "h_backup_download"),
+        ("DELETE", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)", "h_backup_delete"),
         ("GET", r"/api/log/download", "h_log_download"),
         ("GET", r"/api/log", "h_log"),
     ]
@@ -1307,9 +1312,13 @@ class Handler(BaseHTTPRequestHandler):
         return {"results": results}
 
     def _countries(self, value):
-        """Parse countries for lineup restriction: "USA:10001,CAN:M5V 3L9" or [["USA", "10001"], ...]."""
+        """Parse countries for lineup restriction: "USA:10001,CAN:M5V 3L9" or [["USA", "10001"], ...].
+        Without an explicit value, the Gracenote regions from Settings are used."""
         if value in (None, "", []):
-            return None
+            regions = (self.app.store.get().get("gracenote") or {}).get("regions") or []
+            pairs = [(str(r.get("country", "")).strip().upper(), str(r.get("postal", "")).strip())
+                     for r in regions if isinstance(r, dict)]
+            return [p for p in pairs if re.match(r"^[A-Z]{3}$", p[0]) and p[1]] or None
         pairs = []
         items = value.split(",") if isinstance(value, str) else value
         if not isinstance(items, list):
@@ -1613,6 +1622,7 @@ class Handler(BaseHTTPRequestHandler):
                 members = body.get("channels", [])
             lineup = {"id": final, "name": name.strip(), "guide": body.get("guide") or "per-channel",
                       "sort": body.get("sort") if body.get("sort") in configmod.LINEUP_SORTS else "manual",
+                      "start_number": int(body["start_number"]) if str(body.get("start_number") or "").strip().isdigit() else None,
                       "channels": members}
             cfg["lineups"].append(lineup)
             return lineup
@@ -1635,6 +1645,15 @@ class Handler(BaseHTTPRequestHandler):
                 if body["sort"] not in configmod.LINEUP_SORTS:
                     raise bad_request("sort must be one of " + ", ".join(configmod.LINEUP_SORTS))
                 lineup["sort"] = body["sort"]
+            if "start_number" in body:
+                sn = body["start_number"]
+                if sn in (None, ""):
+                    lineup["start_number"] = None
+                else:
+                    try:
+                        lineup["start_number"] = int(str(sn).strip())
+                    except ValueError:
+                        raise bad_request("start number must be a whole number")
             return lineup
         return self.app.store.update(mutate)
 
@@ -1689,6 +1708,38 @@ class Handler(BaseHTTPRequestHandler):
         if result and not result.get("ok"):
             raise ApiError(502, result.get("error") or "Channels DVR sync failed")
         return result
+
+    # ------------------------------------------------------------ config backups
+    def h_backups(self):
+        snapshots = lazy("app.snapshots")
+        return {"settings": snapshots.settings(self.app.store.get()), "backups": snapshots.list_backups(self.app.store),
+                "now": time.strftime("%Y-%m-%d %H:%M"), "timezone": time.strftime("%Z")}
+
+    def h_backup_create(self):
+        return lazy("app.snapshots").create(self.app.store, "manual")
+
+    def h_backup_restore(self, name):
+        try:
+            return lazy("app.snapshots").restore(self.app.store, name)
+        except FileNotFoundError:
+            raise not_found("no backup named %s" % name)
+        except (ValueError, configmod.ConfigError) as exc:
+            raise bad_request("cannot restore %s: %s" % (name, exc))
+
+    def h_backup_download(self, name):
+        try:
+            data = lazy("app.snapshots").read(self.app.store, name)
+        except (FileNotFoundError, ValueError):
+            raise not_found("no backup named %s" % name)
+        self._send_bytes(200, data, "application/json", {"Content-Disposition": 'attachment; filename="%s"' % name,
+                                                         "Cache-Control": "no-store"})
+
+    def h_backup_delete(self, name):
+        try:
+            lazy("app.snapshots").delete(self.app.store, name)
+        except (FileNotFoundError, ValueError):
+            raise not_found("no backup named %s" % name)
+        return {"deleted": name}
 
     # ------------------------------------------------------------ network
     _net = {"at": 0.0, "data": None}

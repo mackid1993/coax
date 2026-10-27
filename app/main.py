@@ -91,6 +91,10 @@ def main(argv=None):
     app = servermod.App(store, hub)
     app.dvr = start_dvr_sync(store)
     try:
+        importlib.import_module("app.snapshots").start(store)
+    except Exception:  # noqa: BLE001 - backups are optional
+        log.exception("config backup scheduler failed to start")
+    try:
         httpd = servermod.make_server(app, "", port)
     except OSError as exc:
         log.error("cannot listen on port %d: %s", port, exc)

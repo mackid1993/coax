@@ -139,6 +139,8 @@ function editModal(l) {
         <option value="provider" ${l?.sort === "provider" ? "selected" : ""}>Provider channel number</option>
         <option value="alpha" ${l?.sort === "alpha" ? "selected" : ""}>Alphabetical</option></select>
         <span class="hint">Matters when Channels DVR numbers the source itself; auto-number for this lineup follows it too.</span></div>
+      <div class="field"><label for="lStart">Start numbering at <span class="faint">(optional)</span></label><input class="input mono" id="lStart" inputmode="numeric" value="${esc(l?.start_number ?? "")}" placeholder="Use each channel's own number">
+        <span class="hint">Numbers this lineup's channels from here, in the order above (e.g. A to Z from 1000). Only affects this lineup.</span></div>
       ${l ? "" : `<label class="switch"><input type="checkbox" id="lAll"><span class="track"></span><span>Start with every channel</span></label>`}
       <p class="faint small">Add channels to lineups from the Channels page (the Lineups column or a bulk selection).</p></div>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>${l ? "Save" : "Create lineup"}</button>`,
@@ -149,8 +151,11 @@ function editModal(l) {
     if (!name) { toast("Name is required", "", "warn"); return; }
     try {
       const sort = $("#lSort", m.el).value;
-      if (l) await api.updateLineup(l.id, { name, guide, sort });
-      else await api.createLineup({ name, guide, sort, all_channels: $("#lAll", m.el).checked });
+      const startRaw = $("#lStart", m.el).value.trim();
+      if (startRaw && !/^\d+$/.test(startRaw)) { toast("Start number must be a whole number", "", "warn"); return; }
+      const start_number = startRaw ? Number(startRaw) : null;
+      if (l) await api.updateLineup(l.id, { name, guide, sort, start_number });
+      else await api.createLineup({ name, guide, sort, start_number, all_channels: $("#lAll", m.el).checked });
       invalidate("lineups");
       m.close();
       toast(l ? "Lineup saved" : "Lineup created", name, "ok");

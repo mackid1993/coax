@@ -1,6 +1,6 @@
 // Settings: server addresses, transcode preset (help text from the engine settings block), timings, XMLTV sources.
 import { api } from "../api.js";
-import { $, $$, esc, icon, toast, toastError, busy } from "../ui.js";
+import { $, $$, esc, icon, toast, toastError, busy, confirmDialog } from "../ui.js";
 import { invalidate } from "../state.js";
 
 const PRESETS = [
@@ -28,6 +28,8 @@ export async function mount(el) {
     dvr: cfg.channels_dvr?.url || "",
     transcode: cfg.transcode || "off",
     xmltv_sources: JSON.parse(JSON.stringify(cfg.xmltv_sources || [])),
+    regions: JSON.parse(JSON.stringify(cfg.gracenote?.regions || [])),
+    backups: { enabled: cfg.backups?.enabled !== false, time: cfg.backups?.time || "03:30", keep: cfg.backups?.keep ?? 14 },
   };
   dirty = false;
   render();
@@ -56,11 +58,24 @@ function render() {
       </div></div></section>
 
 
+    <section class="card"><div class="card-head"><div><h2>Gracenote region</h2><p class="faint small">Auto-match only trusts stations in these areas' lineups, so a channel never matches a station in another country. Add more than one if your channels come from several areas.</p></div><button class="btn btn-sm" data-radd>${icon("plus")}Add region</button></div>
+      <div class="card-body stack" id="rgList" style="gap:10px">${regionsHtml()}</div></section>
+
+    <section class="card"><div class="card-head"><div><h2>Backups</h2><p class="faint small">Copies of every setting, provider, channel and lineup, kept in <code>/data/backups</code>. Restoring backs up the current state first.</p></div><button class="btn btn-sm" data-bknow>${icon("download")}Back up now</button></div>
+      <div class="card-body stack" style="gap:12px">
+        <div class="row row-wrap" style="gap:16px;align-items:end">
+          <label class="switch"><input type="checkbox" data-bk="enabled" ${d.backups.enabled ? "checked" : ""}><span class="track"></span><span>Daily backup</span></label>
+          <div class="field"><label>At</label><input class="input input-sm mono" type="time" data-bk="time" value="${esc(d.backups.time)}"></div>
+          <div class="field"><label>Keep</label><input class="input input-sm mono" type="number" min="1" max="365" data-bk="keep" value="${esc(d.backups.keep)}"></div>
+          <span class="faint small" id="bkTz"></span></div>
+        <div class="stack" id="bkList" style="gap:8px"><span class="skel" style="height:40px"></span></div></div></section>
+
     <section class="card"><div class="card-head"><div><h2>Standalone XMLTV sources</h2><p class="faint small">Extra guide feeds for the per-channel XMLTV picker, besides each provider's own feed.</p></div><button class="btn btn-sm" data-addsrc>${icon("plus")}Add source</button></div>
       <div class="card-body stack" id="xsList" style="gap:10px">${xsHtml()}</div></section>
   </div>
   <div id="saveSlot"></div>`;
   wire();
+  wireExtra();
   drawSave();
 }
 function xsHtml() {
@@ -119,10 +134,87 @@ async function save() {
       channels_dvr: { url: d.dvr.replace(/\/+$/, "") },
       transcode: d.transcode,
       xmltv_sources: sources,
+      gracenote: { regions: d.regions.filter((r) => r.country && String(r.postal || "").trim()) },
+      backups: { enabled: !!d.backups.enabled, time: d.backups.time || "03:30", keep: Number(d.backups.keep) || 14 },
     });
     invalidate("config");
     dirty = false;
     drawSave();
     toast("Settings saved", cfg?.server?.port && cfg.server.port !== location.port * 1 && location.port ? "Restart coax for a port change to take effect." : "", "ok");
   } catch (e) { toastError("Could not save settings", e); }
+}
+
+// ---------- Gracenote region and backups ----------
+const COUNTRIES = [
+  ["USA", "United States", "10001"], ["CAN", "Canada", "M5H2N2"], ["MEX", "Mexico", "06600"], ["PRI", "Puerto Rico", "00901"],
+  ["GBR", "United Kingdom", "SW1A"], ["IRL", "Ireland", "D02"], ["DEU", "Germany", "10115"], ["FRA", "France", "75001"],
+  ["ESP", "Spain", "28001"], ["ITA", "Italy", "00118"], ["NLD", "Netherlands", "1012"], ["BEL", "Belgium", "1000"],
+  ["CHE", "Switzerland", "8001"], ["AUT", "Austria", "1010"], ["SWE", "Sweden", "11120"], ["NOR", "Norway", "0150"],
+  ["DNK", "Denmark", "1050"], ["FIN", "Finland", "00100"], ["AUS", "Australia", "2000"], ["KOR", "South Korea", "03000"],
+  ["BRA", "Brazil", "01001"], ["ARG", "Argentina", "C1002"], ["CHL", "Chile", "8320000"], ["COL", "Colombia", "110111"],
+  ["PER", "Peru", "15001"], ["DOM", "Dominican Republic", "10101"], ["JAM", "Jamaica", "JMAKN01"], ["PAN", "Panama", "0801"],
+  ["CRI", "Costa Rica", "10101"], ["BMU", "Bermuda", "HM11"],
+];
+function regionsHtml() {
+  if (!draft.regions.length) return `<p class="faint small">No region set: Auto-match searches all of Gracenote and never pre-checks a station. Add your country and postal code.</p>`;
+  return draft.regions.map((r, i) => `<div class="line-row" style="grid-template-columns:1fr 160px 36px">
+    <div class="field"><label>Country</label><select class="input input-sm" data-rc="${i}">${COUNTRIES.map(([c, n]) => `<option value="${c}" ${r.country === c ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+    <div class="field"><label>Postal code</label><input class="input input-sm mono" data-rp="${i}" value="${esc(r.postal || "")}" placeholder="e.g. 10001"></div>
+    <button type="button" class="btn btn-ghost btn-sm btn-icon btn-danger" data-rrm="${i}" aria-label="Remove region">${icon("trash")}</button></div>`).join("");
+}
+async function loadBackups() {
+  const el = $("#bkList", root);
+  if (!el) return;
+  try {
+    const r = await api.backups();
+    const tz = $("#bkTz", root); if (tz) tz.textContent = `Container time now: ${r.now} ${r.timezone || ""}`;
+    el.innerHTML = r.backups.length ? r.backups.map((b) => `<div class="line-row" style="grid-template-columns:1fr auto auto auto;align-items:center">
+      <div><div class="mono small">${esc(b.created)}</div><div class="faint small">${esc(b.kind)}${b.channels != null ? ` · ${b.channels} channels · ${b.providers} providers` : ""}</div></div>
+      <button class="btn btn-sm" data-bkrestore="${esc(b.name)}">Restore</button>
+      <a class="btn btn-sm btn-ghost" href="/api/backups/${encodeURIComponent(b.name)}">${icon("download")}Download</a>
+      <button class="btn btn-sm btn-ghost btn-danger" data-bkdel="${esc(b.name)}">${icon("trash")}</button></div>`).join("")
+      : `<p class="faint small">No backups yet. Press Back up now, or wait for the daily one.</p>`;
+  } catch (e) { el.innerHTML = `<p class="faint small">${esc(e.message)}</p>`; }
+}
+function wireExtra() {
+  const form = $("#sForm", root);
+  form.addEventListener("input", (e) => {
+    const t = e.target;
+    if (t.dataset.rc != null) {
+      const i = Number(t.dataset.rc);
+      draft.regions[i].country = t.value;
+      const def = COUNTRIES.find((c) => c[0] === t.value);
+      const p = $(`[data-rp="${i}"]`, root);
+      if (def && p && !p.value) { p.value = def[2]; draft.regions[i].postal = def[2]; }
+    } else if (t.dataset.rp != null) {
+      draft.regions[Number(t.dataset.rp)].postal = t.value.trim();
+    } else if (t.dataset.bk) {
+      draft.backups[t.dataset.bk] = t.type === "checkbox" ? t.checked : t.type === "number" ? Number(t.value) : t.value;
+    }
+  });
+  form.addEventListener("click", async (e) => {
+    if (e.target.closest("[data-radd]")) { draft.regions.push({ country: "USA", postal: "" }); $("#rgList", root).innerHTML = regionsHtml(); markDirty(); return; }
+    const rm = e.target.closest("[data-rrm]");
+    if (rm) { draft.regions.splice(Number(rm.dataset.rrm), 1); $("#rgList", root).innerHTML = regionsHtml(); markDirty(); return; }
+    const now = e.target.closest("[data-bknow]");
+    if (now) {
+      busy(now, async () => { try { const b = await api.backupNow(); toast("Backup saved", b.name, "ok"); loadBackups(); } catch (err) { toastError("Backup failed", err); } });
+      return;
+    }
+    const rs = e.target.closest("[data-bkrestore]");
+    if (rs) {
+      const name = rs.dataset.bkrestore;
+      const ok = await confirmDialog({ title: "Restore this backup?", message: `coax replaces its current settings, providers, channels and lineups with ${name}. The current state is backed up first, so you can undo this.`, confirm: "Restore", danger: true });
+      if (!ok) return;
+      try { await api.backupRestore(name); toast("Restored", name, "ok"); setTimeout(() => location.reload(), 700); } catch (err) { toastError("Restore failed", err); }
+      return;
+    }
+    const del = e.target.closest("[data-bkdel]");
+    if (del) {
+      const ok = await confirmDialog({ title: "Delete this backup?", message: del.dataset.bkdel, confirm: "Delete", danger: true });
+      if (!ok) return;
+      try { await api.backupDelete(del.dataset.bkdel); loadBackups(); } catch (err) { toastError("Delete failed", err); }
+    }
+  });
+  loadBackups();
 }

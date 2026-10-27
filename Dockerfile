@@ -45,7 +45,7 @@ RUN set -eux; \
     if [ "$arch" = "amd64" ]; then extra="intel-media-va-driver-non-free i965-va-driver"; fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-      ca-certificates \
+      ca-certificates tzdata \
       ffmpeg \
       mesa-va-drivers \
       tini \

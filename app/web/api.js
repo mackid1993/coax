@@ -45,6 +45,8 @@ export const routes = {
   lineupDvrSync: (id) => `/api/lineups/${enc(id)}/dvr/sync`,
   status: () => "/api/status",
   network: () => "/api/network",
+  backups: () => "/api/backups",
+  backup: (name) => `/api/backups/${encodeURIComponent(name)}`,
   log: (since, limit = 500) => `/api/log${qs({ since, limit })}`,
   // Output URLs (not JSON) shown on the Lineups page.
   outputM3u: (lineup) => `/output/m3u/${enc(lineup)}.m3u`,
@@ -153,6 +155,10 @@ export const api = {
 
   status: () => get(routes.status(), { timeout: 8000 }),
   // {ip, country, checked_at, error}
+  backups: () => get(routes.backups()),
+  backupNow: () => post(routes.backups(), {}),
+  backupRestore: (name) => post(`${routes.backup(name)}/restore`, {}),
+  backupDelete: (name) => del(routes.backup(name)),
   network: (fresh = false) => get(routes.network() + (fresh ? "?refresh=1" : ""), { timeout: 15000 }),
   log: (since, limit) => get(routes.log(since, limit), { timeout: 8000 }),
 };

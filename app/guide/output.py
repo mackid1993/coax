@@ -72,11 +72,15 @@ def m3u(config, lineup_id):
     lineup_guide = lineup.get("guide") or "per-channel"
     lines = ["#EXTM3U"]
     seen = set()
+    start = lineup.get("start_number")
+    start = start if isinstance(start, int) and not isinstance(start, bool) else None
+    position = 0
     for cid in ordered_ids(lineup, channels):
         ch = channels.get(str(cid))
         if ch is None or str(cid) in seen or not ch.get("enabled", True) or not ch.get("uuid"):
             continue
         seen.add(str(cid))
+        position += 1
         coax_id = f"coax-{ch['id']}"
         name = ch.get("name") or ""
         attrs = [
@@ -85,7 +89,8 @@ def m3u(config, lineup_id):
             ("tvg-name", name),
             ("tvg-logo", ch.get("logo") or ""),
             ("group-title", ch.get("group") or ""),
-            ("channel-number", ch.get("number") or ""),
+            # A lineup with a start number numbers its channels in its own order from there.
+            ("channel-number", str(start + position - 1) if start is not None else (ch.get("number") or "")),
         ]
         g = ch.get("guide") or {}
         station_id = _attr(g.get("station_id"))

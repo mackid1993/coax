@@ -48,6 +48,8 @@ def default_config():
         "channels": [],
         "lineups": [{"id": "main", "name": "Main", "guide": "per-channel", "channels": []}],
         "xmltv_sources": [],
+        "gracenote": {"regions": []},
+        "backups": {"enabled": True, "time": "03:30", "keep": 14},
         "next_channel_id": 1,
     }
 
@@ -108,6 +110,14 @@ def fill_defaults(cfg):
                 lineup["guide"] = "per-channel"
             if lineup.get("sort") not in LINEUP_SORTS:
                 lineup["sort"] = "manual"
+            lineup.setdefault("start_number", None)
+    if not isinstance(cfg.get("gracenote"), dict):
+        cfg["gracenote"] = {}
+    cfg["gracenote"].setdefault("regions", [])
+    if not isinstance(cfg.get("backups"), dict):
+        cfg["backups"] = {}
+    for key, value in (("enabled", True), ("time", "03:30"), ("keep", 14)):
+        cfg["backups"].setdefault(key, value)
     for source in cfg.get("xmltv_sources") or []:
         if isinstance(source, dict):
             _fill(source, default_xmltv_source())
@@ -274,6 +284,13 @@ def validate(cfg):
         if guide["xmltv_provider"]:
             _require(guide["xmltv_provider"] in guide_sources,
                      label + ": guide refers to unknown provider or XMLTV source %s" % guide["xmltv_provider"])
+    for i, region in enumerate((cfg.get("gracenote") or {}).get("regions") or []):
+        _require(isinstance(region, dict) and re.match(r"^[A-Za-z]{3}$", str(region.get("country", "")))
+                 and str(region.get("postal", "")).strip(),
+                 "Gracenote region %d needs a 3-letter country code and a postal code" % (i + 1))
+    backups = cfg.get("backups") or {}
+    _require(re.match(r"^([01]\d|2[0-3]):[0-5]\d$", str(backups.get("time", ""))), "backup time must look like 03:30")
+    _int_in(backups.get("keep"), 1, 365, "backups to keep")
     _int_in(cfg.get("next_channel_id"), 1, 10 ** 9 + 1, "next_channel_id")
     _require(cfg["next_channel_id"] > max(channel_ids, default=0), "next_channel_id must be above every channel id")
 
@@ -288,6 +305,9 @@ def validate(cfg):
         _require(lid not in lineup_ids, "lineup id %s is used twice" % lid)
         lineup_ids.add(lid)
         _str(lineup.get("name"), "lineup %s: name" % lid)
+        sn = lineup.get("start_number")
+        _require(sn in (None, "") or (isinstance(sn, int) and not isinstance(sn, bool) and 0 <= sn <= 10 ** 7),
+                 "lineup %s: start number must be a whole number" % lid)
         _require(lineup.get("guide") in LINEUP_GUIDES,
                  "lineup %s: guide must be one of %s" % (lid, ", ".join(LINEUP_GUIDES)))
         members = lineup.get("channels")
