@@ -63,6 +63,9 @@ Channel names, providers and logos below are made up for the demo.
   restarted, a stream with no video is retuned (alternating to another free line of the provider when there is one),
   and null packets hold the connection open in between, so a recording keeps going. Streams that failed recently
   are tried last, and each channel's 10-minute health lines are kept in `data/cache/history/`.
+- **One-click Add to Channels DVR**: each lineup becomes a Channels DVR source with your choice of guide data,
+  stream limit, numbering and logos. **Automatic sync** pushes every later change to the DVR within seconds and
+  downloads the guide when it changes, so you never press *Refresh* in Channels DVR.
 - **Gracenote guide data** through Channels DVR's own station search, with one-click suggestions, or
   **XMLTV** from your provider.
 - **Optional transcoding** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
@@ -158,16 +161,25 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    - **None**: no guide data.
 7. **Lineups.** A default lineup holds all channels. Add more lineups if you want separate sources in the
    DVR (for example kids or sports).
-8. **Add coax to Channels DVR.** In the Channels DVR web UI, open *Settings*, *Sources*, add a *Custom
-   Channels* source, and fill in:
-   - Stream format: **MPEG-TS**
-   - Source URL: `http://<coax-host>:7780/output/m3u/<lineup>.m3u` (for example `.../output/m3u/main.m3u`).
-     Use the URL exactly as shown, without a path-rewriting proxy in between.
-   - XMLTV guide data (only if you use XMLTV or Both): `http://<coax-host>:7780/output/xmltv/<lineup>.xml`
-   - Stream limit: the total of your lines' max streams, or leave it unlimited.
+8. **Add each lineup to Channels DVR.** On the *Lineups* page, press **Add to Channels DVR** on a lineup and
+   pick:
+   - **Guide data**: Gracenote, XMLTV, or Gracenote with XMLTV as the fallback.
+   - **Stream limit**: how many channels the DVR may tune at once (coax suggests your providers' total).
+   - **Channel numbers**: use coax's numbers, or let Channels DVR number them from a start you choose.
+   - **Channel logos**: coax's logos or the guide's.
+   - **Source name**: how it appears in the DVR's Sources list.
 
-   The exact menu names can differ between Channels DVR versions. Channels with a Gracenote station id map to
-   Channels DVR guide data automatically.
+   coax creates the custom source in Channels DVR for you (MPEG-TS, coax's M3U and XMLTV addresses), loads its
+   channels and starts a guide download. You do not need to open Channels DVR's settings.
+
+   **It stays in sync on its own.** After that, every change you make in coax (adding, removing, renaming or
+   renumbering channels, new guide matches, logos) is pushed to Channels DVR a few seconds later: coax refreshes
+   the source and, when channels or guide ids changed, downloads the guide again. There is no *Refresh* button to
+   press in Channels DVR. *Sync now* on the lineup card forces it, and the card shows when it last synced.
+
+   To add a source by hand instead (for example on another DVR), use *Custom Channels* with stream format
+   **MPEG-TS**, the source URL `http://<coax-host>:7780/output/m3u/<lineup>.m3u`, and, for XMLTV guide data,
+   `http://<coax-host>:7780/output/xmltv/<lineup>.xml`. A source added by hand is not kept in sync.
 
 The *Status* page shows live sessions, viewers, which line each channel holds, refresh results, and the log.
 
