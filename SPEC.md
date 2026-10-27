@@ -78,6 +78,26 @@ must change, say so in your final report instead of changing it silently.
   (return `"********"`; saving `"********"` keeps the old value).
 - `config.py` fills defaults for missing keys and migrates by `version`.
 
+## Lineups (profiles) and guide sources
+- A **lineup** is a named profile, for example "Cable" and "NFL". Each lineup is added to the DVR as its own
+  custom source, with its own M3U URL (`/output/m3u/<lineup>.m3u`) and XMLTV URL (`/output/xmltv/<lineup>.xml`).
+- A channel can belong to any number of lineups. Lineups never share or reserve tuner slots; slots come only from
+  provider lines.
+- Each lineup has a **guide source**: `gracenote` (station IDs in the M3U, `tvc-guide-stationid`), `xmltv`
+  (no station IDs; guide comes from the lineup's XMLTV file), `both` (station IDs where a channel has one, XMLTV
+  for the rest), or `per-channel` (use each channel's own `guide.mode`). Example: "Cable" = gracenote,
+  "NFL" = xmltv.
+- **XMLTV is a first-class guide source**, not an extra. Per channel the user can pick the XMLTV channel id from
+  any provider's XMLTV feed (searchable picker with display names), or from an extra standalone XMLTV URL added in
+  Settings (`xmltv_sources: [{"id","name","url","refresh_hours"}]`). The XMLTV output for a lineup contains only
+  that lineup's channels, ids rewritten to `coax-<channel id>`, and is regenerated after every guide refresh.
+- The Lineups page shows, per lineup, its channel count, guide source, both URLs with copy buttons, and a
+  one-line instruction for adding it as a custom source in the DVR (for an xmltv lineup: set the source's guide
+  to the XMLTV URL).
+- Config: `"lineups": [{"id": "cable", "name": "Cable", "guide": "gracenote", "channels": [1, 2]},
+  {"id": "nfl", "name": "NFL", "guide": "xmltv", "channels": [40, 41]}]` and top-level `"xmltv_sources": []`.
+  `output.m3u` and `xmltv.refresh` follow the lineup's guide setting.
+
 ## Groups, refresh, and connection pools (must work like Dispatcharr)
 - **Group selection.** After adding a provider, coax fetches its live categories. The user picks which groups to
   bring in (searchable checklist with stream counts, select all/none). Only streams in selected groups are
