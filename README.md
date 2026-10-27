@@ -371,9 +371,9 @@ about 45 seconds behind the broadcast, add a little end padding for those channe
 
 ## GPU transcoding
 
-Transcoding is off by default and most setups do not need it. When on, coax uses the first encoder that works:
+Transcoding is off by default to maintain broad compatibility. When on, coax uses the first encoder that works:
 Intel or AMD graphics through VAAPI, then NVIDIA NVENC, then the CPU. The image build fails if its `ffmpeg`
-lacks `h264_vaapi` or `h264_nvenc`, so both are always present.
+lacks `h264_vaapi` or `h264_nvenc`, so both are always present. It is highly recommended to turn transcoding on to ensure stream stability. 
 
 **Why turn it on.** Transcoding is the only way coax can keep one steady format across backup feeds and
 refill the reserve after a long outage:
