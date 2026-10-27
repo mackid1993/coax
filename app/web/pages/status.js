@@ -110,7 +110,8 @@ function drawSessions(sessions) {
         <div><div class="stat-label">Bitrate</div><div class="stat-value">${fmtRate(h[h.length - 1] || 0)}</div></div>
         <div><div class="stat-label">Uptime</div><div class="stat-value">${fmtDuration(x.uptime)}</div></div>
       </div>
-      <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}</div>
+      <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}${feedBadge(x)}</div>
+      ${eventsHtml(x)}
       <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
       ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtAgo(c.connected).replace(" ago", "")}</span>` : ""}</span>`).join("")}</div>` : ""}
     </article>`;
@@ -121,6 +122,21 @@ function tcBadge(x) {
   if (t.on) return `<span class="badge badge-ok" title="Encoding with ${esc(t.encoder || "")}"><span class="dot pulse"></span>Transcoding ${esc(t.profile || "")} · ${esc(/NVENC/.test(t.encoder) ? "NVENC" : /VAAPI/.test(t.encoder) ? "VAAPI" : "CPU")}</span>`;
   if (t.profile && t.profile !== "off") return `<span class="badge badge-warn" title="Transcoding is set but the engine has not reported its encoder yet"><span class="dot"></span>Transcode ${esc(t.profile)} starting</span>`;
   return `<span class="badge" title="Streams pass through untouched"><span class="dot" style="opacity:.5"></span>Passthrough</span>`;
+}
+function feedBadge(x) {
+  const n = Number(x.stream_no) || 1;
+  return n === 1 ? `<span class="badge" title="Playing the channel's first stream"><span class="dot"></span>Main stream</span>`
+    : `<span class="badge badge-warn" title="Playing a backup stream after a failover"><span class="dot pulse"></span>Backup stream ${n}</span>`;
+}
+const EV_ICON = { failover: "⇄", placeholder: "⛔", avsync: "♪", rejoin: "↻", speed: "⏱", reserve: "▣", stall: "…",
+  error: "!", keepalive: "♥", recording: "●", viewers: "👥", transcode: "⚙", restart: "↻" };
+function eventsHtml(x) {
+  const ev = (x.events || []).slice().reverse();
+  if (!ev.length) return `<div class="ev-empty faint small">No corrections needed so far.</div>`;
+  const time = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  return `<details class="events" ${ev.some((e) => e.level !== "info" && Date.now() / 1000 - e.t < 600) ? "open" : ""}>
+    <summary><span>What coax corrected</span><span class="faint small">${ev.length} event${ev.length === 1 ? "" : "s"}</span></summary>
+    <ol>${ev.map((e) => `<li class="ev ev-${esc(e.level)}"><span class="ev-t num">${esc(time(e.t))}</span><span class="ev-i">${EV_ICON[e.kind] || "•"}</span><span class="ev-x">${esc(e.text)}</span></li>`).join("")}</ol></details>`;
 }
 function speedBadge(x) {
   const s = x.speed || {};

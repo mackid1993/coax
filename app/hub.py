@@ -19,6 +19,7 @@ still connected, it is restarted on the same line and slot (the engine resumes i
 timeline from its own state files), up to RESTART_LIMIT times per RESTART_WINDOW.
 """
 
+import collections
 import logging
 import re
 import os
@@ -63,6 +64,44 @@ def _redact(text):
     return text
 
 
+def _r(p):
+    return re.compile(p, re.I)
+
+
+# Engine log line -> (kind, level, plain-English text) for the Status page timeline.
+EVENT_RULES = [
+    (_r(r"switching to stream (\d+) of (\d+)"), "failover", "warn",
+     lambda m: "Switched to %s (stream %s of %s)" % ("the main stream" if m.group(1) == "1" else "backup stream",
+                                                     m.group(1), m.group(2))),
+    (_r(r"offline placeholder"), "placeholder", "warn", "Provider showed an offline placeholder; avoiding it"),
+    (_r(r"audio and video are ([\d.]+)s apart"), "avsync", "warn",
+     lambda m: "Audio and video %ss apart in this feed; held back" % m.group(1)),
+    (_r(r"audio and video back in step"), "avsync", "ok", "Audio and video back in step"),
+    (_r(r"provider restarted the channel"), "rejoin", "warn", "Provider restarted the channel; rejoined at live"),
+    (_r(r"timeline jumped ([\d.]+)s"), "rejoin", "warn", lambda m: "Timeline jumped %ss; re-synced" % m.group(1)),
+    (_r(r"continuing on the new stream timeline seamlessly"), "rejoin", "ok", "Joined the new stream seamlessly"),
+    (_r(r"playing 3 percent slower"), "speed", "warn",
+     lambda m: "Reserve low; playing 3% slower to rebuild it"),
+    (_r(r"back to real speed"), "speed", "ok", "Reserve rebuilt; back to real speed"),
+    (_r(r"reserve:? empty"), "reserve", "bad", "Reserve empty; picture now arrives only as fast as the provider sends it"),
+    (_r(r"reserve:? refilled to (\d+)s"), "reserve", "ok", lambda m: "Reserve refilled to %ss" % m.group(1)),
+    (_r(r"playlist stale (\d+)s"), "stall", "info", lambda m: "Provider playlist stalled %ss; covered by the reserve" % m.group(1)),
+    (_r(r"catching up (\d+) segments"), "stall", "info", lambda m: "Caught up %s late segments" % m.group(1)),
+    (_r(r"playlist error \(([^)]{0,60})"), "error", "warn", lambda m: "Provider error: %s" % m.group(1)),
+    (_r(r"stream error \(([^)]{0,60})"), "error", "warn", lambda m: "Stream error: %s" % m.group(1)),
+    (_r(r"(stream|backup stream) (\d+) of (\d+) (failed|is not answering)"), "error", "warn",
+     lambda m: "Stream %s of %s %s; skipping it for a while" % (m.group(2), m.group(3), m.group(4))),
+    (_r(r"sending keepalive packets"), "keepalive", "warn", "No new video; kept the connection alive"),
+    (_r(r"video flowing again after ([\d.]+)s"), "keepalive", "ok", lambda m: "Video back after %ss" % m.group(1)),
+    (_r(r"skipped segment"), "stall", "warn", "Skipped a broken segment"),
+    (_r(r"recording: (.+) extended by (\d+)s"), "recording", "ok",
+     lambda m: "Recording %s extended by %ss" % (m.group(1)[:40], m.group(2))),
+    (_r(r"viewer buffer: (\d+) viewers"), "viewers", "info", lambda m: "%s viewers; new viewer given a head start" % m.group(1)),
+    (_r(r"transcoding with (.+)$"), "transcode", "info", lambda m: "Transcoding with %s" % m.group(1)),
+    (_r(r"resuming after an engine restart"), "restart", "info", "Resumed after an engine restart"),
+]
+
+
 def _int(value, default=0):
     try:
         return int(value)
@@ -96,6 +135,8 @@ class Session:
         self.slow_since = None
         self.reserve = None         # seconds of reserve from the engine's last status/refill line
         self.reserve_empty = False  # engine says video only arrives as fast as the provider sends it
+        self.events = collections.deque(maxlen=60)  # what the engine corrected, newest last
+        self.stream_no = 1          # which of the channel's streams is playing (1 = main)
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
         self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
         self.proc = None
@@ -133,8 +174,25 @@ class Session:
             except Exception:  # noqa: BLE001
                 pass
 
+    def event(self, kind, text, level="info"):
+        self.events.append({"t": time.time(), "kind": kind, "text": text, "level": level})
+
     def _watch(self, line):
         """Pick transcode and real-time state out of the engine's log lines (display only)."""
+        for pattern, kind, level, fmt in EVENT_RULES:
+            m = pattern.search(line)
+            if m:
+                try:
+                    text = fmt(m) if callable(fmt) else fmt
+                except Exception:  # noqa: BLE001
+                    text = line
+                self.event(kind, text, level)
+                if kind == "failover":
+                    try:
+                        self.stream_no = int(m.group(1))
+                    except (IndexError, ValueError, TypeError):
+                        pass
+                break
         m = re.search(r"transcoding with (.+)$", line)
         if m:
             self.encoder = m.group(1).strip()
@@ -242,6 +300,7 @@ class Session:
                                 self.name, code)
                     return
             log.warning("[%s] engine exited (code %s); restarting it on the same line", self.name, code)
+            self.event("restart", "Engine stopped (code %s); restarted on the same line" % code, "warn")
             time.sleep(RESTART_DELAY)
 
     def close(self):
@@ -428,6 +487,8 @@ class Hub:
                               "encoder": s.encoder},
                 "speed": {"slow": s.slow, "since": s.slow_since, "reserve": s.reserve,
                           "empty": s.reserve_empty},
+                "stream_no": s.stream_no,
+                "events": list(s.events)[-25:],
                 "engine_pid": proc.pid if proc is not None and proc.poll() is None else None,
                 "clients": [{"ip": s.client_ip, "user_agent": s.user_agent,
                              "connected": round(now - s.started_at, 1), "bytes": s.bytes_out}],

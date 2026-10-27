@@ -657,3 +657,19 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
   animation: spin 800ms linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } .am-bar span { transition: none; } }
+
+/* ---------- Per-channel correction timeline ---------- */
+.events { border-top: 1px solid var(--border); padding-top: 8px; }
+.events summary { display: flex; justify-content: space-between; cursor: pointer; font-size: 12.5px; font-weight: 600; list-style: none; }
+.events summary::-webkit-details-marker { display: none; }
+.events summary::before { content: "▸"; margin-right: 6px; color: var(--muted, #8a93a8); transition: transform 150ms ease; }
+.events[open] summary::before { transform: rotate(90deg); }
+.events summary span:first-child { margin-right: auto; }
+.events ol { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.ev { display: grid; grid-template-columns: 78px 18px 1fr; gap: 6px; font-size: 12px; line-height: 1.4; padding: 3px 6px; border-radius: 6px; }
+.ev-t { color: var(--muted, #8a93a8); }
+.ev-i { text-align: center; }
+.ev-warn { background: var(--warn-soft); }
+.ev-bad { background: var(--bad-soft); color: var(--bad); }
+.ev-ok .ev-i { color: var(--ok); }
+.ev-empty { border-top: 1px solid var(--border); padding-top: 8px; }
