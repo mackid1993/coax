@@ -3,7 +3,7 @@
 coax is a small, frozen IPTV appliance for a Channels DVR server. Playlists come in (Xtream Codes or M3U), and out go
 a steady tuner stream per channel, an M3U with Gracenote station IDs, and an optional XMLTV guide. It replaces
 Dispatcharr for this one job, reusing the stream engine already proven in production
-(`app/engine/hlsloop.py`, `app/engine/tsloop.py`, copied from mackid1993/channels-dvr-stationid-matcher).
+(`app/engine/hlsloop.py`, `app/engine/tsloop.py`, copied from mackid1993/channels-dvr-iptv-tools).
 
 ## Non-negotiables
 - **Appliance.** Fixed scope, built once, frozen. No auto-update, no code downloaded at runtime, no telemetry.

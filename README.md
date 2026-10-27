@@ -88,11 +88,15 @@ docker compose -f docker-compose.vpn.yml up -d
 What to set:
 
 1. **VPN settings.** Gluetun is set up entirely with environment variables and builds the tunnel itself;
-   there are no config files to mount. The compose file uses Gluetun's custom WireGuard provider, which works
-   with any WireGuard VPN. Put your provider's values in a `.env` file next to the compose file:
-   `WG_ENDPOINT_IP`, `WG_ENDPOINT_PORT`, `WG_PUBLIC_KEY`, `WG_PRIVATE_KEY`, `WG_ADDRESSES`, and
-   `WG_PRESHARED_KEY` if your provider uses one. See Gluetun's
-   [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
+   there are no config files to mount. The compose file has two examples; use one:
+   - **WireGuard** (active by default): Gluetun's custom provider, which works with any WireGuard VPN. Put
+     `WG_ENDPOINT_IP`, `WG_ENDPOINT_PORT`, `WG_PUBLIC_KEY`, `WG_PRIVATE_KEY`, `WG_ADDRESSES`, and
+     `WG_PRESHARED_KEY` if your provider uses one, in a `.env` file next to the compose file. See Gluetun's
+     [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
+   - **OpenVPN** (commented out): a built-in provider with your VPN login. Comment out the WireGuard block,
+     uncomment the OpenVPN one, and put `VPN_PROVIDER`, `OPENVPN_USER`, `OPENVPN_PASSWORD` and
+     `SERVER_COUNTRIES` in `.env`.
+   Keep `.env` private (`chmod 600 .env`).
    To use one of Gluetun's built-in providers instead (Mullvad, ProtonVPN, and many more), replace the
    `gluetun` environment with the settings from your provider's page in the
    [provider setup list](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers).
@@ -284,7 +288,7 @@ Actions by commit SHA.
 ## Credits
 
 - The stream engine (`app/engine/hlsloop.py`, `app/engine/tsloop.py`) comes from
-  [mackid1993/channels-dvr-stationid-matcher](https://github.com/mackid1993/channels-dvr-stationid-matcher),
+  [mackid1993/channels-dvr-iptv-tools](https://github.com/mackid1993/channels-dvr-iptv-tools),
   where it ran in production as Dispatcharr stream profiles.
 - Tuner sharing and group handling follow the behavior of [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.

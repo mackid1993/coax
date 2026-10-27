@@ -3,14 +3,17 @@
 # Gluetun setup guide: https://github.com/qdm12/gluetun-wiki
 #
 # Gluetun is configured entirely with environment variables; it builds the tunnel itself. No config files.
-# This example uses Gluetun's custom WireGuard provider, which works with any WireGuard VPN. Copy the values
-# from your provider's WireGuard details into a .env file next to this compose file (keys below).
-#   Custom WireGuard: https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md
-# For a built-in provider (Mullvad, ProtonVPN, Windscribe, ...) replace the gluetun environment with the
-# variables from that provider's page: https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
+# Two examples below; use ONE of them and delete or comment out the other:
+#   A. WireGuard (active): Gluetun's custom WireGuard provider, works with any WireGuard VPN.
+#      https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md
+#   B. OpenVPN (commented): a built-in provider with your VPN username and password.
+# Every built-in provider (Mullvad, ProtonVPN, Windscribe, PIA, NordVPN, ...) lists its exact variables here:
+#   https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
 #
-# 1. Create .env with WG_ENDPOINT_IP, WG_ENDPOINT_PORT, WG_PUBLIC_KEY, WG_PRIVATE_KEY, WG_ADDRESSES
-#    (and WG_PRESHARED_KEY if your provider uses one). Keep it private: chmod 600 .env
+# 1. Create .env next to this file and keep it private (chmod 600 .env):
+#      WireGuard: WG_ENDPOINT_IP, WG_ENDPOINT_PORT, WG_PUBLIC_KEY, WG_PRIVATE_KEY, WG_ADDRESSES
+#                 (and WG_PRESHARED_KEY if your provider uses one)
+#      OpenVPN:   VPN_PROVIDER, OPENVPN_USER, OPENVPN_PASSWORD, SERVER_COUNTRIES
 # 2. Set FIREWALL_OUTBOUND_SUBNETS below to your LAN so coax can still reach Channels DVR.
 #    Without it, Gluetun's firewall blocks all LAN traffic that is not a reply.
 # 3. docker compose -f docker-compose.vpn.yml up -d
@@ -26,6 +29,7 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     environment:
+      # ---- A. WireGuard (custom provider) ----
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
       - WIREGUARD_ENDPOINT_IP=${WG_ENDPOINT_IP}
@@ -34,6 +38,14 @@ services:
       - WIREGUARD_PRIVATE_KEY=${WG_PRIVATE_KEY}
       - WIREGUARD_PRESHARED_KEY=${WG_PRESHARED_KEY:-}
       - WIREGUARD_ADDRESSES=${WG_ADDRESSES}
+      # ---- B. OpenVPN (built-in provider) ----
+      # Comment out block A, then uncomment these. VPN_PROVIDER is the provider's name as written on its
+      # Gluetun wiki page (for example windscribe, mullvad, protonvpn, private internet access).
+      # - VPN_SERVICE_PROVIDER=${VPN_PROVIDER}
+      # - VPN_TYPE=openvpn
+      # - OPENVPN_USER=${OPENVPN_USER}
+      # - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
+      # - SERVER_COUNTRIES=${SERVER_COUNTRIES}
       # Your LAN, comma separated, e.g. 192.168.1.0/24. Lets coax reach Channels DVR outside the tunnel.
       # Must not overlap the VPN's own address range.
       - FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24
