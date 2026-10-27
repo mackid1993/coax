@@ -631,7 +631,7 @@ def _suggest_with(matcher, channel_name, cdvr_url, tvg_id, limit, wide, search_f
 
 
 def bulk_suggest(channels, cdvr_url="", index=None, countries=None, limit=5,
-                 cache_dir=None, search_fn=None):
+                 cache_dir=None, search_fn=None, progress=None):
     """Suggestions for many channels at once.
 
     channels: config channel dicts (uses "id", "name", optional "tvg_id").
@@ -666,4 +666,9 @@ def bulk_suggest(channels, cdvr_url="", index=None, countries=None, limit=5,
             log.exception("Suggest failed for channel %r", name)
             result = {"status": ERROR, "reason": str(e), "best": None, "candidates": []}
         results.append(dict(result, channel_id=channel.get("id"), name=name))
+        if progress:
+            try:
+                progress(len(results))
+            except Exception:  # noqa: BLE001
+                pass
     return results

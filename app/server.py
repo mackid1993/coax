@@ -204,6 +204,8 @@ class App:
         self.refresh_results = {}   # provider id -> last result dict
         self.refreshing = set()
         self.dvr = None             # app.channels_dvr.Syncer, set by main (created on demand otherwise)
+        self.automatch_job = None   # {id, state, done, total, phase, started, finished, result, error}
+        self.automatch_lock = threading.Lock()
 
     # -- refresh
     def start_refresh(self, provider_id, wait=False):
@@ -492,6 +494,8 @@ class Handler(BaseHTTPRequestHandler):
         ("PUT", r"/api/xmltv/sources/([A-Za-z0-9_-]+)", "h_xmltv_source_update"),
         ("DELETE", r"/api/xmltv/sources/([A-Za-z0-9_-]+)", "h_xmltv_source_delete"),
         ("POST", r"/api/automatch", "h_automatch"),
+        ("POST", r"/api/automatch/start", "h_automatch_start"),
+        ("GET", r"/api/automatch/job", "h_automatch_job"),
         ("POST", r"/api/channels/apply", "h_channels_apply"),
         ("GET", r"/api/lineups", "h_lineups_list"),
         ("POST", r"/api/lineups", "h_lineups_create"),
@@ -1438,10 +1442,54 @@ class Handler(BaseHTTPRequestHandler):
         return {"deleted": source_id, "channels_cleared": cleared}
 
     # ------------------------------------------------------------ one-screen setup
+    def h_automatch_start(self):
+        """Start Auto-match in the background so leaving the page does not stop it."""
+        body = self._body_object()
+        ids = self._ids(body)
+        app = self.app
+        with app.automatch_lock:
+            job = app.automatch_job
+            if job and job["state"] == "running":
+                return self._job_view(job)
+            job = {"id": "%x" % int(time.time() * 1000), "state": "running", "done": 0, "total": len(ids) * 2,
+                   "phase": "guide", "ids": ids, "started": time.time(), "finished": None, "result": None,
+                   "error": None}
+            app.automatch_job = job
+        log.info("auto-match started for %d channels", len(ids))
+
+        def run():
+            try:
+                job["result"] = self._automatch_compute(body, ids, job)
+                job["state"] = "done"
+                log.info("auto-match finished in %.0fs", time.time() - job["started"])
+            except Exception as exc:  # noqa: BLE001
+                job["state"], job["error"] = "error", (exc.message if isinstance(exc, ApiError) else str(exc))
+                log.warning("auto-match failed: %s", job["error"])
+            finally:
+                job["finished"] = time.time()
+                job["done"] = job["total"]
+        threading.Thread(target=run, name="coax-automatch", daemon=True).start()
+        return self._job_view(job)
+
+    def h_automatch_job(self):
+        job = self.app.automatch_job
+        if not job:
+            return {"state": "none"}
+        view = self._job_view(job)
+        if job["state"] == "done" and self.query.get("result") == "1":
+            view["result"] = job["result"]
+        return view
+
+    @staticmethod
+    def _job_view(job):
+        return {k: job[k] for k in ("id", "state", "done", "total", "phase", "ids", "started", "finished", "error")}
+
     def h_automatch(self):
         body = self._body_object()
+        return self._automatch_compute(body, self._ids(body), None)
+
+    def _automatch_compute(self, body, ids, job):
         cfg = self.app.store.get()
-        ids = self._ids(body)
         channels = [find_channel(cfg, cid) for cid in ids]
         out = {str(c["id"]): {"guide": [], "backups": []} for c in channels}
 
@@ -1451,7 +1499,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             gracenote = lazy("app.guide.gracenote")
             inputs = [dict(id=c["id"], name=c["name"], tvg_id=c["guide"].get("xmltv_id", "")) for c in channels]
-            raw = call_flexible(gracenote.bulk_suggest, inputs, cdvr_url=cdvr, countries=countries) or []
+            tick = (lambda n: job.__setitem__("done", n)) if job else None
+            raw = call_flexible(gracenote.bulk_suggest, inputs, cdvr_url=cdvr, countries=countries,
+                                progress=tick) or []
             if isinstance(raw, dict):
                 pairs = [(str(k), v) for k, v in raw.items()]
             else:
@@ -1482,7 +1532,11 @@ class Handler(BaseHTTPRequestHandler):
                     entry = None
                 if entry:
                     catalogs[provider["id"]] = entry["catalog"]
-            for channel in channels:
+            if job:
+                job["phase"], job["done"] = "backups", len(channels)
+            for n, channel in enumerate(channels, 1):
+                if job:
+                    job["done"] = len(channels) + n
                 try:
                     out[str(channel["id"])]["backups"] = list(suggest(copy.deepcopy(channel), catalogs) or [])
                 except Exception as exc:  # noqa: BLE001 - one channel never stops the batch

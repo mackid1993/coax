@@ -33,6 +33,8 @@ export const routes = {
   channelsAutonumber: () => "/api/channels/auto-number",
   channelsApply: () => "/api/channels/apply",
   automatch: () => "/api/automatch",
+  automatchStart: () => "/api/automatch/start",
+  automatchJob: (result) => `/api/automatch/job${result ? "?result=1" : ""}`,
   gracenoteSearch: (q) => `/api/gracenote/search${qs({ q })}`,
   gracenoteSuggest: (p) => `/api/gracenote/suggest${qs(p)}`,
   gracenoteBulkSuggest: () => "/api/gracenote/bulk-suggest",
@@ -130,6 +132,8 @@ export const api = {
   autonumber: (body) => post(routes.channelsAutonumber(), body),
   // {channel_id: {guide: [candidates], backups: [{provider, stream_id, name, score, reason}]}}
   automatch: (ids) => post(routes.automatch(), { ids }, { timeout: 300000 }),
+  automatchStart: (ids) => post(routes.automatchStart(), { ids }),
+  automatchJob: (result = false) => get(routes.automatchJob(result), { timeout: 10000 }),
   // {channels: [{id, guide: {...}, streams: [...]}]}
   applyChannels: (channels) => post(routes.channelsApply(), { channels }, { timeout: 60000 }),
 

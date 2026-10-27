@@ -33,9 +33,11 @@ export async function mount(el) {
   try { S.cat.open = localStorage.getItem("coax.catalog") !== "0"; } catch {}
   renderFrame();
   await reload();
+  try { S.amSeen = sessionStorage.getItem("coax.amSeen") || ""; } catch {}
+  watchAutoMatch();
   loadCatalogGroups().then(() => loadCatalog());
 }
-export function unmount() { S = null; }
+export function unmount() { clearTimeout(amTimer); S = null; }
 
 async function reload() {
   try {
@@ -360,7 +362,7 @@ async function onClick(e) {
       break;
     case "clear-filters": S.filter = "all"; S.q = ""; S.lineup = ""; S.group = ""; renderFrame(); break;
     case "autonumber": autoNumberModal(); break;
-    case "automatch": busy(a, autoMatch); break;
+    case "automatch": autoMatch(); break;
     case "accept": busy(a, acceptChecked); break;
     case "check-high": checkHigh(); break;
     case "discard": S.pending.clear(); if (S.filter === "pending") S.filter = "all"; renderFrame(); break;
@@ -556,16 +558,55 @@ function autoNumberModal() {
 }
 
 // ---------- Auto-match ----------
+let amTimer = null;
 async function autoMatch() {
   const ids = S.selected.size ? [...S.selected] : visibleChannels().map((c) => c.id);
   if (!ids.length) { toast("Nothing to match", "Add channels first.", "warn"); return; }
-  let res;
-  try {
-    res = await api.automatch(ids);
-  } catch (e) {
-    toastError("Auto-match failed", e);
-    return;
+  try { await api.automatchStart(ids); } catch (e) { toastError("Auto-match failed", e); return; }
+  watchAutoMatch();
+}
+// Polls the server-side job. Runs on mount too, so leaving the page never loses a match in progress.
+function watchAutoMatch() {
+  clearTimeout(amTimer);
+  const tick = async () => {
+    if (!S) return;
+    let j;
+    try { j = await api.automatchJob(false); } catch { amTimer = setTimeout(tick, 2000); return; }
+    if (!S) return;
+    if (j.state === "running") { drawAmProgress(j); amTimer = setTimeout(tick, 1000); return; }
+    drawAmProgress(null);
+    if (j.state === "error") { toastError("Auto-match failed", new Error(j.error || "unknown error")); return; }
+    if (j.state === "done" && j.id && S.amSeen !== j.id) {
+      let full;
+      try { full = await api.automatchJob(true); } catch (e) { toastError("Auto-match failed", e); return; }
+      if (!S) return;
+      S.amSeen = j.id;
+      try { sessionStorage.setItem("coax.amSeen", j.id); } catch {}
+      applyAutoMatch(full.ids || [], full.result || {});
+    }
+  };
+  tick();
+}
+function drawAmProgress(j) {
+  let el = $("#amProgress", root);
+  if (!j) { el?.remove(); const b = $('[data-act="automatch"]', root); if (b) b.disabled = false; return; }
+  const pct = j.total ? Math.min(100, Math.round((j.done / j.total) * 100)) : 0;
+  const n = (j.ids || []).length;
+  const label = j.phase === "backups" ? "Finding backup streams" : "Matching Gracenote stations";
+  if (!el) {
+    const host = $(".counters", root);
+    if (!host) return;
+    host.insertAdjacentHTML("beforebegin", `<div class="card am-progress" id="amProgress" role="status" aria-live="polite">
+      <div class="row" style="gap:10px"><span class="spinner"></span><b>Auto-match</b><span class="faint small am-label"></span><span class="spacer"></span><span class="num am-pct"></span></div>
+      <div class="am-bar"><span></span></div></div>`);
+    el = $("#amProgress", root);
   }
+  el.querySelector(".am-label").textContent = `${label} · ${n} channel${n === 1 ? "" : "s"} · runs in the background, you can leave this page`;
+  el.querySelector(".am-pct").textContent = `${pct}%`;
+  el.querySelector(".am-bar span").style.width = `${pct}%`;
+  const b = $('[data-act="automatch"]', root); if (b) b.disabled = true;
+}
+function applyAutoMatch(ids, res) {
   const results = res?.results || res || {};
   let guideN = 0, backN = 0;
   for (const id of ids) {
