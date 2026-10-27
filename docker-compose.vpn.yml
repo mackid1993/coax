@@ -58,9 +58,6 @@ services:
   coax:
     # :latest is the newest release. To freeze a version, use its number instead (e.g. :1.0.0).
     image: ghcr.io/mackid1993/coax:latest
-    labels:
-      # Icon for Unraid Compose Manager and other dashboards that read it.
-      net.unraid.docker.icon: https://raw.githubusercontent.com/mackid1993/coax/main/assets/brand/coax-icon-256.png
     container_name: coax
     restart: unless-stopped
     # All traffic goes through Gluetun. No ports: here; they are on the gluetun service.
