@@ -687,16 +687,16 @@ function guideModal(c) {
     wide: true,
     body: `
       <div class="row row-wrap" style="margin-bottom:16px">${logo(c.logo, c.name, "logo-lg")}<div><div style="font-weight:620;font-size:16px">${esc(c.name)}</div><div class="faint small">${esc(c.group || "")}${xmltvOnly(c) ? " · in XMLTV-only lineups" : ""}</div></div><span class="spacer"></span>
-      <div class="seg" role="group" aria-label="Guide mode">${modes.map(([v, l]) => `<button type="button" class="seg-accent" data-mode="${v}" aria-pressed="${g.mode === v}">${l}</button>`).join("")}</div></div>
+      </div>
       <div class="grid grid-2">
         <div class="stack" data-pane="gn">
-          <div class="label">Gracenote station <span class="faint" id="gnCur">${g.station_id ? `· current <span class="num">${esc(g.station_id)}</span>` : ""}</span></div>
+          <div class="label">Gracenote station <button type="button" class="btn btn-ghost btn-sm" data-gclear style="padding:0 6px">Clear</button> <span class="faint" id="gnCur">${g.station_id ? `· current <span class="num">${esc(g.station_id)}</span>` : ""}</span></div>
           <label class="search"><span class="sr-only">Search stations</span>${icon("search")}<input class="input" id="gnQ" placeholder="Call sign, name or station id" value="${esc(c.name)}"></label>
           <div class="row" style="gap:8px"><input class="input input-sm mono" id="gnManual" inputmode="numeric" placeholder="Or type a station ID" value="${esc(g.station_id || "")}" style="flex:1"><button type="button" class="btn btn-sm" data-manual>Use this ID</button></div>
           <div class="result-list" id="gnList">${p?.guide?.cands?.length ? candList(p.guide.cands, g.station_id) : `<div class="faint small">Search to see stations.</div>`}</div>
         </div>
         <div class="stack" data-pane="xm">
-          <div class="label">XMLTV channel <span class="faint">${g.xmltv_id ? `· current <span class="mono">${esc(g.xmltv_id)}</span>` : ""}</span></div>
+          <div class="label">XMLTV channel <button type="button" class="btn btn-ghost btn-sm" data-xclear style="padding:0 6px">Clear</button> <span class="faint">${g.xmltv_id ? `· current <span class="mono">${esc(g.xmltv_id)}</span>` : ""}</span></div>
           <div class="row"><select class="input" id="xmSrc" style="flex:0 0 42%">${sources.map((s) => `<option value="${esc(s.id)}" ${s.id === g.xmltv_provider ? "selected" : ""}>${esc(s.name)}${s.kind === "source" ? " (XMLTV)" : ""}</option>`).join("") || `<option value="">No sources</option>`}</select>
           <label class="search" style="flex:1"><span class="sr-only">Search XMLTV ids</span>${icon("search")}<input class="input" id="xmQ" placeholder="Search id or name"></label></div>
           <div class="result-list" id="xmList"><div class="faint small">Loading ids…</div></div>
@@ -709,7 +709,7 @@ function guideModal(c) {
     $("#gSummary", el).innerHTML = `Mode <b>${esc(g.mode)}</b>${g.station_id ? ` · station <span class="num">${esc(g.station_id)}</span>` : ""}${g.xmltv_id ? ` · xmltv <span class="mono">${esc(g.xmltv_id)}</span>` : ""}`;
     $$("[data-pane]", el).forEach((pane) => {
       const on = pane.dataset.pane === "gn" ? g.mode === "gracenote" || g.mode === "both" : g.mode === "xmltv" || g.mode === "both";
-      pane.style.opacity = on ? "1" : ".45";
+      pane.style.opacity = "1"; void on;
     });
   };
   summary();
@@ -723,6 +723,8 @@ function guideModal(c) {
       $("#gnCur", el).innerHTML = `· current <span class="num">${esc(v)}</span>`;
       summary(); return;
     }
+    if (e.target.closest("[data-gclear]")) { g.station_id = ""; g.call_sign = ""; g.station_name = ""; g.confidence = null; $("#gnCur", el).innerHTML = ""; $$("[data-station]", el).forEach((b) => b.classList.remove("picked")); summary(); return; }
+    if (e.target.closest("[data-xclear]")) { g.xmltv_id = ""; $$("[data-xmid]", el).forEach((b) => b.classList.remove("picked")); summary(); return; }
     const mb = e.target.closest("[data-mode]");
     if (mb) { g.mode = mb.dataset.mode; $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b === mb)); summary(); return; }
     const st = e.target.closest("[data-station]");
@@ -782,6 +784,7 @@ function guideModal(c) {
   const save = async (goNext) => {
     try {
       g.reviewed = $("#gLeft", el).checked;
+      g.mode = g.station_id && g.xmltv_id ? "both" : g.station_id ? "gracenote" : g.xmltv_id ? "xmltv" : "none";
       const r = await api.updateChannel(c.id, { guide: g });
       Object.assign(c, r && typeof r === "object" && r.id ? r : { guide: g });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.guide = null; if (!pp.backups?.length) S.pending.delete(c.id); }
