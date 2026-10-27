@@ -322,6 +322,12 @@ Actions by commit SHA.
 - [FFmpeg](https://ffmpeg.org/), [Requests](https://requests.readthedocs.io/) and
   [cryptography](https://cryptography.io/).
 
+## Updates
+
+coax is built to need as few updates as possible. It is meant to be set up once and left alone, so new
+releases are rare on purpose. A long gap since the last release does not mean the project is abandoned;
+it is still used and maintained.
+
 ## Contributing
 
 coax is provided as is. Issues, bug reports, feature requests and pull requests are not accepted. Forks and remixes are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
