@@ -1,3 +1,4 @@
+import { initPopovers } from "./popover.js";
 // coax web UI entry: router, theme, server health. Pages live in pages/*.js.
 import { api } from "./api.js";
 import { $, icon, esc } from "./ui.js";
@@ -111,5 +112,6 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+initPopovers();
 window.addEventListener("hashchange", route);
 route();

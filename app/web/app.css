@@ -623,3 +623,27 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
 .badge .dot.pulse { animation: dotpulse 1.6s ease-in-out infinite; }
 @keyframes dotpulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .badge .dot.pulse { animation: none; } }
+
+/* ---------- Popovers ---------- */
+.popover { position: fixed; z-index: 1000; max-width: min(420px, calc(100vw - 16px)); padding: 10px 14px 11px;
+  border-radius: 12px; pointer-events: none; opacity: 0; transform: translateY(4px) scale(.98);
+  transition: opacity 160ms ease, transform 160ms ease;
+  background: linear-gradient(180deg, rgba(30, 38, 70, .96), rgba(14, 19, 40, .97));
+  border: 1px solid rgba(94, 234, 212, .28);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .04) inset, 0 0 24px rgba(34, 211, 238, .12);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #E8EEF9; }
+.popover.open { opacity: 1; transform: none; }
+.popover.measuring { transition: none; opacity: 0; }
+.popover::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #5EEAD4, #22D3EE, #6366F1); }
+.popover::after { content: ""; position: absolute; left: calc(var(--arrow-x, 50%) - 6px); bottom: -6px; width: 12px; height: 12px;
+  background: rgba(14, 19, 40, .97); border-right: 1px solid rgba(94, 234, 212, .28); border-bottom: 1px solid rgba(94, 234, 212, .28);
+  transform: rotate(45deg); }
+.popover.below::after { bottom: auto; top: -6px; transform: rotate(225deg); }
+.popover .pop-title { font-weight: 620; font-size: 13.5px; line-height: 1.35; word-break: break-word; }
+.popover .pop-sub { margin-top: 3px; font-size: 12px; color: #9AA4BD; word-break: break-word; }
+[data-theme="light"] .popover { background: linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(243, 246, 251, .98));
+  color: #0F172A; border-color: rgba(34, 211, 238, .45); box-shadow: 0 14px 34px rgba(15, 23, 42, .18); }
+[data-theme="light"] .popover::after { background: rgba(243, 246, 251, .98); border-color: rgba(34, 211, 238, .45); }
+[data-theme="light"] .popover .pop-sub { color: #5B6478; }
+@media (prefers-reduced-motion: reduce) { .popover { transition: none; transform: none; } }
