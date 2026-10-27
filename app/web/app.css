@@ -620,3 +620,6 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
 .session-card { position: relative; overflow: hidden; }
 .session-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: var(--accent-grad); }
 .gradient-text { background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.badge .dot.pulse { animation: dotpulse 1.6s ease-in-out infinite; }
+@keyframes dotpulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .badge .dot.pulse { animation: none; } }

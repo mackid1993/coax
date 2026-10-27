@@ -48,7 +48,12 @@ async function poll() {
   if (!root || !root.isConnected) return;
   const got = Array.isArray(r) ? r : r?.lines || [];
   if (r?.last_seq != null) seq = r.last_seq;
-  if (got.length) { lines = lines.concat(got).slice(-MAX); if (!paused) draw(); }
+  if (got.length) {
+    lines = lines.concat(got).slice(-MAX);
+    if (paused) return;
+    if (view.level === "all" && view.source === "all" && !view.q && lines.length < MAX) append(got);
+    else draw();
+  }
   else if (!lines.length) draw();
 }
 
@@ -61,12 +66,28 @@ function keep(l) {
   if (view.q && !`${l.name} ${l.msg}`.toLowerCase().includes(view.q)) return false;
   return true;
 }
+const lineHtml = (l) => {
+  const lv = lvOf(l);
+  const cls = /ERROR|CRIT/.test(lv) ? "lv-err" : /WARN/.test(lv) ? "lv-warn" : "";
+  const t = l.ts ? String(l.ts).replace("T", " ").slice(5, 23) : "";
+  const tag = ({ WARNING: "WARN", CRITICAL: "CRIT" })[lv] || lv;
+  return `<span class="ts">${esc(t)}</span> <span class="${cls}">${esc(tag.padEnd(5).slice(0, 5))}</span> <span class="ts">${esc(String(l.name || "").replace(/^coax\./, ""))}</span> <span class="${cls}">${esc(l.msg ?? "")}</span>`;
+};
+function append(got) {
+  const el = $("#log", root);
+  if (!el) return;
+  if (el.dataset.empty) { el.textContent = ""; delete el.dataset.empty; }
+  el.insertAdjacentHTML("beforeend", (el.childNodes.length ? "\n" : "") + got.map(lineHtml).join("\n"));
+  $("#lCount", root).textContent = `${lines.length} lines`;
+  if (follow) el.scrollTop = el.scrollHeight;
+}
 function draw() {
   const el = $("#log", root);
   if (!el) return;
   const shown = lines.filter(keep);
   $("#lCount", root).textContent = `${shown.length} of ${lines.length} lines${paused ? " · paused" : ""}`;
-  if (!shown.length) { el.innerHTML = `<span class="ts">${lines.length ? "No lines match the filter." : "Waiting for log lines…"}</span>`; return; }
+  if (!shown.length) { el.innerHTML = `<span class="ts">${lines.length ? "No lines match the filter." : "Waiting for log lines…"}</span>`; el.dataset.empty = "1"; return; }
+  delete el.dataset.empty;
   el.innerHTML = shown.map((l) => {
     const lv = lvOf(l);
     const cls = /ERROR|CRIT/.test(lv) ? "lv-err" : /WARN/.test(lv) ? "lv-warn" : "";

@@ -91,6 +91,11 @@ class Session:
         self.started_at = time.time()
         self.bytes_out = 0
         self.restarts = []          # monotonic times of engine restarts
+        self.encoder = None         # "Intel/AMD graphics (VAAPI)", "NVIDIA graphics (NVENC)", "the CPU ..."
+        self.slow = False           # engine is playing 3% slower to refill its reserve
+        self.slow_since = None
+        self.reserve = None         # seconds of reserve from the engine's last status/refill line
+        self.reserve_empty = False  # engine says video only arrives as fast as the provider sends it
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
         self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
         self.proc = None
@@ -118,6 +123,7 @@ class Session:
             for raw in iter(proc.stderr.readline, b""):
                 line = _redact(raw.decode("utf-8", "replace").rstrip())
                 if line:
+                    self._watch(line)
                     log.info("[%s] %s", self.name, line)
         except Exception:  # noqa: BLE001
             pass
@@ -126,6 +132,27 @@ class Session:
                 proc.stderr.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _watch(self, line):
+        """Pick transcode and real-time state out of the engine's log lines (display only)."""
+        m = re.search(r"transcoding with (.+)$", line)
+        if m:
+            self.encoder = m.group(1).strip()
+        if "percent slower" in line:
+            self.slow, self.slow_since = True, time.time()
+        elif "back to real speed" in line:
+            self.slow, self.slow_since = False, None
+        if "reserve: empty" in line:
+            self.reserve_empty = True
+        m = re.search(r"reserve(?::)? (?:refilled to |back to |down to )?(\d+)s", line)
+        if m:
+            self.reserve = int(m.group(1))
+            if "refilled" in line or "back to" in line:
+                self.reserve_empty = False
+        m = re.search(r"status: .*?reserve (\d+)s", line)
+        if m:
+            self.reserve = int(m.group(1))
+            self.reserve_empty = self.reserve < 2
 
     @staticmethod
     def _kill(proc, close_stdout=True):
@@ -397,6 +424,10 @@ class Hub:
                 "line_id": s.line_id, "line": s.line_name, "stream_id": s.stream_id,
                 "uptime": round(now - s.started_at, 1), "bytes": s.bytes_out,
                 "bitrate_bps": int(s.bytes_out * 8 / up), "restarts": len(s.restarts),
+                "transcode": {"on": bool(s.encoder), "profile": (self._config().get("transcode") or "off"),
+                              "encoder": s.encoder},
+                "speed": {"slow": s.slow, "since": s.slow_since, "reserve": s.reserve,
+                          "empty": s.reserve_empty},
                 "engine_pid": proc.pid if proc is not None and proc.poll() is None else None,
                 "clients": [{"ip": s.client_ip, "user_agent": s.user_agent,
                              "connected": round(now - s.started_at, 1), "bytes": s.bytes_out}],

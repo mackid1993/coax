@@ -110,10 +110,24 @@ function drawSessions(sessions) {
         <div><div class="stat-label">Bitrate</div><div class="stat-value">${fmtRate(h[h.length - 1] || 0)}</div></div>
         <div><div class="stat-label">Uptime</div><div class="stat-value">${fmtDuration(x.uptime)}</div></div>
       </div>
+      <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}</div>
       <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
       ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtAgo(c.connected).replace(" ago", "")}</span>` : ""}</span>`).join("")}</div>` : ""}
     </article>`;
   }).join("");
+}
+function tcBadge(x) {
+  const t = x.transcode || {};
+  if (t.on) return `<span class="badge badge-ok" title="Encoding with ${esc(t.encoder || "")}"><span class="dot pulse"></span>Transcoding ${esc(t.profile || "")} · ${esc(/NVENC/.test(t.encoder) ? "NVENC" : /VAAPI/.test(t.encoder) ? "VAAPI" : "CPU")}</span>`;
+  if (t.profile && t.profile !== "off") return `<span class="badge badge-warn" title="Transcoding is set but the engine has not reported its encoder yet"><span class="dot"></span>Transcode ${esc(t.profile)} starting</span>`;
+  return `<span class="badge" title="Streams pass through untouched"><span class="dot" style="opacity:.5"></span>Passthrough</span>`;
+}
+function speedBadge(x) {
+  const s = x.speed || {};
+  const r = s.reserve != null ? ` · ${s.reserve}s reserve` : "";
+  if (s.empty) return `<span class="badge badge-bad" title="The reserve is empty: video plays as fast as the provider sends it, so stalls show on screen"><span class="dot"></span>Live edge, no reserve</span>`;
+  if (s.slow) return `<span class="badge badge-warn" title="Refilling the reserve: video and audio play 3% slower until it is back up"><span class="dot pulse"></span>Behind real time, 3% slower${esc(r)}</span>`;
+  return `<span class="badge badge-ok" title="Playing at real speed"><span class="dot"></span>Real time${esc(r)}</span>`;
 }
 function spark(vals, key) {
   const w = 300, h = 44;
