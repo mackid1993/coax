@@ -291,6 +291,8 @@ def validate(cfg):
         for cid in members:
             _require(cid in channel_ids, "lineup %s: unknown channel %s" % (lid, cid))
         _require(len(set(members)) == len(members), "lineup %s: a channel is listed twice" % lid)
+        # Optional Channels DVR source settings written by app.channels_dvr (kept as is).
+        _require(isinstance(lineup.get("dvr", {}), dict), "lineup %s: dvr must be an object" % lid)
     return cfg
 
 
@@ -376,6 +378,8 @@ class ConfigStore:
         self.data_dir = os.path.dirname(os.path.abspath(path))
         self._lock = threading.RLock()
         self._cfg = None
+        # Change hooks: each is called as listener(old_cfg, new_cfg) after update() or replace() swaps in a config.
+        self.listeners = []
 
     # -- reading
     def load(self):
@@ -426,8 +430,9 @@ class ConfigStore:
             cfg = fill_defaults(cfg)
             validate(cfg)
             self._write(cfg)
-            self._cfg = cfg
-            return result
+            old, self._cfg = self._cfg, cfg
+        self._notify(old, cfg)
+        return result
 
     def replace(self, new_cfg):
         """Replace the whole config (passwords that are MASK keep the stored value)."""
@@ -440,8 +445,17 @@ class ConfigStore:
             new_cfg = fill_defaults(new_cfg)
             validate(new_cfg)
             self._write(new_cfg)
-            self._cfg = new_cfg
-            return new_cfg
+            old, self._cfg = self._cfg, new_cfg
+        self._notify(old, new_cfg)
+        return new_cfg
+
+    def _notify(self, old_cfg, new_cfg):
+        """Tell every listener about a new config. A failing listener is logged, never raised."""
+        for listener in list(self.listeners):
+            try:
+                listener(old_cfg, new_cfg)
+            except Exception:  # noqa: BLE001
+                log.exception("config listener failed")
 
     def _ensure_mode(self):
         try:

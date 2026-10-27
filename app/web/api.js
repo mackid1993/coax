@@ -39,6 +39,8 @@ export const routes = {
   xmltvIds: (provider, q, limit = 200) => `/api/xmltv/ids${qs({ provider, q, limit })}`,
   lineups: () => "/api/lineups",
   lineup: (id) => `/api/lineups/${enc(id)}`,
+  lineupDvr: (id) => `/api/lineups/${enc(id)}/dvr`,
+  lineupDvrSync: (id) => `/api/lineups/${enc(id)}/dvr/sync`,
   status: () => "/api/status",
   network: () => "/api/network",
   log: (since, limit = 500) => `/api/log${qs({ since, limit })}`,
@@ -139,6 +141,11 @@ export const api = {
   createLineup: (l) => post(routes.lineups(), l),
   updateLineup: (id, l) => put(routes.lineup(id), l),
   deleteLineup: (id) => del(routes.lineup(id)),
+  // {key, dvr, last_sync, defaults, dvr_url_set, base_url_set, in_dvr, source, error}
+  lineupDvr: (id) => get(routes.lineupDvr(id), { timeout: 15000 }),
+  // body {guide, limit, numbering, start_number, logos, name}
+  addLineupToDvr: (id, opts) => post(routes.lineupDvr(id), opts, { timeout: 90000 }),
+  syncLineupDvr: (id) => post(routes.lineupDvrSync(id), {}, { timeout: 90000 }),
 
   status: () => get(routes.status(), { timeout: 8000 }),
   // {ip, country, checked_at, error}

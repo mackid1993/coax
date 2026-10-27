@@ -40,6 +40,16 @@ def start_hub(store):
         return None
 
 
+def start_dvr_sync(store):
+    """Keep Channels DVR sources of added lineups in step with config changes."""
+    try:
+        dvr = importlib.import_module("app.channels_dvr")
+        return dvr.Syncer(store).register()
+    except Exception:  # noqa: BLE001 - coax works without the DVR sync
+        log.exception("Channels DVR sync failed to start")
+        return None
+
+
 def set_data_dir(path):
     """Point every module that keeps files under /data at the directory holding config.json."""
     data_dir = os.path.dirname(os.path.abspath(path))
@@ -77,6 +87,7 @@ def main(argv=None):
     port = int(cfg["server"].get("port") or 7780)
     hub = start_hub(store)
     app = servermod.App(store, hub)
+    app.dvr = start_dvr_sync(store)
     try:
         httpd = servermod.make_server(app, "", port)
     except OSError as exc:

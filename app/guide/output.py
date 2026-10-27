@@ -37,7 +37,8 @@ def m3u(config, lineup_id):
       #EXTINF:-1 channel-id="coax-<id>" tvg-id="coax-<id>" tvg-name=".." tvg-logo=".."
         group-title=".." channel-number=".." tvc-guide-stationid="..",<name>
       {base_url}/stream/{uuid}.ts
-    tvc-guide-stationid appears only for guide mode gracenote or both with a station id.
+    tvc-guide-stationid follows the lineup's guide: always (when the channel has a station id) for
+    gracenote and both, never for xmltv, and for per-channel only when the channel's mode is gracenote or both.
     """
     lineup = find_lineup(config, lineup_id)
     if lineup is None:
@@ -47,6 +48,7 @@ def m3u(config, lineup_id):
     for ch in config.get("channels") or []:
         channels.setdefault(str(ch.get("id")), ch)
 
+    lineup_guide = lineup.get("guide") or "per-channel"
     lines = ["#EXTM3U"]
     seen = set()
     for cid in lineup.get("channels") or []:
@@ -66,7 +68,13 @@ def m3u(config, lineup_id):
         ]
         g = ch.get("guide") or {}
         station_id = _attr(g.get("station_id"))
-        if g.get("mode") in STATION_ID_MODES and station_id:
+        if lineup_guide in STATION_ID_MODES:
+            wants_station = True
+        elif lineup_guide == "xmltv":
+            wants_station = False
+        else:
+            wants_station = g.get("mode") in STATION_ID_MODES
+        if wants_station and station_id:
             attrs.append(("tvc-guide-stationid", station_id))
         attr_text = " ".join(f'{key}="{_attr(value)}"' for key, value in attrs)
         lines.append(f"#EXTINF:-1 {attr_text},{_title(name)}")

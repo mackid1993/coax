@@ -130,7 +130,8 @@ If any entry is invalid, the response is 400 and nothing is saved.
 ## Lineups
 
 A lineup's `guide` is one of `gracenote`, `xmltv`, `both` or `per-channel` (the default; uses each channel's
-`guide.mode`). The output URLs are `/output/m3u/<id>.m3u` and `/output/xmltv/<id>.xml`.
+`guide.mode`). `gracenote` and `both` put `tvc-guide-stationid` on every channel that has a station id, `xmltv`
+never does. The output URLs are `/output/m3u/<id>.m3u` and `/output/xmltv/<id>.xml`.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -138,6 +139,28 @@ A lineup's `guide` is one of `gracenote`, `xmltv`, `both` or `per-channel` (the 
 | POST | `/api/lineups` | `{name, id?, guide?, channels?: [ids], all_channels?: bool}`. The id comes from the name when it is not given. | lineup |
 | PUT | `/api/lineups/<id>` | `{name?, guide?, channels?}` | lineup |
 | DELETE | `/api/lineups/<id>` | | `{"deleted": id}` |
+| GET | `/api/lineups/<id>/dvr` | | `{"key", "dvr", "last_sync", "defaults": {guide, limit, default_limit, numbering, start_number, logos, name}, "dvr_url_set", "base_url_set", "in_dvr", "source", "error"}` |
+| POST | `/api/lineups/<id>/dvr` | `{guide: "gracenote"\|"xmltv"\|"gracenote_xmltv", limit?, numbering?: ""\|"ignore", start_number?, logos?: ""\|"guide", name?}` (missing fields use `defaults`) | `{"key", "name", "created", "refreshed", "guide_lineup", "guide_started", "url", "xmltv_url"}` |
+| POST | `/api/lineups/<id>/dvr/sync` | | `{"at", "ok", "error", "refreshed", "guide_started", "source_updated", "guide_lineup"?}` |
+
+### Channels DVR source per lineup
+
+`POST /api/lineups/<id>/dvr` creates or updates the custom M3U source `coax<id letters and digits>` in Channels
+DVR (`PUT {dvr}/providers/m3u/sources/<key>`), reloads it (`POST .../<key>/refresh`), then looks up its DVR
+lineup in `GET {dvr}/dvr/lineups` (key `M3U-<key>`, up to 5 tries) and starts a guide download with
+`PUT {dvr}/dvr/lineups/<lineup id>`. Guide options: `gracenote` (station IDs, no XMLTV URL), `xmltv`
+(`guide_preference: xmltv` plus the lineup's XMLTV URL) and `gracenote_xmltv` (station IDs preferred, XMLTV URL as
+fallback). The choice is saved as the lineup's `guide` (`gracenote`, `xmltv`, `both`) and the source options
+as `lineup.dvr: {key, name, limit, numbering, start_number, logos, added_at}`. The default stream limit is the sum
+of line limits of the lineup's providers, each capped by the provider limit (empty when any is unlimited).
+
+After any config change (3 s debounce), every lineup with `dvr` set is compared with what was last synced: a
+changed playlist reloads the source; new channels, changed guide ids or a changed lineup guide also rebuild the
+XMLTV file (xmltv and both lineups) and start a DVR guide download. A changed guide mode or base URL rewrites the
+source first. Failures are logged under `coax.dvr` and shown as `last_sync`.
+
+Errors: 400 when `channels_dvr.url` or `server.base_url` is empty or an option is invalid, 404 for an unknown
+lineup, 502 with the DVR's message when the DVR rejects a request or cannot be reached.
 
 ## Status and log
 

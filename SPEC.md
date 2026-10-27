@@ -97,6 +97,11 @@ must change, say so in your final report instead of changing it silently.
 - Config: `"lineups": [{"id": "cable", "name": "Cable", "guide": "gracenote", "channels": [1, 2]},
   {"id": "nfl", "name": "NFL", "guide": "xmltv", "channels": [40, 41]}]` and top-level `"xmltv_sources": []`.
   `output.m3u` and `xmltv.refresh` follow the lineup's guide setting.
+- **Add to Channels DVR** (`app/channels_dvr.py`): one click per lineup creates or updates its custom M3U source
+  in the DVR (guide: Gracenote only, XMLTV only, or Gracenote preferred with XMLTV fallback; stream limit; channel
+  numbering; logos; name), reloads it and starts a guide download. Afterwards coax keeps the source in sync: a
+  ConfigStore listener debounces changes for 3 s, reloads the DVR source when the lineup's playlist changes and
+  also starts a guide download when channels are added or guide ids change. See API.md.
 
 ## Groups, refresh, and connection pools (must work like Dispatcharr)
 - **Group selection.** After adding a provider, coax fetches its live categories. The user picks which groups to

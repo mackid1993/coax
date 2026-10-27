@@ -202,6 +202,7 @@ class App:
         self.refresh_lock = threading.Lock()
         self.refresh_results = {}   # provider id -> last result dict
         self.refreshing = set()
+        self.dvr = None             # app.channels_dvr.Syncer, set by main (created on demand otherwise)
 
     # -- refresh
     def start_refresh(self, provider_id, wait=False):
@@ -471,6 +472,9 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/lineups", "h_lineups_create"),
         ("PUT", r"/api/lineups/([A-Za-z0-9_-]+)", "h_lineup_update"),
         ("DELETE", r"/api/lineups/([A-Za-z0-9_-]+)", "h_lineup_delete"),
+        ("GET", r"/api/lineups/([A-Za-z0-9_-]+)/dvr", "h_lineup_dvr_status"),
+        ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr", "h_lineup_dvr_add"),
+        ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr/sync", "h_lineup_dvr_sync"),
         ("GET", r"/api/status", "h_status"),
         ("GET", r"/api/log", "h_log"),
     ]
@@ -1499,6 +1503,51 @@ class Handler(BaseHTTPRequestHandler):
             cfg["lineups"] = [l for l in cfg["lineups"] if l["id"] != lineup_id]
         self.app.store.update(mutate)
         return {"deleted": lineup_id}
+
+    # ------------------------------------------------------------ Channels DVR source per lineup
+    def _dvr(self):
+        """(module, syncer). The syncer is made on first use when main did not create one (tests)."""
+        module = lazy("app.channels_dvr")
+        if self.app.dvr is None:
+            self.app.dvr = module.Syncer(self.app.store, start=False)
+        return module, self.app.dvr
+
+    def _dvr_call(self, func, *args):
+        module = lazy("app.channels_dvr")
+        try:
+            return func(*args)
+        except module.DvrError as exc:
+            raise ApiError(exc.status, exc.message)
+
+    def h_lineup_dvr_status(self, lineup_id):
+        module, syncer = self._dvr()
+        cfg = self.app.store.get()
+        lineup = find_lineup(cfg, lineup_id)
+        out = {"key": module.source_key(lineup_id), "dvr": copy.deepcopy(lineup.get("dvr")),
+               "last_sync": syncer.last_result(lineup_id),
+               "defaults": self._dvr_call(module.defaults, cfg, lineup_id),
+               "dvr_url_set": bool((cfg["channels_dvr"].get("url") or "").strip()),
+               "base_url_set": bool((cfg["server"].get("base_url") or "").strip()),
+               "in_dvr": False, "source": None, "error": ""}
+        if out["dvr_url_set"]:
+            out.update(self._dvr_call(module.status, cfg, lineup_id))
+        return out
+
+    def h_lineup_dvr_add(self, lineup_id):
+        body = self._body_object()
+        _module, syncer = self._dvr()
+        find_lineup(self.app.store.get(), lineup_id)
+        return self._dvr_call(syncer.add, lineup_id, body)
+
+    def h_lineup_dvr_sync(self, lineup_id):
+        module, syncer = self._dvr()
+        cfg = self.app.store.get()
+        find_lineup(cfg, lineup_id)
+        self._dvr_call(module.dvr_url, cfg)
+        result = syncer.sync_now(lineup_id)
+        if result and not result.get("ok"):
+            raise ApiError(502, result.get("error") or "Channels DVR sync failed")
+        return result
 
     # ------------------------------------------------------------ status and log
     def h_status(self):

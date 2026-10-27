@@ -150,6 +150,8 @@ def build_plan(config):
     lineup_providers = {}
     for lineup in config.get("lineups") or []:
         deps = lineup_providers.setdefault(str(lineup.get("id")), set())
+        # An xmltv or both lineup uses every channel's XMLTV id; otherwise the channel's own mode decides.
+        lineup_wants_xmltv = lineup.get("guide") in GUIDE_MODES
         for cid in lineup.get("channels") or []:
             try:
                 ch = channels.get(int(cid))
@@ -159,7 +161,7 @@ def build_plan(config):
                 continue
             g = ch.get("guide") or {}
             xmltv_id = (g.get("xmltv_id") or "").strip()
-            if g.get("mode") not in GUIDE_MODES or not xmltv_id:
+            if not (lineup_wants_xmltv or g.get("mode") in GUIDE_MODES) or not xmltv_id:
                 continue
             pid = _channel_provider(ch)
             if not pid:
