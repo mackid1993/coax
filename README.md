@@ -573,9 +573,25 @@ coax runs as uid 1000. At each start the container changes the owner of `/data` 
 it is owned by someone else. If you run the container with `user:` set, it skips that step, and you have to
 make the folder writable yourself (`sudo chown -R 1000:1000 data`).
 
-coax cleans up after itself once a day: engine state files that have not been touched for a day,
-caches for providers, XMLTV sources and lineups you deleted, health history for deleted channels, and
-health history or Gracenote region indexes older than 30 days. Config backups follow their own *keep* setting.
+### Automatic cleanup
+
+coax deletes files it no longer needs so the data folder does not grow forever. The cleanup runs once when
+coax starts and then every 24 hours. It only ever touches the files listed here, and only coax's own files:
+
+| What | Where | Deleted when |
+| --- | --- | --- |
+| Engine state files (`hlsloop-*`, `tsloop-*`), one per tuned channel | `/tmp` inside the container | not written for 24 hours. A playing channel rewrites its file every second, so a live stream is never affected. |
+| Half-written temporary files (`.tmp*`, `*.tmp`) | `cache/` | older than 24 hours |
+| Recording jobs (`hlsloop-jobs-*`, `tsloop-jobs-*`) | `cache/` | older than 24 hours |
+| Provider catalog and XMLTV id lists (`catalog-<id>.json`, `xmltv-ids-<id>.json`) | `cache/` | the provider or XMLTV source was deleted, and the file is older than 24 hours |
+| Lineup guides (`xmltv-<lineup>.xml`) | `cache/` | the lineup was deleted, and the file is older than 24 hours |
+| Channel health history (`history/<channel>.jsonl`) | `cache/history/` | the channel was deleted (after 24 hours), or the file was not written for 30 days |
+| Gracenote region index (`gracenote-index-*.json`) | `cache/` | not updated for 30 days; it is rebuilt the next time it is needed |
+
+It never deletes `config.json`, `config.json.bak`, config backups (those follow the backup *keep* setting),
+or anything that belongs to a provider, lineup or channel you still have. Everything it removes is a cache coax
+can rebuild. When it deletes something, the log says `cleanup: removed N old files`. There is no setting for
+it.
 
 ## Troubleshooting
 
