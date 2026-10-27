@@ -68,7 +68,7 @@ Channel names, providers and logos below are made up for the demo.
   downloads the guide when it changes, so you never press *Refresh* in Channels DVR.
 - **Gracenote guide data** through Channels DVR's own station search, with one-click suggestions, or
   **XMLTV** from your provider.
-- **Optional transcoding** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
+- **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
   (VAAPI), NVIDIA (NVENC), or the CPU.
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log.
@@ -189,7 +189,7 @@ The *Status* page shows live sessions, viewers, which line each channel holds, r
 | --- | --- |
 | Base URL | The address written into the M3U stream links. Must be reachable from the DVR. |
 | Channels DVR URL | Your DVR, `http://IP:8089`. Used for Gracenote search and the viewer buffer. |
-| Transcode | `off` (pass through, default) or one fixed format such as `1080p60`. See [GPU transcoding](#gpu-transcoding). |
+| Transcode | One fixed format such as `1080p60` (recommended), or `off` to pass streams through (the default). See [GPU transcoding](#gpu-transcoding). |
 | Provider refresh hours | How often each provider's catalog is refreshed. A failed refresh keeps the last good catalog. |
 
 ## How playback stays smooth
