@@ -290,7 +290,14 @@ Actions by commit SHA.
 - The stream engine (`app/engine/hlsloop.py`, `app/engine/tsloop.py`) comes from
   [mackid1993/channels-dvr-iptv-tools](https://github.com/mackid1993/channels-dvr-iptv-tools),
   where it ran in production as Dispatcharr stream profiles.
-- Tuner sharing and group handling follow the behavior of [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
+- The tuner handoff to Channels DVR (`app/hub.py`: one connection, one engine, one line slot; copy with a
+  flush after every chunk; stop the engine before freeing its slot) and the one-click "Add to Channels DVR"
+  and source refresh (`app/channels_dvr.py`) are adapted from
+  [ah4c (Android HDMI for Channels)](https://github.com/sullrich/ah4c) by sullrich and contributors,
+  ported from its Go code (`main.go`, `m3uintegration.go`). ah4c is released under an MIT-style license,
+  Copyright 2023 Fancy Bits, LLC.
+- Provider ingest, group selection, connection limits and refresh follow the behavior of
+  [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.
 - [FFmpeg](https://ffmpeg.org/), [Requests](https://requests.readthedocs.io/) and
   [cryptography](https://cryptography.io/).

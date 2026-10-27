@@ -1,5 +1,8 @@
 """Channels DVR integration: add a lineup as a custom M3U source and keep it in sync.
 
+Adapted from ah4c's m3uintegration.go (github.com/sullrich/ah4c; MIT-style license,
+Copyright 2023 Fancy Bits, LLC): PUT /providers/m3u/sources/<key>, then POST .../refresh.
+
 add_or_update() creates or updates the DVR source for one lineup, reloads its channels and starts a guide
 download. Syncer watches config changes and, a few seconds after the last one, refreshes the DVR source of every
 lineup that was added this way (plus a guide download when channels or guide ids changed).

@@ -1,6 +1,7 @@
 """Tune a channel, run its engine, pipe the engine's output to the DVR.
 
-This follows ah4c's model (github.com/sullrich/ah4c, main.go: tune(), copyFlush(),
+This follows ah4c's model (github.com/sullrich/ah4c; MIT-style license, Copyright 2023
+Fancy Bits, LLC; main.go: tune(), copyFlush(),
 reader.Close()), which has proven reliable with Channels DVR:
 
 - One DVR connection = one engine process = one provider line slot. Channels DVR
