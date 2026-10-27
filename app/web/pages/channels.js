@@ -702,7 +702,7 @@ function guideModal(c) {
           <div class="result-list" id="xmList"><div class="faint small">Loading ids…</div></div>
         </div>
       </div>`,
-    foot: `<span class="faint small" style="margin-right:auto" id="gSummary"></span><label class="row small" style="gap:6px;margin-right:12px" title="Reviewed: take this channel out of the Needs attention queue"><input type="checkbox" id="gLeft" ${g.reviewed ? "checked" : ""}>Left as is</label><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save guide</button>`,
+    foot: `<span class="faint small" style="margin-right:auto" id="gSummary"></span><label class="row small" style="gap:6px;margin-right:12px" title="Reviewed: take this channel out of the Needs attention queue"><input type="checkbox" id="gLeft" ${g.reviewed ? "checked" : ""}>Left as is</label><button class="btn" data-close>Cancel</button><button class="btn" data-save-next title="Save and open the next channel in this list (Enter)">Save, next</button><button class="btn btn-primary" data-save>Save guide</button>`,
   });
   const el = m.el;
   const summary = () => {
@@ -773,16 +773,33 @@ function guideModal(c) {
   $("#xmSrc", el).addEventListener("change", searchXm);
   $("#xmQ", el).value = c.name.replace(/^[A-Z]{2,3}\s*[|:]\s*/, "").replace(/\b(HD|FHD|UHD|4K)\b/gi, "").trim();
   searchXm();
-  $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
+  // The next channel in the list as shown now (captured before saving, since saving can drop it from a filter).
+  const order = visibleChannels().map((x) => x.id);
+  const nextId = order[order.indexOf(c.id) + 1];
+  const save = async (goNext) => {
     try {
       g.reviewed = $("#gLeft", el).checked;
       const r = await api.updateChannel(c.id, { guide: g });
       Object.assign(c, r && typeof r === "object" && r.id ? r : { guide: g });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.guide = null; if (!pp.backups?.length) S.pending.delete(c.id); }
-      toast("Guide saved", c.name, "ok", 2500);
+      toast("Guide saved", c.name, "ok", 1500);
       m.close();
       renderFrame();
+      const next = goNext && nextId != null ? chById(nextId) : null;
+      if (next) guideModal(next);
+      else if (goNext) toast("End of the list", "", "info", 2000);
     } catch (err) { toastError("Could not save guide", err); }
+  };
+  $("[data-save]", el).onclick = (e) => busy(e.currentTarget, () => save(false));
+  $("[data-save-next]", el).onclick = (e) => busy(e.currentTarget, () => save(true));
+  // Enter saves and opens the next channel; Shift+Enter saves and closes.
+  // In the station ID box, Enter applies the typed ID first.
+  el.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    if (e.target.matches("button, select, a")) return;
+    e.preventDefault();
+    if (e.target.id === "gnManual" && e.target.value.trim()) $("[data-manual]", el).click();
+    save(!e.shiftKey);
   });
 }
 function candList(list, current) {
