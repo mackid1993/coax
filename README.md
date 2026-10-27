@@ -72,8 +72,7 @@ with its version number (for example `:1.0.0`) if you want to freeze one. Images
 
 ## Run it with a VPN (Gluetun)
 
-`docker-compose.vpn.yml` runs [Gluetun](https://github.com/qdm12/gluetun) (MIT license, by qdm12), pinned by
-digest, and puts coax in Gluetun's network, so all of coax's traffic (provider logins, playlists, guides,
+`docker-compose.vpn.yml` runs [Gluetun](https://github.com/qdm12/gluetun) (MIT license, by qdm12) on its `latest` tag, and puts coax in Gluetun's network, so all of coax's traffic (provider logins, playlists, guides,
 streams) goes through your VPN. If the tunnel drops, Gluetun blocks traffic rather than leaking it, and
 streams stop until it reconnects.
 
@@ -236,7 +235,7 @@ coax is meant to be frozen. Updating is a deliberate step:
    `:1.0.0` to `:1.1.0`.
 4. `docker compose pull && docker compose up -d` (add `-f docker-compose.vpn.yml` for the VPN setup).
 
-Gluetun is pinned too. Update it the same way when you choose to, by changing its tag and digest.
+Gluetun is deliberately not pinned: it is your VPN and firewall, so `docker compose pull` keeps its security fixes current.
 
 ## Data folder
 

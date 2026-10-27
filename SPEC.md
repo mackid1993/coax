@@ -8,7 +8,7 @@ Dispatcharr for this one job, reusing the stream engine already proven in produc
 ## Non-negotiables
 - **Appliance.** Fixed scope, built once, frozen. No auto-update, no code downloaded at runtime, no telemetry.
 - **Pinned everything.** Base image by digest, Debian packages from a fixed snapshot.debian.org date, Python
-  dependencies by exact version and hash (`--require-hashes`), GitHub Actions by commit SHA, Gluetun by digest.
+  dependencies by exact version and hash (`--require-hashes`), GitHub Actions by commit SHA. Gluetun is the exception: `latest`, for security fixes.
   Releases publish `latest` plus version tags (`1.0.0`, `1.0`); compose uses `latest`, versions allow freezing.
 - **No database.** All state is JSON under `/data`. Config writes are atomic (write temp file, fsync, rename).
   Keep one rolling backup `config.json.bak`.
@@ -261,7 +261,7 @@ together on one screen, in one pass, so setting up a lineup takes minutes:
   which encoder was chosen.
 - `requirements.txt` with exact versions and hashes.
 - `docker-compose.yml`: coax only, `./data:/data`, optional commented `/dev/dri`, restart unless-stopped.
-- `docker-compose.vpn.yml`: same plus Gluetun pinned by digest, `VPN_SERVICE_PROVIDER=custom`, WireGuard settings
+- `docker-compose.vpn.yml`: same plus Gluetun on `latest` (not pinned, for security fixes), `VPN_SERVICE_PROVIDER=custom`, WireGuard settings
   passed as environment variables from a `.env` file (Gluetun builds the tunnel itself; no config file), coax with `network_mode: service:gluetun`, port published on gluetun,
   `FIREWALL_OUTBOUND_SUBNETS` note for reaching the LAN. Gluetun is MIT-licensed; reference it, do not vendor it.
 - GitHub Actions: tests on push, build and publish amd64+arm64 images to
