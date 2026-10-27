@@ -101,6 +101,10 @@ def main(argv=None):
     except Exception:  # noqa: BLE001 - backups are optional
         log.exception("config backup scheduler failed to start")
     try:
+        importlib.import_module("app.cleanup").start(store, os.path.dirname(os.path.abspath(path)))
+    except Exception:  # noqa: BLE001 - cleanup is optional
+        log.exception("cleanup scheduler failed to start")
+    try:
         httpd = servermod.make_server(app, "", port)
     except OSError as exc:
         log.error("cannot listen on port %d: %s", port, exc)

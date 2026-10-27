@@ -541,6 +541,10 @@ coax runs as uid 1000. At each start the container changes the owner of `/data` 
 it is owned by someone else. If you run the container with `user:` set, it skips that step, and you have to
 make the folder writable yourself (`sudo chown -R 1000:1000 data`).
 
+coax cleans up after itself once a day: engine state files that have not been touched for a day,
+caches for providers, XMLTV sources and lineups you deleted, health history for deleted channels, and
+health history or Gracenote region indexes older than 30 days. Config backups follow their own *keep* setting.
+
 ## Troubleshooting
 
 - **The DVR cannot play a channel.** Check that the Base URL uses the coax host's LAN IP and that the DVR can
