@@ -33,7 +33,7 @@ export async function mount(el) {
   try { S.cat.open = localStorage.getItem("coax.catalog") !== "0"; } catch {}
   renderFrame();
   await reload();
-  try { S.amSeen = sessionStorage.getItem("coax.amSeen") || ""; } catch {}
+  S.amSeen = "";
   watchAutoMatch();
   loadCatalogGroups().then(() => loadCatalog());
 }
@@ -175,7 +175,7 @@ function renderFrame() {
     ${counter("Channels", k.total, `${fmtInt(k.enabled)} enabled`)}
     ${counter("Guide matched", k.guide, pctOf(k.guide, k.total), "unmatched")}
     ${counter("With backups", k.backups, pctOf(k.backups, k.total), "nobackups")}
-    ${k.missing ? counter("Vanished streams", k.missing, "flagged by refresh", "missing", "bad") : counter("Suggestions", k.pending, k.pending ? `${k.checked} checked` : "run Auto-match", "pending")}
+    ${k.missing ? counter("Vanished streams", k.missing, "flagged by refresh", "missing", "bad") : counter("Not saved yet", k.checked, k.pending ? "checked suggestions, press Save" : "run Auto-match", "pending")}
   </div>
   <div class="setup ${S.cat.open ? "with-catalog" : ""}">
     ${S.cat.open ? `<section class="card catalog" aria-label="Catalog">${catalogHtml()}</section>` : ""}
@@ -183,7 +183,7 @@ function renderFrame() {
       <div class="toolbar">
         <label class="search" style="flex:1 1 180px"><span class="sr-only">Filter channels</span>${icon("search")}<input class="input input-sm" data-search data-ch-q placeholder="Filter channels" value="${esc(S.q)}"><kbd>/</kbd></label>
         <div class="seg" role="group" aria-label="Filter">
-          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "Review")}${segBtn("left", "Left as is")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
+          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "To review")}${segBtn("left", "Left as is")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
         </div>
         <span class="spacer"></span>
         <label class="sr-only" for="lineupFilter">Lineup</label>
@@ -226,13 +226,22 @@ function counter(label, value, sub, filter = "", tone = "") {
 }
 const segBtn = (id, label) => `<button type="button" data-filter="${id}" aria-pressed="${S.filter === id}">${esc(label)}</button>`;
 
+function amSummary() {
+  let sure = 0, review = 0, backups = 0;
+  for (const p of S.pending.values()) {
+    if (p.guide?.cands?.length) (p.guide.status === "matched" || (!p.guide.status && p.guide.checked) ? sure++ : review++);
+    backups += (p.backups || []).length;
+  }
+  return { sure, review, backups };
+}
 function pendingBar() {
   const n = pendingCheckedCount();
-  return `<div class="selection-bar pending-bar">${icon("wand")}<span>${S.pending.size} channel${S.pending.size === 1 ? "" : "s"} with suggestions · <span class="num">${n}</span> checked</span>
+  const a = amSummary();
+  return `<div class="selection-bar pending-bar">${icon("wand")}<span>Auto-match found <b>${a.sure}</b> sure guide match${a.sure === 1 ? "" : "es"} (checked), <b>${a.review}</b> to review, and <b>${a.backups}</b> backup stream${a.backups === 1 ? "" : "s"}. Nothing is saved until you accept.</span>
     <span class="spacer"></span>
     <button class="btn btn-sm btn-ghost" data-act="check-high">Check high confidence</button>
     <button class="btn btn-sm btn-ghost" data-act="discard">Discard</button>
-    <button class="btn btn-sm btn-primary" data-act="accept" ${n ? "" : "disabled"}>${icon("check")}Accept all checked</button></div>`;
+    <button class="btn btn-sm btn-primary" data-act="accept" ${n ? "" : "disabled"}>${icon("check")}Save ${n} checked</button></div>`;
 }
 function selectionBar() {
   return `<div class="selection-bar">${S.selected.size} selected<span class="spacer"></span>
@@ -602,7 +611,6 @@ function watchAutoMatch() {
       try { full = await api.automatchJob(true); } catch (e) { toastError("Auto-match failed", e); return; }
       if (!S) return;
       S.amSeen = j.id;
-      try { sessionStorage.setItem("coax.amSeen", j.id); } catch {}
       applyAutoMatch(full.ids || [], full.result || {});
     }
   };
@@ -648,7 +656,7 @@ function applyAutoMatch(ids, res) {
     S.pending.set(id, { guide, backups });
   }
   if (!S.pending.size) toast("Auto-match finished", "No new suggestions. Everything already looks matched.", "info");
-  else toast("Suggestions ready", `${guideN} guide match${guideN === 1 ? "" : "es"} and ${backN} backup${backN === 1 ? "" : "s"}. Review and accept.`, "ok");
+  else { const a = amSummary(); toast("Auto-match done", `${a.sure} sure, ${a.review} to review, ${a.backups} backups. Press Save to keep the checked ones.`, "ok"); }
   renderFrame();
 }
 function checkHigh() {
