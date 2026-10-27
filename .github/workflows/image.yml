@@ -1,23 +1,31 @@
 name: image
 
-# Two paths share one Dockerfile:
-#   push to main / manual run -> build linux/amd64, smoke-test it, and upload it as a
-#                                 workflow artifact (coax-image.tar.gz). Nothing is published.
-#   tag v1.2.3                 -> build linux/amd64 + linux/arm64 and publish
-#                                 ghcr.io/mackid1993/coax:latest, :1.2.3 and :1.2.
+# Builds and publishes the Docker image ONLY when you run this workflow by hand
+# (Actions > image > Run workflow). Pushes never build or publish an image.
+#
+# Inputs:
+#   version  e.g. 1.0.0  -> published as ghcr.io/mackid1993/coax:1.0.0 (optional)
+#   tag      e.g. latest -> published as ghcr.io/mackid1993/coax:latest (optional; test, beta, ...)
+# At least one is required. Both point at the same image digest.
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number to publish as a tag (e.g. 1.0.0). Leave empty to skip."
+        required: false
+        default: ""
+      tag:
+        description: "Extra tag to publish (e.g. latest, test). Leave empty to skip."
+        required: false
+        default: "latest"
 
 permissions:
   contents: read
 
 concurrency:
-  group: image-${{ github.ref }}
-  cancel-in-progress: true
+  group: image
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -34,27 +42,55 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover tests -v
 
-  # Test build: amd64 only, started once and checked, saved as an artifact. Not published.
-  test-image:
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  publish:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
+      - name: Check inputs
+        id: tags
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          VERSION="${VERSION#v}"
+          image=ghcr.io/mackid1993/coax
+          tags=""
+          if [ -n "$VERSION" ]; then
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "::error::version must look like 1.0.0"; exit 1; }
+            tags="$image:$VERSION"
+          fi
+          if [ -n "$TAG" ]; then
+            [[ "$TAG" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo "::error::tag may use letters, digits, _ . - only"; exit 1; }
+            tags="${tags:+$tags,}$image:$TAG"
+          fi
+          [ -n "$tags" ] || { echo "::error::give a version, a tag, or both"; exit 1; }
+          echo "list=$tags" >> "$GITHUB_OUTPUT"
+          echo "Publishing: $tags" >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build (amd64)
+      # Build amd64 locally first and start it once, so a broken image is never published.
+      - name: Build for smoke test (amd64)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64
           load: true
           push: false
-          tags: coax:test
+          tags: coax:smoke
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -62,8 +98,8 @@ jobs:
         shell: bash
         run: |
           set -eu
-          # Let Docker create ./data as root, the way a first-time user would.
-          docker run -d --name coax -p 7780:7780 -v "$PWD/data:/data" coax:test
+          # Docker creates ./data as root, the way a first-time user's would be.
+          docker run -d --name coax -p 7780:7780 -v "$PWD/data:/data" coax:smoke
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:7780/healthz >/dev/null 2>&1; then break; fi
             sleep 1
@@ -79,36 +115,6 @@ jobs:
         if: always()
         run: docker logs coax 2>&1 | tail -n 100 || true
 
-      - name: Save image
-        run: docker save coax:test | gzip -1 > coax-image.tar.gz && ls -lh coax-image.tar.gz
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coax-image-${{ github.sha }}
-          path: coax-image.tar.gz
-          retention-days: 7
-          compression-level: 0
-
-  # Release: multi-arch, published to GHCR. Only for version tags.
-  release:
-    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
       - name: Log in to GHCR
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
@@ -116,25 +122,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Image metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ghcr.io/mackid1993/coax
-          flavor: |
-            latest=false
-          tags: |
-            type=raw,value=latest
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-
-      - name: Build and push
+      - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/mackid1993/coax
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.licenses=MIT
           cache-from: type=gha
           cache-to: type=gha,mode=max

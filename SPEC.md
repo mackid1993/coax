@@ -264,8 +264,8 @@ together on one screen, in one pass, so setting up a lineup takes minutes:
 - `docker-compose.vpn.yml`: same plus Gluetun pinned by digest, `VPN_SERVICE_PROVIDER=custom`, WireGuard settings
   passed as environment variables from a `.env` file (Gluetun builds the tunnel itself; no config file), coax with `network_mode: service:gluetun`, port published on gluetun,
   `FIREWALL_OUTBOUND_SUBNETS` note for reaching the LAN. Gluetun is MIT-licensed; reference it, do not vendor it.
-- GitHub Actions: tests on push, build amd64+arm64 image on push to main, publish to
-  `ghcr.io/mackid1993/coax` with version tags from git tags (`v1.0.0` -> `1.0.0`) and `main` for testing.
+- GitHub Actions: tests on push, build and publish amd64+arm64 images to
+  `ghcr.io/mackid1993/coax` only on manual dispatch, with a typed version number and a typed tag (e.g. latest).
   All actions pinned by SHA. Workflow `permissions:` minimal.
 - README: what it is, nominative reference to Channels DVR plus a not-affiliated disclaimer, quick start for both
   compose files, GPU, settings walkthrough, guide modes, troubleshooting, LAN-only warning, MIT.

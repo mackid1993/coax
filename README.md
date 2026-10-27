@@ -68,8 +68,7 @@ Docker creates `./data` on first start. If it ends up owned by root, coax fixes 
 starts as root only long enough to `chown` `/data` to uid 1000, then runs coax as uid 1000.
 
 The compose file uses `ghcr.io/mackid1993/coax:latest`, the newest release. Every release is also tagged
-with its version number (for example `:1.0.0`) if you want to freeze one. The `:main` tag is
-built from every commit on the main branch and is for testing only.
+with its version number (for example `:1.0.0`) if you want to freeze one. Images are only built and published when the maintainer runs the release workflow by hand.
 
 ## Run it with a VPN (Gluetun)
 

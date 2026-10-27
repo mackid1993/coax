@@ -1,8 +1,6 @@
 # coax, standalone.
 # Start: docker compose up -d   then open http://<this-host>:7780
 # ./data is created on first start; coax fixes its ownership itself.
-# Pin a released version. To try the newest development build, use
-# ghcr.io/mackid1993/coax:main instead (testing only, it changes without notice).
 services:
   coax:
     # :latest is the newest release. To freeze a version, use its number instead (e.g. :1.0.0).
