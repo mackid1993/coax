@@ -239,7 +239,7 @@ def parse_source(stream, wanted, route):
     Returns (available, found) where available is the picker list
     [{"id", "names", "icon"}] and found is the set of wanted xmltv ids seen.
     """
-    available, seen_ids, found = [], set(), set()
+    available, seen_ids, found = [], {}, set()
     depth = 0
     root = None
     for event, elem in ET.iterparse(stream, events=("start", "end")):
@@ -253,12 +253,17 @@ def parse_source(stream, wanted, route):
             continue   # only top-level <channel> and <programme> matter
         if elem.tag == "channel":
             xid = elem.get("id") or ""
-            if xid and xid not in seen_ids:
-                seen_ids.add(xid)
+            if xid:
                 names = [(n.text or "").strip() for n in elem.findall("display-name")]
-                icon = elem.find("icon")
-                available.append({"id": xid, "names": [n for n in names if n],
-                                  "icon": icon.get("src", "") if icon is not None else ""})
+                names = [n for n in names if n]
+                if xid not in seen_ids:
+                    icon = elem.find("icon")
+                    seen_ids[xid] = {"id": xid, "names": names,
+                                     "icon": icon.get("src", "") if icon is not None else ""}
+                    available.append(seen_ids[xid])
+                else:
+                    have = seen_ids[xid]["names"]
+                    have.extend(n for n in names if n not in have)
             if xid in wanted:
                 found.add(xid)
                 for coax_id in wanted[xid]:

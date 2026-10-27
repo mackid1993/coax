@@ -1977,12 +1977,11 @@ def load_xmltv_ids(data_dir, provider_id):
         for value in raw or []:
             if isinstance(value, dict) and value.get("id") is not None:
                 name = value.get("name") or value.get("display_name") or value.get("names") or ""
-                if isinstance(name, list):
-                    name = name[0] if name else ""
-                item = {"id": str(value["id"]), "name": str(name)}
-                if value.get("icon"):
-                    item["icon"] = value["icon"]
-                items.append(item)
+                for one in (name if isinstance(name, list) else [name]) or [""]:
+                    item = {"id": str(value["id"]), "name": str(one)}
+                    if value.get("icon"):
+                        item["icon"] = value["icon"]
+                    items.append(item)
             elif isinstance(value, (list, tuple)) and value:
                 items.append({"id": str(value[0]), "name": str(value[1]) if len(value) > 1 else ""})
             elif isinstance(value, str):
