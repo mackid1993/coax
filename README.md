@@ -336,8 +336,9 @@ coax reads from the provider differs.
 The MPEG-TS engine also:
 
 - **Stitches reconnects.** A reconnect re-sends video that was already sent; coax drops the overlap per
-  video frame and starts on a keyframe. If a reconnect lands too far behind to catch up, it replays a short
-  stretch instead of freezing.
+  video frame and resumes on a picture the player can start from. coax finds that picture itself by reading
+  the video (H.264 and HEVC), so it does not depend on the provider marking keyframes, which many providers do
+  not. If a reconnect lands too far behind to catch up, it replays a short stretch instead of freezing.
 - **Refreshes a drifting feed.** A provider that delivers slightly slower than real time for a long time
   gets a fresh connection for a new burst, at most once every 5 minutes (sooner if the reserve is nearly
   empty). This can cause the occasional small skip.
@@ -436,10 +437,12 @@ VAAPI and CUDA filters.
 
 - **Two clean switches per refill.** The encoder is restarted once when the slowdown starts and once when it
   ends, with the speed set from the first frame. Nothing is changed in a running encoder, so audio and video
-  cannot drift apart. Each restart waits up to 10 seconds for the next keyframe (then restarts anyway), keeps
-  the output timeline continuous and corrects for where the audio sits in the stream, so the picture does not
-  pause. On HLS the restarted encoder's start is worked out from the timestamps already fed in, so this works
-  whether or not the provider's segments start on keyframes.
+  cannot drift apart. Each restart begins at the next picture a decoder can start from, keeps the output
+  timeline continuous and corrects for where the audio sits in the stream, so the picture does not pause.
+- **Works without provider keyframes.** Many providers do not mark keyframes, or start HLS segments in the
+  middle of a group of pictures. coax does not rely on either: it finds start points by reading the video
+  itself (H.264 and HEVC), and on HLS it works out where the restarted encoder begins from the timestamps it
+  has already fed in. If no start point turns up within 10 seconds, it restarts anyway rather than wait.
 - **Refill rate:** about 1.8 s of reserve per minute, so a refill takes about 8 to 17 minutes on HLS (up to
   about 26 minutes from empty) and 3 to 5 minutes on MPEG-TS.
 - **What you might see:** while it runs, a 60 fps source repeats one frame about twice a second. On a smooth,
