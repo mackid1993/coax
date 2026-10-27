@@ -146,7 +146,7 @@ function renderFrame() {
     <div class="page-actions">
       <button class="btn" data-act="toggle-catalog" aria-pressed="${S.cat.open}">${icon("layers")}${S.cat.open ? "Hide catalog" : "Show catalog"}</button>
       <button class="btn" data-act="autonumber">${icon("hash")}Auto-number</button>
-      <button class="btn btn-primary" data-act="automatch" title="Gracenote and backup suggestions for the selected rows (or all visible)">${icon("wand")}Auto-match</button>
+      <button class="btn btn-primary" data-act="automatch" title="Suggests a guide match (Gracenote) and backup streams (similar channels from your providers) for the selected rows, or all visible">${icon("wand")}Auto-match</button>
     </div>
   </div>
   ${S.config && !(S.config.server?.base_url || "").trim() ? `<div class="callout" style="margin-bottom:14px">${icon("alert")}<div><b>Set the Base URL first.</b> Channels DVR needs it to reach coax. <a href="#/settings">Open Settings</a></div></div>` : ""}
