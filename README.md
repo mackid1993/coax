@@ -318,6 +318,10 @@ Actions by commit SHA.
 - [FFmpeg](https://ffmpeg.org/), [Requests](https://requests.readthedocs.io/) and
   [cryptography](https://cryptography.io/).
 
+## Contributing
+
+coax is provided as is. Issues, bug reports, feature requests and pull requests are not accepted. Forks and remixes are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 mackid1993.
