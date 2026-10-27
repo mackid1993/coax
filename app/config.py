@@ -51,6 +51,7 @@ def default_config():
         "gracenote": {"regions": []},
         "timezone": "",
         "backups": {"enabled": True, "time": "03:30", "keep": 14},
+        "autosave_minutes": 2,
         "next_channel_id": 1,
     }
 
@@ -118,6 +119,8 @@ def fill_defaults(cfg):
             if g.get("station_id") or g.get("xmltv_id"):
                 g["mode"] = "both" if g.get("station_id") and g.get("xmltv_id") else (
                     "gracenote" if g.get("station_id") else "xmltv")
+    if not isinstance(cfg.get("autosave_minutes"), int) or isinstance(cfg.get("autosave_minutes"), bool):
+        cfg["autosave_minutes"] = 2
     if not isinstance(cfg.get("timezone"), str):
         cfg["timezone"] = ""
     if not isinstance(cfg.get("gracenote"), dict):

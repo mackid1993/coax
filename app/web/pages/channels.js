@@ -38,7 +38,18 @@ export async function mount(el) {
   watchAutoMatch();
   loadCatalogGroups().then(() => loadCatalog());
 }
-export function unmount() { clearTimeout(amTimer); S = null; }
+let autoTimer = null;
+function startAutosave() {
+  clearInterval(autoTimer);
+  const mins = Number(S?.config?.autosave_minutes ?? 2);
+  if (!mins) return;
+  autoTimer = setInterval(async () => {
+    if (!S || S.saving || !pendingCheckedCount()) return;
+    S.saving = true;
+    try { await acceptChecked(true); } finally { if (S) S.saving = false; }
+  }, mins * 60000);
+}
+export function unmount() { clearTimeout(amTimer); clearInterval(autoTimer); S = null; }
 
 async function reload() {
   try {
@@ -53,6 +64,7 @@ async function reload() {
     S.providers = providers;
     S.lineups = lineups;
     S.config = config;
+    startAutosave();
   } catch (e) {
     toastError("Could not load channels", e);
   }
@@ -685,7 +697,7 @@ function guideFromCandidate(c, cand) {
   const mode = old.mode === "xmltv" ? "both" : old.mode === "both" ? "both" : "gracenote";
   return { ...old, mode, station_id: String(cand.station_id), call_sign: cand.call_sign || "", station_name: cand.name || "", confidence: cand.score ?? cand.confidence ?? null };
 }
-async function acceptChecked() {
+async function acceptChecked(auto = false) {
   const out = [];
   for (const [id, p] of S.pending) {
     const c = chById(id);
@@ -724,7 +736,7 @@ async function acceptChecked() {
   }
   try { localStorage.removeItem("coax.unsaved"); } catch {}
   // Drop remaining suggestions on channels we just saved only if nothing is left unchecked.
-  toast("Saved", `${out.length} channel${out.length === 1 ? "" : "s"} updated`, "ok");
+  toast(auto ? "Autosaved" : "Saved", `${out.length} channel${out.length === 1 ? "" : "s"} updated`, "ok", auto ? 2500 : undefined);
   if (S.filter === "pending" && !S.pending.size) S.filter = "all";
   await reload();
 }
