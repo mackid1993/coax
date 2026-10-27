@@ -1423,8 +1423,9 @@ class Handler(BaseHTTPRequestHandler):
         text = (self.query.get("q") or "").strip().lower()
         limit = parse_int(self.query.get("limit"), "limit", 200, 1, 5000)
         items = load_xmltv_ids(self.app.store.data_dir, pid)
-        if text:
-            items = search_xmltv_items(items, text)
+        context = (self.query.get("context") or "").strip().lower()
+        if text or context:
+            items = search_xmltv_items(items, text, context)
         return {"provider": pid, "total": len(items), "items": items[:limit]}
 
     # ------------------------------------------------------------ XMLTV sources
@@ -1913,25 +1914,36 @@ def _xwords(text):
     return _XWORD.findall(text.lower())
 
 
-def search_xmltv_items(items, text):
-    """Word search: every item sharing a word with the query, best first.
+_NOISE = {"hd", "fhd", "uhd", "4k", "sd", "us", "usa", "the", "tv", "channel", "package", "teams", "team"}
 
-    The whole phrase is not required, so "Chicago Bears" finds "CBS 2 CHICAGO IL (WBBM)" even though the
-    guide never says "Bears". Ranked by how many query words match, then whole-phrase hits, then shorter names.
+
+def search_xmltv_items(items, text, context=""):
+    """Word search, best first.
+
+    text:    what was typed. Every result shares at least one word with it; the whole phrase is not required.
+    context: the channel's own name and group (e.g. "CBS BEARS CHICAGO IL NFL PACKAGE"). It never filters,
+             it only ranks: among equal text matches, the entry sharing more words with the channel wins, so a
+             channel from an NFL group leans to NFL entries and "CBS ... CHICAGO" leans to CBS Chicago.
+             With no text, the context alone suggests matches.
     """
     words = [w for w in _xwords(text) if w]
-    if not words:
-        return items
+    ctx = [w for w in _xwords(context) if w and w not in _NOISE and w not in words]
+
+    def hit(w, hay):
+        return w in hay or (len(w) >= 3 and any(h.startswith(w) for h in hay))
+
     phrase = " ".join(words)
     scored = []
     for item in items:
         hay = set(_xwords(item["id"])) | set(_xwords(item["name"]))
+        th = sum(1 for w in words if hit(w, hay))
+        ch = sum(1 for w in ctx if hit(w, hay))
+        if (words and not th) or (not words and not ch):
+            continue
         joined = " ".join(_xwords(item["name"]))
-        hits = sum(1 for w in words if w in hay or any(h.startswith(w) for h in hay))
-        if hits:
-            scored.append((-hits, 0 if phrase in joined else 1, len(item["name"]), item))
-    scored.sort(key=lambda x: x[:3])
-    return [x[3] for x in scored]
+        scored.append((-th, -ch, 0 if phrase and phrase in joined else 1, len(item["name"]), item))
+    scored.sort(key=lambda x: x[:4])
+    return [x[4] for x in scored]
 
 
 def load_xmltv_ids(data_dir, provider_id):

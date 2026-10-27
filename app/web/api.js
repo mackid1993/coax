@@ -38,7 +38,7 @@ export const routes = {
   gracenoteSearch: (q, local) => `/api/gracenote/search${qs(local ? { q, local: 1 } : { q })}`,
   gracenoteSuggest: (p) => `/api/gracenote/suggest${qs(p)}`,
   gracenoteBulkSuggest: () => "/api/gracenote/bulk-suggest",
-  xmltvIds: (provider, q, limit = 200) => `/api/xmltv/ids${qs({ provider, q, limit })}`,
+  xmltvIds: (provider, q, limit = 200, context = "") => `/api/xmltv/ids${qs({ provider, q, limit, context })}`,
   lineups: () => "/api/lineups",
   lineup: (id) => `/api/lineups/${enc(id)}`,
   lineupDvr: (id) => `/api/lineups/${enc(id)}/dvr`,
@@ -141,7 +141,7 @@ export const api = {
 
   gracenoteSearch: async (q, local = false) => list(await get(routes.gracenoteSearch(q, local), { timeout: local ? 15000 : 30000 }), "results"),
   gracenoteSuggest: (p) => get(routes.gracenoteSuggest(p), { timeout: 60000 }),
-  xmltvIds: async (provider, q) => list(await get(routes.xmltvIds(provider, q)), "items"),
+  xmltvIds: async (provider, q, context = "") => list(await get(routes.xmltvIds(provider, q, 200, context)), "items"),
 
   listLineups: async () => list(await get(routes.lineups()), "lineups"),
   createLineup: (l) => post(routes.lineups(), l),

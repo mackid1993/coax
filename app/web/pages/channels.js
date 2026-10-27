@@ -878,7 +878,8 @@ function guideModal(c) {
     if (!src) { list.innerHTML = `<div class="faint small">Add a provider with an XMLTV feed or an XMLTV source in Settings.</div>`; return; }
     const seq = ++xmSeq;
     try {
-      const r = await api.xmltvIds(src, $("#xmQ", el).value.trim());
+      // The channel's name and group rank the results (an NFL PACKAGE channel leans to NFL entries).
+      const r = await api.xmltvIds(src, $("#xmQ", el).value.trim(), `${c.name} ${c.group || ""}`);
       if (seq !== xmSeq) return;
       list.innerHTML = r.length ? r.slice(0, 100).map((x) => `<button type="button" class="result ${x.id === g.xmltv_id ? "picked" : ""}" data-xmid="${esc(x.id)}">${logo(x.icon, x.name || x.id, "logo-sm")}<span class="r-main" data-pop="${esc(x.name || x.id)}"><span class="r-title">${esc(x.name || x.id)}</span><br><span class="r-sub mono">${esc(x.id)}</span></span></button>`).join("") : `<div class="faint small">No XMLTV channels match. The feed may not be downloaded yet.</div>`;
     } catch (e) { if (seq === xmSeq) list.innerHTML = `<div class="callout">${icon("alert")}<div>${esc(e.message)}</div></div>`; }

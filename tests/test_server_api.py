@@ -643,3 +643,17 @@ class XmltvWordSearchTest(unittest.TestCase):
         self.assertEqual(search_xmltv_items(items, "cbs chicago")[0]["id"], "loc.CBS (WBBM) Chicago, IL")
         self.assertEqual(search_xmltv_items(items, "nfl net")[0]["id"], "NFLNetwork.us")
         self.assertEqual(search_xmltv_items(items, "zzz"), [])
+
+
+class XmltvContextRankTest(unittest.TestCase):
+    def test_channel_name_and_group_rank_results(self):
+        from app.server import search_xmltv_items
+        items = [
+            {"id": "NFLNetwork.us", "name": "US| NFL NETWORK HD"},
+            {"id": "loc.CBS (WBBM) Chicago, IL", "name": "US| CBS 2 CHICAGO IL (WBBM)"},
+            {"id": "FOX32WFLD.us", "name": "ENG| FOX CHICAGO (WFLD)"},
+        ]
+        ctx = "CBS BEARS CHICAGO IL NFL PACKAGE"
+        self.assertEqual(search_xmltv_items(items, "chicago", ctx)[0]["id"], "loc.CBS (WBBM) Chicago, IL")
+        self.assertEqual(search_xmltv_items(items, "", ctx)[0]["id"], "loc.CBS (WBBM) Chicago, IL")
+        self.assertEqual(search_xmltv_items(items, "bears nfl", ctx)[0]["id"], "NFLNetwork.us")
