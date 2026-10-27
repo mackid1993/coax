@@ -261,8 +261,8 @@ together on one screen, in one pass, so setting up a lineup takes minutes:
   which encoder was chosen.
 - `requirements.txt` with exact versions and hashes.
 - `docker-compose.yml`: coax only, `./data:/data`, optional commented `/dev/dri`, restart unless-stopped.
-- `docker-compose.vpn.yml`: same plus Gluetun pinned by digest, `VPN_SERVICE_PROVIDER=custom`, WireGuard config
-  read from `./data/wireguard/wg0.conf`, coax with `network_mode: service:gluetun`, port published on gluetun,
+- `docker-compose.vpn.yml`: same plus Gluetun pinned by digest, `VPN_SERVICE_PROVIDER=custom`, WireGuard settings
+  passed as environment variables from a `.env` file (Gluetun builds the tunnel itself; no config file), coax with `network_mode: service:gluetun`, port published on gluetun,
   `FIREWALL_OUTBOUND_SUBNETS` note for reaching the LAN. Gluetun is MIT-licensed; reference it, do not vendor it.
 - GitHub Actions: tests on push, build amd64+arm64 image on push to main, publish to
   `ghcr.io/mackid1993/coax` with version tags from git tags (`v1.0.0` -> `1.0.0`) and `main` for testing.

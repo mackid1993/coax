@@ -2,13 +2,15 @@
 # All of coax's traffic, including provider logins, playlists and streams, goes through the tunnel.
 # Gluetun setup guide: https://github.com/qdm12/gluetun-wiki
 #
-# This file uses a custom WireGuard config, which works with any WireGuard provider:
-#   https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md
-# For a built-in provider (Mullvad, ProtonVPN, ...) replace the gluetun environment with the settings from
-# that provider's page: https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
+# Gluetun is configured entirely with environment variables; it builds the tunnel itself. No config files.
+# This example uses Gluetun's custom WireGuard provider, which works with any WireGuard VPN. Copy the values
+# from your provider's WireGuard details into a .env file next to this compose file (keys below).
+#   Custom WireGuard: https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md
+# For a built-in provider (Mullvad, ProtonVPN, Windscribe, ...) replace the gluetun environment with the
+# variables from that provider's page: https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
 #
-# 1. Put your provider's WireGuard config at ./data/wireguard/wg0.conf
-#    (the Endpoint must be an IP address, not a hostname).
+# 1. Create .env with WG_ENDPOINT_IP, WG_ENDPOINT_PORT, WG_PUBLIC_KEY, WG_PRIVATE_KEY, WG_ADDRESSES
+#    (and WG_PRESHARED_KEY if your provider uses one). Keep it private: chmod 600 .env
 # 2. Set FIREWALL_OUTBOUND_SUBNETS below to your LAN so coax can still reach Channels DVR.
 #    Without it, Gluetun's firewall blocks all LAN traffic that is not a reply.
 # 3. docker compose -f docker-compose.vpn.yml up -d
@@ -26,13 +28,17 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
+      - WIREGUARD_ENDPOINT_IP=${WG_ENDPOINT_IP}
+      - WIREGUARD_ENDPOINT_PORT=${WG_ENDPOINT_PORT}
+      - WIREGUARD_PUBLIC_KEY=${WG_PUBLIC_KEY}
+      - WIREGUARD_PRIVATE_KEY=${WG_PRIVATE_KEY}
+      - WIREGUARD_PRESHARED_KEY=${WG_PRESHARED_KEY:-}
+      - WIREGUARD_ADDRESSES=${WG_ADDRESSES}
       # Your LAN, comma separated, e.g. 192.168.1.0/24. Lets coax reach Channels DVR outside the tunnel.
       # Must not overlap the VPN's own address range.
       - FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24
       # Your timezone, for Gluetun's log timestamps.
       - TZ=Etc/UTC
-    volumes:
-      - ./data/wireguard/wg0.conf:/gluetun/wireguard/wg0.conf:ro
     ports:
       # coax shares Gluetun's network, so coax's port is published here, not on the coax service.
       - "7780:7780"

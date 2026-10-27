@@ -78,18 +78,20 @@ streams) goes through your VPN. If the tunnel drops, Gluetun blocks traffic rath
 streams stop until it reconnects.
 
 ```sh
-mkdir -p coax/data/wireguard && cd coax
+mkdir -p coax && cd coax
 curl -fLO https://raw.githubusercontent.com/mackid1993/coax/main/docker-compose.vpn.yml
-# copy your VPN provider's WireGuard config to ./data/wireguard/wg0.conf
+# create .env with your WireGuard values (see below), then: chmod 600 .env
 # edit FIREWALL_OUTBOUND_SUBNETS in docker-compose.vpn.yml to match your LAN
 docker compose -f docker-compose.vpn.yml up -d
 ```
 
 What to set:
 
-1. **VPN settings.** The file ships with a custom WireGuard setup, which works with any provider that gives
-   you a WireGuard config file. Save it as `./data/wireguard/wg0.conf`; the `Endpoint` must be an IP
-   address, not a hostname. See Gluetun's
+1. **VPN settings.** Gluetun is set up entirely with environment variables and builds the tunnel itself;
+   there are no config files to mount. The compose file uses Gluetun's custom WireGuard provider, which works
+   with any WireGuard VPN. Put your provider's values in a `.env` file next to the compose file:
+   `WG_ENDPOINT_IP`, `WG_ENDPOINT_PORT`, `WG_PUBLIC_KEY`, `WG_PRIVATE_KEY`, `WG_ADDRESSES`, and
+   `WG_PRESHARED_KEY` if your provider uses one. See Gluetun's
    [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
    To use one of Gluetun's built-in providers instead (Mullvad, ProtonVPN, and many more), replace the
    `gluetun` environment with the settings from your provider's page in the
@@ -244,8 +246,6 @@ data/
     catalog-<provider>.json   last good catalog for each provider
     xmltv-<lineup>.xml        generated guide for each lineup
     xmltv-ids-<provider>.json XMLTV channel ids offered in the Guide picker
-  wireguard/
-    wg0.conf             only with docker-compose.vpn.yml
 ```
 
 To move coax to another machine, copy the folder. To start over, stop coax and delete `config.json`.
