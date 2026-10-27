@@ -314,9 +314,9 @@ function currentGuide(c) {
 }
 function backupsCell(c, p) {
   const b = backupsOf(c);
-  const more = b.length > 2 ? `<span class="badge" title="${esc(b.slice(2).map((s) => s.name || s.stream_id).join(", "))}">+${b.length - 2}</span>` : "";
-  const chips = b.slice(0, 2).map((s, i) => `<span class="bchip ${s.missing ? "missing" : ""}" title="${esc(s.name || s.stream_id)}${s.missing ? " (vanished)" : ""}"><span class="ord">${i + 1}</span><span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span></span>`).join("");
-  const pend = (p?.backups || []).map((s, i) => `<label class="bchip pending ${s.checked ? "on" : ""}" title="${esc(s.reason || "")}">${checkHtml(s.checked, `data-bcheck="${i}" aria-label="Accept backup ${esc(s.name)}"`)}<span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span><span class="num small">${pct(s.score)}%</span></label>`).join("");
+  const more = b.length > 2 ? `<span class="badge" data-pop="${esc(b.slice(2).map((s) => s.name || s.stream_id).join(" · "))}" data-pop-sub="More backups" data-pop-always>+${b.length - 2}</span>` : "";
+  const chips = b.slice(0, 2).map((s, i) => `<span class="bchip ${s.missing ? "missing" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Backup ${i + 1} · ${providerName(S.providers, s.provider)}${s.missing ? " · vanished from the provider" : ""}`)}" data-pop-always><span class="ord">${i + 1}</span><span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span></span>`).join("");
+  const pend = (p?.backups || []).map((s, i) => `<label class="bchip pending ${s.checked ? "on" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Suggested · ${providerName(S.providers, s.provider)} · ${pct(s.score)}%${s.reason ? " · " + s.reason : ""}`)}" data-pop-always>${checkHtml(s.checked, `data-bcheck="${i}" aria-label="Accept backup ${esc(s.name)}"`)}<span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span><span class="num small">${pct(s.score)}%</span></label>`).join("");
   const none = !b.length && !pend ? `<span class="faint">None</span>` : "";
   return `<div class="bchips">${chips}${more}${pend}${none}<button class="btn btn-ghost btn-sm btn-icon" data-act="streams" aria-label="Edit streams for ${esc(c.name)}" title="Edit streams and backups">${icon("edit")}</button></div>`;
 }
