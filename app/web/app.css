@@ -673,3 +673,9 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
 .ev-bad { background: var(--bad-soft); color: var(--bad); }
 .ev-ok .ev-i { color: var(--ok); }
 .ev-empty { border-top: 1px solid var(--border); padding-top: 8px; }
+
+/* Row edit buttons: channel edit sits by the name, backups edit leads the backups cell. */
+.edit-ch { opacity: .55; flex: none; }
+tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
+.edit-bk { flex: none; padding: 2px 8px; font-size: 12px; gap: 4px; }
+.edit-bk svg { width: 13px; height: 13px; }

@@ -308,11 +308,11 @@ function rowHtml(c) {
     <td class="keep">${checkHtml(sel, `data-sel aria-label="Select ${esc(c.name)}"`)}</td>
     <td class="keep"><button class="drag-handle" draggable="true" data-drag aria-label="Reorder ${esc(c.name)}, Alt plus arrow keys" title="Drag to reorder (Alt+↑/↓)">${icon("grip")}</button></td>
     <td><input class="input num-input" data-num value="${esc(c.number ?? "")}" aria-label="Channel number for ${esc(c.name)}" inputmode="decimal"></td>
-    <td><div class="cell-name">${logo(c.logo, c.name)}<div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta">${lineupCell(c)}${c.missing_streams ? ` <span class="badge badge-bad" title="A stream vanished from the provider catalog">${icon("alert", 'style="width:12px;height:12px"')}${c.missing_streams} vanished</span>` : ""}</div></div></div></td>
+    <td><div class="cell-name">${logo(c.logo, c.name)}<div style="min-width:0"><div class="row" style="gap:4px;flex-wrap:nowrap"><div class="name">${esc(c.name)}</div><button class="btn btn-ghost btn-sm btn-icon edit-ch" data-act="edit" aria-label="Edit name, number, group and logo of ${esc(c.name)}" data-pop="Edit channel" data-pop-sub="Name, number, group and logo" data-pop-always>${icon("edit")}</button></div><div class="meta">${lineupCell(c)}${c.missing_streams ? ` <span class="badge badge-bad" title="A stream vanished from the provider catalog">${icon("alert", 'style="width:12px;height:12px"')}${c.missing_streams} vanished</span>` : ""}</div></div></div></td>
     <td class="keep">${switchHtml("", c.enabled !== false, "", `data-enabled aria-label="Enabled"`)}</td>
     <td>${guideCell(c, p)}</td>
     <td>${backupsCell(c, p)}</td>
-    <td class="w-act keep"><button class="btn btn-ghost btn-sm btn-icon" data-act="edit" aria-label="Edit ${esc(c.name)}">${icon("edit")}</button></td>
+    <td class="w-act keep"></td>
   </tr>`;
 }
 
@@ -357,7 +357,7 @@ function backupsCell(c, p) {
   const chips = b.slice(0, 2).map((s, i) => `<span class="bchip ${s.missing ? "missing" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Backup ${i + 1} · ${providerName(S.providers, s.provider)}${s.missing ? " · vanished from the provider" : ""}`)}" data-pop-always><span class="ord">${i + 1}</span><span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span></span>`).join("");
   const pend = (p?.backups || []).map((s, i) => `<label class="bchip pending ${s.checked ? "on" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Suggested · ${providerName(S.providers, s.provider)} · ${pct(s.score)}%${s.reason ? " · " + s.reason : ""}`)}" data-pop-always>${checkHtml(s.checked, `data-bcheck="${i}" aria-label="Accept backup ${esc(s.name)}"`)}<span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span><span class="num small">${pct(s.score)}%</span></label>`).join("");
   const none = !b.length && !pend ? `<span class="faint">None</span>` : "";
-  return `<div class="bchips">${chips}${more}${pend}${none}<button class="btn btn-ghost btn-sm btn-icon" data-act="streams" aria-label="Edit streams for ${esc(c.name)}" title="Edit streams and backups">${icon("edit")}</button></div>`;
+  return `<div class="bchips"><button class="btn btn-sm edit-bk" data-act="streams" aria-label="Edit backup streams for ${esc(c.name)}" data-pop="Edit backups" data-pop-sub="Add, search, reorder or remove backup streams" data-pop-always>${icon("layers")}Backups</button>${chips}${more}${pend}${none}</div>`;
 }
 function lineupCell(c) {
   const ids = lineupsOf(c);
