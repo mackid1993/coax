@@ -151,6 +151,8 @@ cmap = None
 off = 0.0
 tout = 0.0
 HW = None
+GPUDEC = [True]
+FST = [0.0]
 STL = collections.deque()
 
 def hwpick():
@@ -313,7 +315,15 @@ def ffcmd():
     g = str(int(round(2 * TC_FPS)))
     vf = "bwdif=mode=send_frame:deint=interlaced," + ("setpts=(PTS-STARTPTS)*%.4f+STARTPTS," % SPA if SPA != 1.0 else "") + "fps=%s,scale=-2:%d:flags=fast_bilinear" % (fr, TC_HEIGHT)
     rc = ["-b:v", TC_VBITRATE, "-maxrate", TC_VBITRATE, "-bufsize", TC_VBITRATE, "-g", g]
-    if h == "vaapi":
+    sp_ = "setpts=(PTS-STARTPTS)*%.4f+STARTPTS," % SPA if SPA != 1.0 else ""
+    if h == "vaapi" and GPUDEC[0]:
+        # Decode, deinterlace, frame rate, scale and encode all on the GPU; frames never touch the CPU.
+        b += ["-hwaccel", "vaapi", "-hwaccel_device", "/dev/dri/renderD128", "-hwaccel_output_format", "vaapi"]
+        vc = ["-vf", "deinterlace_vaapi=rate=frame:auto=1," + sp_ + "fps=%s,scale_vaapi=w=-2:h=%d:format=nv12" % (fr, TC_HEIGHT), "-c:v", "h264_vaapi"] + rc + ["-bf", "0"]
+    elif h == "nvenc" and GPUDEC[0]:
+        b += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+        vc = ["-vf", "bwdif_cuda=mode=send_frame:deint=interlaced," + sp_ + "fps=%s,scale_cuda=w=-2:h=%d:format=nv12" % (fr, TC_HEIGHT), "-c:v", "h264_nvenc", "-preset", "p4"] + rc + ["-bf", "0"]
+    elif h == "vaapi":
         b += ["-vaapi_device", "/dev/dri/renderD128"]
         vc = ["-vf", vf + ",format=nv12,hwupload", "-c:v", "h264_vaapi"] + rc + ["-bf", "0"]
     elif h == "nvenc":
@@ -331,12 +341,16 @@ def remux(why=None, ofs=None):
     if why:
         log("restarting remuxer: " + why)
     old = ff
+    if old is not None and TRANSCODE and GPUDEC[0] and old.poll() is not None and old.returncode != 0 and mono() - FST[0] < 20:
+        GPUDEC[0] = False
+        log("transcode: GPU decoding failed on this stream, decoding on the CPU instead (encoding stays on the GPU)")
     SPA = SPD
     RP[0] = None
     OFS[0] = ofs if ofs is not None else tout + 1.4 - ADJ[0]
     if old:
         EI.pop(old.pid, None)
     ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE)
+    FST[0] = mono()
     ADJ[0] = 0.0
     EI[ff.pid] = [OFS[0], SPA, None, None, None]
     with fql:

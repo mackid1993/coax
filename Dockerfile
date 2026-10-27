@@ -46,7 +46,6 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates tzdata \
-      ffmpeg \
       mesa-va-drivers \
       tini \
       vainfo \
@@ -54,12 +53,38 @@ RUN set -eux; \
     apt-get dist-clean; \
     rm -rf /var/lib/apt/lists/*
 
+# ffmpeg: Jellyfin's build (ffmpeg 8.1), the same generation Dispatcharr ships. Debian's 7.1 lacks the
+# full GPU filter set (CUDA deinterlace/scale) coax uses to keep the whole transcode on the GPU.
+# Pinned by version and SHA-256 per architecture; bump all three together.
+ARG JELLYFIN_FFMPEG=8.1.3-1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) sha=fbef9f81a53e175194e3f67832618a86111f7bd37197df21a5d748c34289f9c0 ;; \
+      arm64) sha=4af743bd776eda082d40c851a4201e51a77a258145dd6ebe164dade39b35b2d0 ;; \
+      *) echo "unsupported architecture $arch"; exit 1 ;; \
+    esac; \
+    deb="jellyfin-ffmpeg8_${JELLYFIN_FFMPEG}-trixie_${arch}.deb"; \
+    python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" \
+      "https://repo.jellyfin.org/debian/pool/main/j/jellyfin-ffmpeg/$deb" /tmp/ffmpeg.deb; \
+    echo "$sha  /tmp/ffmpeg.deb" | sha256sum -c -; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/ffmpeg.deb; \
+    rm -f /tmp/ffmpeg.deb; \
+    apt-get dist-clean; \
+    rm -rf /var/lib/apt/lists/*; \
+    ln -sf /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg; \
+    ln -sf /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe; \
+    ffmpeg -hide_banner -version | head -1
+
 # Fail the build if this ffmpeg cannot drive Intel/AMD (VAAPI) or NVIDIA (NVENC) hardware encoders.
 # Without this, a changed Debian build would silently leave only CPU encoding.
 RUN set -eux; \
     encoders="$(ffmpeg -hide_banner -encoders)"; \
     echo "$encoders" | grep -q ' h264_vaapi '; \
-    echo "$encoders" | grep -q ' h264_nvenc '
+    echo "$encoders" | grep -q ' h264_nvenc '; \
+    filters="$(ffmpeg -hide_banner -filters)"; \
+    for f in deinterlace_vaapi scale_vaapi bwdif_cuda scale_cuda; do echo "$filters" | grep -q " $f "; done
 
 # NVIDIA Container Toolkit settings (read by the container runtime, not by coax): expose all GPUs and the
 # driver libraries needed for NVENC/NVDEC. They do nothing on hosts without an NVIDIA GPU.
