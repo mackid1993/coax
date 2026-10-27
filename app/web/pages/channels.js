@@ -34,6 +34,7 @@ export async function mount(el) {
   renderFrame();
   await reload();
   S.amSeen = "";
+  offerUnsaved();
   watchAutoMatch();
   loadCatalogGroups().then(() => loadCatalog());
 }
@@ -249,6 +250,7 @@ function pendingBar() {
   return `<div class="selection-bar pending-bar">${icon("wand")}<span>Auto-match found <b>${a.sure}</b> sure guide match${a.sure === 1 ? "" : "es"} (checked), <b>${a.review}</b> to review, and <b>${a.backups}</b> backup stream${a.backups === 1 ? "" : "s"}. Nothing is saved until you accept.</span>
     <span class="spacer"></span>
     <button class="btn btn-sm btn-ghost" data-act="check-high">Check high confidence</button>
+    <button class="btn btn-sm btn-ghost" data-act="download-unsaved" title="Save a copy of the checked suggestions to a file">${icon("download")}Download unsaved</button>
     <button class="btn btn-sm btn-ghost" data-act="discard">Discard</button>
     <button class="btn btn-sm btn-primary" data-act="accept" ${n ? "" : "disabled"}>${icon("check")}Save ${n} checked</button></div>`;
 }
@@ -404,6 +406,7 @@ async function onClick(e) {
     case "automatch": autoMatch(); break;
     case "accept": busy(a, acceptChecked); break;
     case "check-high": checkHigh(); break;
+    case "download-unsaved": downloadUnsaved(); break;
     case "discard": S.pending.clear(); if (S.filter === "pending") S.filter = "all"; renderFrame(); break;
     case "guide": if (c) guideModal(c); break;
     case "streams": if (c) streamsModal(c); break;
@@ -694,20 +697,74 @@ async function acceptChecked() {
     if (entry.guide || entry.streams) out.push(entry);
   }
   if (!out.length) return;
+  // Keep a copy in the browser until the save succeeds, so nothing is lost to an error or a reload.
+  try { localStorage.setItem("coax.unsaved", JSON.stringify({ at: Date.now(), entries: out })); } catch {}
+  const saved = [];
+  let failed = [];
   try {
     await api.applyChannels(out);
+    saved.push(...out);
   } catch (e) {
-    if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
-      // Older server without /apply: save channel by channel.
-      try { for (const x of out) await api.updateChannel(x.id, { ...(x.guide ? { guide: x.guide } : {}), ...(x.streams ? { streams: x.streams } : {}) }); }
-      catch (err) { toastError("Could not save suggestions", err); return; }
-    } else { toastError("Could not save suggestions", e); return; }
+    // The all-at-once save failed: save channel by channel so one bad channel can't block the rest.
+    for (const x of out) {
+      try {
+        await api.updateChannel(x.id, { ...(x.guide ? { guide: x.guide } : {}), ...(x.streams ? { streams: x.streams } : {}) });
+        saved.push(x);
+      } catch (err) { failed.push({ x, err }); }
+    }
   }
-  for (const x of out) S.pending.delete(x.id);
+  for (const x of saved) S.pending.delete(x.id);
+  if (failed.length) {
+    try { localStorage.setItem("coax.unsaved", JSON.stringify({ at: Date.now(), entries: failed.map((f) => f.x) })); } catch {}
+    const names = failed.slice(0, 3).map((f) => chById(f.x.id)?.name || `#${f.x.id}`).join(", ");
+    toast(`${saved.length} saved, ${failed.length} not saved`,
+      `Not saved: ${names}${failed.length > 3 ? ` and ${failed.length - 3} more` : ""}. They stay checked, so press Save again, or use Download unsaved to keep a copy. Reason: ${failed[0].err?.message || "unknown"}`, "warn", 15000);
+    renderFrame();
+    return;
+  }
+  try { localStorage.removeItem("coax.unsaved"); } catch {}
   // Drop remaining suggestions on channels we just saved only if nothing is left unchecked.
   toast("Saved", `${out.length} channel${out.length === 1 ? "" : "s"} updated`, "ok");
   if (S.filter === "pending" && !S.pending.size) S.filter = "all";
   await reload();
+}
+
+async function offerUnsaved() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem("coax.unsaved") || "null"); } catch { saved = null; }
+  if (!saved?.entries?.length) return;
+  const ok = await confirmDialog({
+    title: "Unsaved changes found",
+    message: `${saved.entries.length} channel change${saved.entries.length === 1 ? "" : "s"} from ${new Date(saved.at).toLocaleString()} never reached coax. Save them now?`,
+    confirm: "Save them",
+  });
+  if (!ok) { try { localStorage.removeItem("coax.unsaved"); } catch {} return; }
+  let n = 0;
+  const left = [];
+  for (const x of saved.entries) {
+    try { await api.updateChannel(x.id, { ...(x.guide ? { guide: x.guide } : {}), ...(x.streams ? { streams: x.streams } : {}) }); n++; }
+    catch { left.push(x); }
+  }
+  try { left.length ? localStorage.setItem("coax.unsaved", JSON.stringify({ at: saved.at, entries: left })) : localStorage.removeItem("coax.unsaved"); } catch {}
+  toast(left.length ? `${n} saved, ${left.length} still not saved` : "Saved", left.length ? "They will be offered again next time." : `${n} channel${n === 1 ? "" : "s"} restored`, left.length ? "warn" : "ok");
+  if (S) await reload();
+}
+function downloadUnsaved() {
+  const rows = [];
+  for (const [id, p] of S.pending) {
+    const c = chById(id);
+    if (!c) continue;
+    const g = p.guide?.checked && p.guide.cands?.length ? guideFromCandidate(c, p.guide.cands[p.guide.idx]) : null;
+    const b = (p.backups || []).filter((x) => x.checked).map((x) => ({ provider: x.provider, stream_id: String(x.stream_id), name: x.name }));
+    if (g || b.length) rows.push({ id, name: c.name, guide: g, add_backups: b });
+  }
+  const blob = new Blob([JSON.stringify({ saved_at: new Date().toISOString(), channels: rows }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `coax-unsaved-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "")}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast("Downloaded", `${rows.length} channels with checked suggestions`, "ok");
 }
 
 // ---------- Guide editor ----------
