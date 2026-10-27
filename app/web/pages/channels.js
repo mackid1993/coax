@@ -59,6 +59,8 @@ async function reload() {
 // ---------- Derived ----------
 const chById = (id) => S.channels.find((c) => c.id === id);
 const backupsOf = (c) => (c.streams || []).slice(1);
+const leftAsIs = (c) => !!(c.guide || {}).reviewed;
+const needsAttention = (c) => !leftAsIs(c) && (!hasGuide(c) || lowConfidence(c) || !backupsOf(c).length);
 const hasGuide = (c) => {
   const g = c.guide || {};
   return (g.mode === "gracenote" && g.station_id) || (g.mode === "xmltv" && g.xmltv_id) || (g.mode === "both" && (g.station_id || g.xmltv_id));
@@ -82,9 +84,11 @@ function visibleChannels() {
   const words = q ? q.split(/\s+/) : [];
   return S.channels.filter((c) => {
     if (S.lineup && !lineupsOf(c).includes(S.lineup)) return false;
-    if (S.filter === "unmatched" && hasGuide(c)) return false;
-    if (S.filter === "nobackups" && backupsOf(c).length) return false;
-    if (S.filter === "low" && !lowConfidence(c)) return false;
+    if (S.filter === "attention" && !needsAttention(c)) return false;
+    if (S.filter === "unmatched" && (hasGuide(c) || leftAsIs(c))) return false;
+    if (S.filter === "nobackups" && (backupsOf(c).length || leftAsIs(c))) return false;
+    if (S.filter === "low" && (!lowConfidence(c) || leftAsIs(c))) return false;
+    if (S.filter === "left" && !leftAsIs(c)) return false;
     if (S.filter === "pending" && !S.pending.has(c.id)) return false;
     if (S.filter === "missing" && !c.missing_streams) return false;
     if (words.length) {
@@ -145,7 +149,7 @@ function renderFrame() {
       <div class="toolbar">
         <label class="search" style="flex:1 1 180px"><span class="sr-only">Filter channels</span>${icon("search")}<input class="input input-sm" data-search data-ch-q placeholder="Filter channels" value="${esc(S.q)}"><kbd>/</kbd></label>
         <div class="seg" role="group" aria-label="Filter">
-          ${segBtn("all", "All")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "Low confidence")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
+          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "Low confidence")}${segBtn("left", "Left as is")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
         </div>
         <span class="spacer"></span>
         <label class="sr-only" for="lineupFilter">Lineup</label>
@@ -599,6 +603,7 @@ function guideModal(c) {
         <div class="stack" data-pane="gn">
           <div class="label">Gracenote station <span class="faint" id="gnCur">${g.station_id ? `· current <span class="num">${esc(g.station_id)}</span>` : ""}</span></div>
           <label class="search"><span class="sr-only">Search stations</span>${icon("search")}<input class="input" id="gnQ" placeholder="Call sign, name or station id" value="${esc(c.name)}"></label>
+          <div class="row" style="gap:8px"><input class="input input-sm mono" id="gnManual" inputmode="numeric" placeholder="Or type a station ID" value="${esc(g.station_id || "")}" style="flex:1"><button type="button" class="btn btn-sm" data-manual>Use this ID</button></div>
           <div class="result-list" id="gnList">${p?.guide?.cands?.length ? candList(p.guide.cands, g.station_id) : `<div class="faint small">Search to see stations.</div>`}</div>
         </div>
         <div class="stack" data-pane="xm">
@@ -608,7 +613,7 @@ function guideModal(c) {
           <div class="result-list" id="xmList"><div class="faint small">Loading ids…</div></div>
         </div>
       </div>`,
-    foot: `<span class="faint small" style="margin-right:auto" id="gSummary"></span><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save guide</button>`,
+    foot: `<span class="faint small" style="margin-right:auto" id="gSummary"></span><label class="row small" style="gap:6px;margin-right:12px" title="Reviewed: take this channel out of the Needs attention queue"><input type="checkbox" id="gLeft" ${g.reviewed ? "checked" : ""}>Left as is</label><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save guide</button>`,
   });
   const el = m.el;
   const summary = () => {
@@ -620,6 +625,15 @@ function guideModal(c) {
   };
   summary();
   el.addEventListener("click", (e) => {
+    if (e.target.closest("[data-manual]")) {
+      const v = $("#gnManual", el).value.trim();
+      if (!/^\d{1,12}$/.test(v)) { toast("Station IDs are numbers", "Example: 62420", "warn", 3000); return; }
+      g.station_id = v; g.call_sign = ""; g.station_name = ""; g.confidence = null;
+      if (g.mode === "none" || g.mode === "xmltv") g.mode = g.mode === "xmltv" ? "both" : "gracenote";
+      $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === g.mode));
+      $("#gnCur", el).innerHTML = `· current <span class="num">${esc(v)}</span>`;
+      summary(); return;
+    }
     const mb = e.target.closest("[data-mode]");
     if (mb) { g.mode = mb.dataset.mode; $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b === mb)); summary(); return; }
     const st = e.target.closest("[data-station]");
@@ -672,6 +686,7 @@ function guideModal(c) {
   searchXm();
   $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
     try {
+      g.reviewed = $("#gLeft", el).checked;
       const r = await api.updateChannel(c.id, { guide: g });
       Object.assign(c, r && typeof r === "object" && r.id ? r : { guide: g });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.guide = null; if (!pp.backups?.length) S.pending.delete(c.id); }

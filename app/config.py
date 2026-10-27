@@ -70,7 +70,7 @@ def default_xmltv_source():
 def default_channel():
     return {
         "id": 0, "uuid": "", "number": "", "name": "", "group": "", "logo": "", "enabled": True, "streams": [],
-        "guide": {"mode": "none", "station_id": "", "xmltv_id": "", "xmltv_provider": ""},
+        "guide": {"mode": "none", "station_id": "", "xmltv_id": "", "xmltv_provider": "", "reviewed": False},
     }
 
 
