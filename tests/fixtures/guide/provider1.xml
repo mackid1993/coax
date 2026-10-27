@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tv SYSTEM "xmltv.dtd">
+<tv generator-info-name="fixture">
+  <channel id="cnn.us">
+    <display-name>CNN</display-name>
+    <display-name>Cable News Network</display-name>
+    <icon src="http://example.invalid/cnn.png"/>
+  </channel>
+  <channel id="espn.us">
+    <display-name>ESPN &amp; More</display-name>
+  </channel>
+  <channel id="unused.us">
+    <display-name>Unused</display-name>
+  </channel>
+  <programme start="20261027120000 +0000" stop="20261027130000 +0000" channel="cnn.us">
+    <title lang="en">CNN Newsroom</title>
+    <desc lang="en">News &lt;live&gt;</desc>
+  </programme>
+  <programme start="20261027120000 +0000" stop="20261027140000 +0000" channel="espn.us">
+    <title lang="en">SportsCenter</title>
+  </programme>
+  <programme start="20261027120000 +0000" stop="20261027140000 +0000" channel="unused.us">
+    <title lang="en">Nobody wants this</title>
+  </programme>
+</tv>

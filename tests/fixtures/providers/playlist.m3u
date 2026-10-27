@@ -1,0 +1,15 @@
+﻿#EXTM3U x-tvg-url="http://epg.example/guide.xml" url-tvg="http://epg.example/g2.xml"
+#EXTINF:-1 tvg-id="cnn.us" tvg-name="CNN, International" tvg-logo="http://logo/cnn.png" group-title="News",CNN, International HD
+http://stream.example/live/u/p/1.ts
+
+#EXTINF:-1 tvg-ID=espn.us group-title='Sports',ESPN
+#EXTVLCOPT:http-user-agent=Foo
+http://stream.example/live/u/p/2.ts
+#EXTINF:-1,No Attributes
+#EXTGRP:Misc
+http://stream.example/live/u/p/3.ts
+#EXTINF:-1 tvg-name="Only TVG Name" group-title="News",
+http://stream.example/live/u/p/4.ts
+http://stream.example/live/u/p/5.ts
+#EXTINF:-1 group-title="News",Duplicate of CNN
+http://stream.example/live/u/p/1.ts

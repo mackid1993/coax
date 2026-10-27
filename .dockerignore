@@ -1,0 +1,14 @@
+# Only requirements.txt and app/ are copied into the image; keep the build context small.
+.git
+.github
+.gitignore
+.venv
+data
+tests
+reference
+**/__pycache__
+**/*.pyc
+*.md
+docker-compose*.yml
+Dockerfile
+.dockerignore

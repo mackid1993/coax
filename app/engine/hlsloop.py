@@ -1,23 +1,28 @@
 # ======================================================================
-# SETTINGS: fill these in at the bottom of this block, then save.
+# coax stream engine (HLS input), adapted from the proven Dispatcharr
+# "hlsloop" stream profile. Stream, timing, refill, failover, A/V,
+# transcode and viewer-buffer logic are unchanged.
 #
-# Use double quotes, never single quotes: a single quote breaks the
-# profile.
+# Usage: hlsloop.py URL USER_AGENT CHANNEL_ID   (started by coax's hub)
 #
-# TO UPDATE THIS PROFILE LATER: keep everything down to the END OF
-# SETTINGS line, delete everything below it, and paste the new CODE
-# block from the README in its place. Your settings stay as they are.
-#
-# Leave a setting empty and the channel still plays; the features that
-# need it switch off and the Dispatcharr log says why.
+# SETTINGS are read once at start from coax's config.json
+# (/data/config.json, or the path in COAX_CONFIG for tests). A missing or
+# unreadable file falls back to safe defaults: no Channels DVR address
+# (shared viewers and recording extension switch off and the coax log
+# says why), transcode off, and port 7780.
+#   channels_dvr.url  Channels DVR server as http://IP:PORT (needed for
+#                     shared viewers and recordings)
+#   transcode         see the TRANSCODE help below
+#   server.port       coax's port; backup streams and the channel uuid come
+#                     from its internal API on 127.0.0.1
 #
 # TRANSCODE: re-encode every stream to one format, or pass it through.
 #
-#   TRANSCODE="off"       pass through untouched (default, no extra CPU/GPU)
-#   TRANSCODE="1080p60"   1080p, 59.94 fps, 6 Mbps
-#   TRANSCODE="1080p30"   1080p, 29.97 fps, 4.5 Mbps
-#   TRANSCODE="720p60"    720p, 59.94 fps, 4.5 Mbps
-#   TRANSCODE="720p30"    720p, 29.97 fps, 3 Mbps
+#   "off"       pass through untouched (default, no extra CPU/GPU)
+#   "1080p60"   1080p, 59.94 fps, 6 Mbps
+#   "1080p30"   1080p, 29.97 fps, 4.5 Mbps
+#   "720p60"    720p, 59.94 fps, 4.5 Mbps
+#   "720p30"    720p, 29.97 fps, 3 Mbps
 #   50 Hz countries (Europe, UK, Australia and others): use
 #   "1080p50", "1080p25", "720p50" or "720p25" instead.
 #
@@ -32,60 +37,49 @@
 #   encoding on the CPU. The bitrates match what IPTV providers send
 #   (about 3 to 6 Mbps), so quality holds without bloating the stream.
 #
-# Why transcode? Every channel leaves Dispatcharr in the same format, so
+# Why transcode? Every channel leaves coax in the same format, so
 # a backup with a different frame rate never upsets the player, and the
 # video plays at its real speed, except while the reserve refills: if a
 # provider problem keeps the reserve below half for 75 seconds, video and
 # audio play 3% slower together (pitch unchanged) until it is back to
 # three quarters. Costs a few seconds more delay
-# and some GPU time. Give the Dispatcharr container a GPU
+# and some GPU time. Give the coax container a GPU
 # (/dev/dri for Intel or AMD, the NVIDIA runtime for NVIDIA); the README
 # shows how. Without one it falls back to the CPU.
 # ======================================================================
-#
-# ------------------------------------------------------------------------
-# 1. DISPATCHARR_API_KEY (needed for failover, shared viewers, recordings)
-#    In Dispatcharr open Users, edit your user, press Generate API Key,
-#    and paste the key between the quotes. This is an admin-level key:
-#    anyone who sees it can manage Dispatcharr. To replace it, generate a
-#    new one in Users and paste it here.
-#    Example: DISPATCHARR_API_KEY = "abc123..."
-# ------------------------------------------------------------------------
-DISPATCHARR_API_KEY = ""  # <- paste your Dispatcharr API key here
-#
-# ------------------------------------------------------------------------
-# 2. CHANNELS_DVR (needed for shared viewers and recordings)
-#    Your Channels DVR server as http://IP:PORT. Find the IP in Channels
-#    DVR under Settings; the port is 8089 unless you changed it.
-#    Example: CHANNELS_DVR = "http://192.168.1.50:8089"
-# ------------------------------------------------------------------------
-CHANNELS_DVR = ""  # <- your Channels DVR address, e.g. "http://192.168.1.50:8089"
-#
-# ------------------------------------------------------------------------
-# 3. TRANSCODE (optional, see the TRANSCODE help above)
-#    "off" passes streams through untouched. With a GPU, "1080p60" is
-#    the usual choice. 50 Hz countries use "1080p50", "1080p25",
-#    "720p50" or "720p25".
-#    Example: TRANSCODE = "1080p60"
-# ------------------------------------------------------------------------
-TRANSCODE = "off"  # <- "off", "1080p60", "1080p30", "720p60" or "720p30"
-#
-# ------------------------------------------------------------------------
-# 4. DISPATCHARR_URL (advanced, almost everyone leaves this empty)
-#    The address the profile uses to reach the Dispatcharr API. The
-#    profile runs inside Dispatcharr, so when this is empty it uses
-#    http://127.0.0.1:9191, which is Dispatcharr itself. Only fill it in
-#    if you changed the Dispatcharr web port, for example
-#    "http://127.0.0.1:9292".
-# ------------------------------------------------------------------------
-DISPATCHARR_URL = ""  # <- leave empty unless you changed the Dispatcharr port
-#
-# ========================== END OF SETTINGS ===========================
+import os, sys, time, json, signal, re, select, shutil, hashlib, threading, collections, subprocess as sp, urllib.parse as up
+
+def load_settings(path=None):
+    """Return (channels_dvr_url, transcode, port) from coax's config.json.
+
+    Never raises: a missing, unreadable or malformed file (or any bad value)
+    falls back to "", "off" and 7780.
+    """
+    path = path or os.environ.get("COAX_CONFIG") or "/data/config.json"
+    try:
+        with open(path) as f:
+            c = json.load(f)
+    except Exception:
+        c = {}
+    if not isinstance(c, dict):
+        c = {}
+    dvr = c.get("channels_dvr")
+    dvr = dvr.get("url") if isinstance(dvr, dict) else ""
+    tc = c.get("transcode")
+    srv = c.get("server")
+    port = srv.get("port") if isinstance(srv, dict) else None
+    try:
+        port = int(port)
+        if not 0 < port < 65536:
+            raise ValueError
+    except Exception:
+        port = 7780
+    return (dvr if isinstance(dvr, str) else ""), (tc if isinstance(tc, str) else "off"), port
+CHANNELS_DVR, TRANSCODE, COAX_PORT = load_settings()
 TCP = {"1080p60": (1080, 59.94, "6M"), "1080p30": (1080, 29.97, "4.5M"), "720p60": (720, 59.94, "4.5M"), "720p30": (720, 29.97, "3M"), "1080p50": (1080, 50, "6M"), "1080p25": (1080, 25, "4.5M"), "720p50": (720, 50, "4.5M"), "720p25": (720, 25, "3M")}
 TC_HEIGHT, TC_FPS, TC_VBITRATE = TCP.get(str(TRANSCODE).lower().strip(), (0, 0, ""))
 TRANSCODE = TC_HEIGHT > 0
 TC_LEAD = 4.0
-import os, sys, time, json, signal, re, select, shutil, hashlib, threading, collections, subprocess as sp, urllib.parse as up
 try:
     import requests
 except ImportError:
@@ -96,17 +90,11 @@ chid = sys.argv[3] if len(sys.argv) > 3 else ""
 cdvr = CHANNELS_DVR.strip().rstrip("/")
 if cdvr and "://" not in cdvr:
     cdvr = "http://" + cdvr
-DURL = (DISPATCHARR_URL.strip() or "http://127.0.0.1:%s" % os.environ.get("DISPATCHARR_PORT", "9191")).rstrip("/")
-if "://" not in DURL:
-    DURL = "http://" + DURL
-AKEY = DISPATCHARR_API_KEY.strip()
+IAPI = "http://127.0.0.1:%d" % COAX_PORT
 
-def dapi(path):
-    if not AKEY:
-        raise ValueError("DISPATCHARR_API_KEY is empty at the top of the profile")
-    r = requests.get(DURL + path, headers={"X-API-Key": AKEY, "Accept": "application/json"}, timeout=5)
-    if r.status_code in (401, 403):
-        raise ValueError("Dispatcharr refused the API key (HTTP %d); check DISPATCHARR_API_KEY" % r.status_code)
+def iapi(path):
+    # coax's internal API (served on 127.0.0.1 only, no key)
+    r = requests.get(IAPI + path, headers={"Accept": "application/json"}, timeout=5)
     r.raise_for_status()
     return r.json()
 HSX = re.compile("(/live/[^/?]+/[^/?]+/[0-9]+)\\.ts(?=$|\\?)")
@@ -378,7 +366,7 @@ def pump():
         if not r and mono() - rb >= RBT and (not stk):
             stk = True
             skf = True
-            log("input: fetch loop stuck for %.0fs, stopping keepalive so Dispatcharr restarts the stream" % (mono() - rb))
+            log("input: fetch loop stuck for %.0fs, stopping keepalive so the stream gets restarted" % (mono() - rb))
         elif stk and mono() - rb < RBT:
             stk = False
             skf = False
@@ -584,7 +572,7 @@ try:
         pk = max(1, int(j.get("pk", 1)))
         rstk = bool(j.get("stk"))
         wlead = max(j.get("lead", 0.0) - (time.time() - j["t"]), 0.0)
-        log("resuming after Dispatcharr restart")
+        log("resuming after an engine restart")
 except Exception:
     pass
 hasseq = True
@@ -610,7 +598,7 @@ def feeds():
     if not chid.isdigit():
         return [src]
     try:
-        urls = [hsu(u) for u in (x.get("url") for x in dapi("/api/channels/channels/%d/streams/" % int(chid))) if u]
+        urls = [hsu(u) for u in (x.get("url") for x in iapi("/internal/channels/%d/streams" % int(chid))) if u]
     except Exception as x:
         log("could not read backup streams (%s)" % x)
         return [src]
@@ -773,7 +761,7 @@ def watch():
     w = requests.Session()
     base = cdvr
     if not base:
-        log("viewer buffer: off (CHANNELS_DVR is empty at the top of the profile)")
+        log("viewer buffer: off (no Channels DVR address in coax Settings)")
         return
     dev = None
     num = None
@@ -848,9 +836,9 @@ def watch():
                 jfail = True
                 log("recording: could not check or extend recordings (%s); will keep trying quietly" % str(x)[:80])
     try:
-        uid = str(dapi("/api/channels/channels/%d/" % int(chid))["uuid"])
+        uid = str(iapi("/internal/channels/%d" % int(chid))["uuid"])
     except Exception as x:
-        say("db", "off (could not read this channel from Dispatcharr: %s)" % x)
+        say("db", "off (could not read this channel from coax: %s)" % x)
         return
 
     def nm(l):

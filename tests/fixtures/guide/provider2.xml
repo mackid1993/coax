@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tv>
+  <channel id="bbc1.uk"><display-name>BBC One</display-name></channel>
+  <programme start="20261027120000 +0000" stop="20261027130000 +0000" channel="bbc1.uk"><title>News</title></programme>
+</tv>

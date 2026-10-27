@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#070A16">
+  <title>coax</title>
+  <link rel="icon" type="image/svg+xml" href="brand/coax-favicon.svg">
+  <link rel="preload" href="vendor/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="app.css">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    try {
+      var t = localStorage.getItem("coax.theme");
+      if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Primary">
+      <a class="brand" href="#/status" aria-label="coax, go to Status">
+        <img class="wm-dark" src="brand/coax-wordmark-dark.svg" alt="coax" width="128" height="34">
+        <img class="wm-light" src="brand/coax-wordmark-light.svg" alt="coax" width="128" height="34">
+        <img class="brand-icon" src="brand/coax-icon.svg" alt="coax" width="38" height="38">
+      </a>
+      <nav class="nav" id="nav"></nav>
+      <button class="netpill" id="netPill" type="button" title="Public IP of this container. Click to check again.">
+        <span class="np-top"><span class="np-label">Public IP</span><span class="np-cc"></span><svg class="np-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg></span><span class="np-ip num">…</span>
+      </button>
+      <div class="sidebar-foot">
+        <div class="pulse-row" id="health" title="Server connection">
+          <span class="pulse-dot"></span><span class="pulse-label">Connecting</span>
+        </div>
+        <button class="btn btn-ghost btn-icon theme-toggle" id="themeToggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme"></button>
+      </div>
+    </aside>
+    <main class="main" id="main" tabindex="-1"></main>
+  </div>
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+  <div id="modalRoot"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

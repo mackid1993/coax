@@ -1,0 +1,21 @@
+# coax, standalone.
+# Start: docker compose up -d   then open http://<this-host>:7780
+# Pin a released version. To try the newest development build, use
+# ghcr.io/mackid1993/coax:main instead (testing only, it changes without notice).
+services:
+  coax:
+    image: ghcr.io/mackid1993/coax:1.0.0
+    container_name: coax
+    restart: unless-stopped
+    ports:
+      - "7780:7780"
+    volumes:
+      - ./data:/data
+    # Optional: hardware transcoding on Intel or AMD graphics (VAAPI).
+    # Uncomment both blocks. Find the GIDs on the host with:
+    #   getent group render video     (or: stat -c '%g' /dev/dri/renderD128)
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "105"   # render GID on the host (example)
+    #   - "44"    # video GID on the host (example)

@@ -1,0 +1,185 @@
+{
+ "lineups": [
+  {
+   "lineupId": "USA-NY31519-X",
+   "name": "Spectrum",
+   "location": "New York",
+   "type": "CABLE"
+  },
+  {
+   "lineupId": "USA-OTA10001",
+   "name": "Local Over the Air Broadcast",
+   "location": "10001",
+   "type": "OTA"
+  }
+ ],
+ "stations": {
+  "USA-NY31519-X": [
+   {
+    "stationId": "10142",
+    "callSign": "CNN"
+   },
+   {
+    "stationId": "58646",
+    "callSign": "CNNHD"
+   },
+   {
+    "stationId": "10179",
+    "callSign": "ESPN"
+   },
+   {
+    "stationId": "32645",
+    "callSign": "ESPNHD"
+   },
+   {
+    "stationId": "10149",
+    "callSign": "COMEDY"
+   },
+   {
+    "stationId": "62420",
+    "callSign": "COMEDYP",
+    "name": "Comedy Central (Pacific)"
+   },
+   {
+    "stationId": "10240",
+    "callSign": "HBO"
+   },
+   {
+    "stationId": "10243",
+    "callSign": "HBOP"
+   },
+   {
+    "stationId": "84317",
+    "callSign": "RETRO"
+   },
+   {
+    "stationId": "10035",
+    "callSign": "AETV"
+   },
+   {
+    "stationId": "10003",
+    "callSign": "WABC",
+    "name": "WABC"
+   }
+  ],
+  "USA-OTA10001": [
+   {
+    "stationId": "10003",
+    "callSign": "WABC",
+    "name": "WABC",
+    "affiliateCallSign": "ABC",
+    "type": "Over the Air Broadcast"
+   },
+   {
+    "stationId": "10027",
+    "callSign": "WNBC",
+    "name": "WNBC",
+    "affiliateCallSign": "NBC",
+    "type": "Over the Air Broadcast"
+   }
+  ]
+ },
+ "search": {
+  "CNN": [
+   {
+    "stationId": "10142",
+    "callSign": "CNN",
+    "name": "Cable News Network",
+    "type": "Basic Cable",
+    "preferredImage": {
+     "uri": "https://example.invalid/cnn.png"
+    }
+   },
+   {
+    "stationId": "83110",
+    "callSign": "CNNI",
+    "name": "CNN International",
+    "type": "Basic Cable"
+   }
+  ],
+  "CNNHD": [
+   {
+    "stationId": "58646",
+    "callSign": "CNNHD",
+    "name": "Cable News Network HD",
+    "type": "Basic Cable"
+   }
+  ],
+  "ESPN": [
+   {
+    "stationId": "10179",
+    "callSign": "ESPN",
+    "name": "ESPN",
+    "type": "Basic Cable"
+   }
+  ],
+  "ESPNHD": [
+   {
+    "stationId": "32645",
+    "callSign": "ESPNHD",
+    "name": "ESPN HD",
+    "type": "Basic Cable"
+   }
+  ],
+  "COMEDY": [
+   {
+    "stationId": "10149",
+    "callSign": "COMEDY",
+    "name": "Comedy Central",
+    "type": "Basic Cable"
+   }
+  ],
+  "HBO": [
+   {
+    "stationId": "10240",
+    "callSign": "HBO",
+    "name": "Home Box Office",
+    "type": "Premium"
+   }
+  ],
+  "HBOP": [
+   {
+    "stationId": "10243",
+    "callSign": "HBOP",
+    "name": "Home Box Office (Pacific)",
+    "type": "Premium"
+   }
+  ],
+  "RETRO": [
+   {
+    "stationId": "84317",
+    "callSign": "RETRO",
+    "name": "RetroPlex",
+    "type": "Premium"
+   }
+  ],
+  "AETV": [
+   {
+    "stationId": "10035",
+    "callSign": "AETV",
+    "name": "A&E",
+    "type": "Basic Cable"
+   }
+  ],
+  "Sky Sports Main Event": [
+   {
+    "stationId": "77001",
+    "callSign": "SKYSPME",
+    "name": "Sky Sports Main Event",
+    "type": "Premium"
+   },
+   {
+    "stationId": "77999",
+    "callSign": "SKYTEST",
+    "name": "Sky Sports Test Feed",
+    "type": "Premium"
+   },
+   {
+    "stationId": "77998",
+    "callSign": "SKYVOD",
+    "name": "Sky Sports Main Event",
+    "type": "VODProvider"
+   }
+  ]
+ }
+}

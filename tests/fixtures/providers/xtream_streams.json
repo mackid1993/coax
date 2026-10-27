@@ -1,0 +1,70 @@
+[
+ {
+  "num": 1,
+  "name": "CNN HD",
+  "stream_type": "live",
+  "stream_id": 101,
+  "stream_icon": "http://logo/cnn.png",
+  "epg_channel_id": "cnn.us",
+  "category_id": "1"
+ },
+ {
+  "num": "2",
+  "name": "ESPN",
+  "stream_type": "live",
+  "stream_id": "102",
+  "stream_icon": null,
+  "epg_channel_id": null,
+  "category_id": 2
+ },
+ {
+  "num": 3,
+  "name": null,
+  "stream_type": "live",
+  "stream_id": "103.0",
+  "stream_icon": "",
+  "epg_channel_id": "",
+  "category_id": "3"
+ },
+ {
+  "num": 4,
+  "name": "Orphan",
+  "stream_type": "live",
+  "stream_id": 104,
+  "stream_icon": "",
+  "epg_channel_id": "",
+  "category_id": "999"
+ },
+ {
+  "num": 5,
+  "name": "No category",
+  "stream_type": "live",
+  "stream_id": 105,
+  "category_id": null,
+  "category_ids": [
+   2
+  ]
+ },
+ {
+  "num": 6,
+  "name": "A Movie",
+  "stream_type": "movie",
+  "stream_id": 106,
+  "category_id": "1"
+ },
+ {
+  "num": 7,
+  "name": "Dupe",
+  "stream_type": "live",
+  "stream_id": "101",
+  "category_id": "1"
+ },
+ {
+  "num": 8,
+  "name": "Missing id",
+  "stream_type": "live",
+  "stream_id": null,
+  "category_id": "1"
+ },
+ "garbage"
+]
