@@ -20,6 +20,20 @@ Everything you set lives in one folder, `./data`.
 > expose port 7780 to the internet (no port forwarding, no public reverse proxy). Use it on your home network,
 > or reach it remotely through a VPN such as Tailscale or WireGuard.
 
+
+## Screenshots
+
+Channel names, providers and logos below are made up for the demo.
+
+| | |
+|---|---|
+| ![Channels](assets/screenshots/channels.png) | ![Status](assets/screenshots/status.png) |
+| **Channels**: pick streams, match the guide and attach backups in one pass | **Status**: live channels, transcoding, real-time and reserve, and what coax corrected |
+| ![Lineups](assets/screenshots/lineups.png) | ![Providers](assets/screenshots/providers.png) |
+| **Lineups**: one Channels DVR source each, added with one click | **Providers**: Xtream or M3U, several lines, group picker |
+| ![Logs](assets/screenshots/logs.png) | ![Settings](assets/screenshots/settings.png) |
+| **Logs**: live, filterable | **Settings**: addresses, transcoding, Auto-match region, backups |
+
 ## Contents
 
 - [Features](#features)

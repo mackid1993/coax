@@ -65,7 +65,10 @@ function dvrBlock(l) {
   const syncText = sync
     ? `Last synced with Channels DVR: ${esc(fmtAgo(sync.at))}${sync.ok ? "" : ` <span class="badge badge-bad" title="${esc(sync.error)}">failed</span>`}`
     : d.dvr?.added_at ? `Added to Channels DVR ${esc(fmtAgo(d.dvr.added_at))}` : "";
-  const err = d.error && !d.in_dvr ? `<p class="faint small" style="color:var(--bad)">${icon("alert", 'style="width:13px;height:13px;vertical-align:-2px"')} ${esc(d.error)}</p>` : "";
+  const plain = (e) => /timed out|Max retries|refused|unreachable|Name or service/i.test(e || "")
+    ? "Can't reach Channels DVR. Check the DVR server URL in Settings and that the DVR is running."
+    : String(e || "").split("\n")[0].slice(0, 160);
+  const err = d.error && !d.in_dvr ? `<p class="faint small" style="color:var(--bad)" data-pop="${esc(d.error)}" data-pop-sub="Details (also on the Logs page)">${icon("alert", 'style="width:13px;height:13px;vertical-align:-2px"')} ${esc(plain(d.error))}</p>` : "";
   return `${err}<div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
     <span class="faint small">${syncText}</span>
     <div class="row" style="flex-wrap:wrap;gap:8px">${d.in_dvr || d.dvr ? `<button class="btn btn-ghost btn-sm" data-act="dvr-sync">${icon("refresh")}Sync now</button>` : ""}

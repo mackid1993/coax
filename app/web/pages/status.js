@@ -113,7 +113,7 @@ function drawSessions(sessions) {
       <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}${feedBadge(x)}</div>
       ${eventsHtml(x)}
       <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
-      ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtAgo(c.connected).replace(" ago", "")}</span>` : ""}</span>`).join("")}</div>` : ""}
+      ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtDuration(c.connected)}</span>` : ""}</span>`).join("")}</div>` : ""}
     </article>`;
   }).join("");
 }
