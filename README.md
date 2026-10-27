@@ -59,6 +59,8 @@ You need Docker with Docker Compose on a machine on the same network as your Cha
 ```sh
 mkdir coax && cd coax
 curl -fLO https://raw.githubusercontent.com/mackid1993/coax/main/docker-compose.yml
+curl -fL https://raw.githubusercontent.com/mackid1993/coax/main/.env.example -o .env
+# optional: edit .env (port, timezone)
 docker compose up -d
 ```
 
@@ -79,8 +81,9 @@ streams stop until it reconnects.
 ```sh
 mkdir -p coax && cd coax
 curl -fLO https://raw.githubusercontent.com/mackid1993/coax/main/docker-compose.vpn.yml
-# create .env with your WireGuard values (see below), then: chmod 600 .env
-# edit FIREWALL_OUTBOUND_SUBNETS in docker-compose.vpn.yml to match your LAN
+curl -fL https://raw.githubusercontent.com/mackid1993/coax/main/.env.vpn.example -o .env
+chmod 600 .env
+# edit .env: your VPN values and LAN_SUBNETS
 docker compose -f docker-compose.vpn.yml up -d
 ```
 
@@ -95,13 +98,13 @@ What to set:
    - **OpenVPN** (commented out): a built-in provider with your VPN login. Comment out the WireGuard block,
      uncomment the OpenVPN one, and put `VPN_PROVIDER`, `OPENVPN_USER`, `OPENVPN_PASSWORD` and
      `SERVER_COUNTRIES` in `.env`.
-   Keep `.env` private (`chmod 600 .env`).
+   Keep `.env` private (`chmod 600 .env`). `.env.vpn.example` lists every value with where to find it.
+2. **`LAN_SUBNETS`** in `.env`: your LAN, for example `192.168.1.0/24`, passed to Gluetun as
+   `FIREWALL_OUTBOUND_SUBNETS`. Without it Gluetun's firewall blocks the LAN and coax cannot reach Channels
+   DVR. It must not overlap the VPN's own address range.
    To use one of Gluetun's built-in providers instead (Mullvad, ProtonVPN, and many more), replace the
    `gluetun` environment with the settings from your provider's page in the
    [provider setup list](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers).
-2. **`FIREWALL_OUTBOUND_SUBNETS`.** Set it to your LAN, for example `192.168.1.0/24`. Gluetun's firewall
-   blocks everything outside the tunnel otherwise, and coax could not reach Channels DVR. It must not
-   overlap the VPN's own address range.
 3. **Ports.** coax shares Gluetun's network, so port 7780 is published on the `gluetun` service, not on
    `coax`.
 

@@ -1,4 +1,5 @@
 # coax, standalone.
+# Settings: cp .env.example .env (port, timezone). Everything else is in the web UI.
 # Start: docker compose up -d   then open http://<this-host>:7780
 # ./data is created on first start; coax fixes its ownership itself.
 services:
@@ -8,7 +9,9 @@ services:
     container_name: coax
     restart: unless-stopped
     ports:
-      - "7780:7780"
+      - "${COAX_PORT:-7780}:7780"
+    environment:
+      - TZ=${TZ:-Etc/UTC}
     volumes:
       - ./data:/data
 

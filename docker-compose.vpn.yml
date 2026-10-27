@@ -10,13 +10,10 @@
 # Every built-in provider (Mullvad, ProtonVPN, Windscribe, PIA, NordVPN, ...) lists its exact variables here:
 #   https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers
 #
-# 1. Create .env next to this file and keep it private (chmod 600 .env):
-#      WireGuard: WG_ENDPOINT_IP, WG_ENDPOINT_PORT, WG_PUBLIC_KEY, WG_PRIVATE_KEY, WG_ADDRESSES
-#                 (and WG_PRESHARED_KEY if your provider uses one)
-#      OpenVPN:   VPN_PROVIDER, OPENVPN_USER, OPENVPN_PASSWORD, SERVER_COUNTRIES
-# 2. Set FIREWALL_OUTBOUND_SUBNETS below to your LAN so coax can still reach Channels DVR.
-#    Without it, Gluetun's firewall blocks all LAN traffic that is not a reply.
-# 3. docker compose -f docker-compose.vpn.yml up -d
+# 1. cp .env.vpn.example .env && chmod 600 .env, then fill in .env:
+#      your VPN values (WireGuard or OpenVPN) and LAN_SUBNETS (your LAN, so coax can reach Channels DVR;
+#      without it Gluetun's firewall blocks all LAN traffic that is not a reply).
+# 2. docker compose -f docker-compose.vpn.yml up -d
 #    then open http://<this-host>:7780
 services:
   gluetun:
@@ -46,14 +43,12 @@ services:
       # - OPENVPN_USER=${OPENVPN_USER}
       # - OPENVPN_PASSWORD=${OPENVPN_PASSWORD}
       # - SERVER_COUNTRIES=${SERVER_COUNTRIES}
-      # Your LAN, comma separated, e.g. 192.168.1.0/24. Lets coax reach Channels DVR outside the tunnel.
-      # Must not overlap the VPN's own address range.
-      - FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24
-      # Your timezone, for Gluetun's log timestamps.
-      - TZ=Etc/UTC
+      # Your LAN (LAN_SUBNETS in .env). Lets coax reach Channels DVR outside the tunnel.
+      - FIREWALL_OUTBOUND_SUBNETS=${LAN_SUBNETS:?set LAN_SUBNETS in .env}
+      - TZ=${TZ:-Etc/UTC}
     ports:
       # coax shares Gluetun's network, so coax's port is published here, not on the coax service.
-      - "7780:7780"
+      - "${COAX_PORT:-7780}:7780"
 
   coax:
     # :latest is the newest release. To freeze a version, use its number instead (e.g. :1.0.0).
@@ -62,6 +57,8 @@ services:
     restart: unless-stopped
     # All traffic goes through Gluetun. No ports: here; they are on the gluetun service.
     network_mode: "service:gluetun"
+    environment:
+      - TZ=${TZ:-Etc/UTC}
     depends_on:
       - gluetun
     volumes:
