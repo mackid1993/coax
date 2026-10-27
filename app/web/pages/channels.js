@@ -64,12 +64,36 @@ async function reload() {
 const chById = (id) => S.channels.find((c) => c.id === id);
 const backupsOf = (c) => (c.streams || []).slice(1);
 const leftAsIs = (c) => !!(c.guide || {}).reviewed;
-// Needs attention = a guide problem (no guide ID, or a weak match). Missing backups have their own filter.
-const needsAttention = (c) => !leftAsIs(c) && (!hasGuide(c) || lowConfidence(c));
+// Which guide a channel needs, from its lineups: a Gracenote-only lineup needs a station ID,
+// an XMLTV-only lineup needs an XMLTV ID, anything else is happy with either.
+function guideNeed(c) {
+  const ls = lineupsOf(c).map((id) => S.lineups.find((l) => l.id === id)).filter(Boolean);
+  if (ls.length && ls.every((l) => l.guide === "gracenote")) return "gracenote";
+  if (ls.length && ls.every((l) => l.guide === "xmltv")) return "xmltv";
+  return "either";
+}
+// A usable guide for the lineups this channel is in.
 const hasGuide = (c) => {
   const g = c.guide || {};
+  const need = guideNeed(c);
+  if (need === "gracenote") return !!g.station_id;
+  if (need === "xmltv") return !!g.xmltv_id;
   return !!(g.station_id || g.xmltv_id);
 };
+// Like the original matcher: Matched (sure, pre-checked) needs nothing; Review (only weaker candidates)
+// and Unmatched (nothing found) need you. A guide you saved yourself is never second-guessed.
+function guideStatus(c) {
+  const p = S.pending.get(c.id);
+  const st = p?.guide?.status;
+  if (p?.guide?.cands?.length) {
+    if (st) return st === "matched" ? "matched" : "review";
+    return pct(p.guide.cands[p.guide.idx]?.score ?? p.guide.cands[p.guide.idx]?.confidence) >= HIGH ? "matched" : "review";
+  }
+  if (hasGuide(c)) return "ok";
+  return "unmatched";
+}
+// Needs attention = guide review or unmatched. Missing backups have their own filter.
+const needsAttention = (c) => !leftAsIs(c) && ["review", "unmatched"].includes(guideStatus(c));
 function lineupsOf(c) {
   if (Array.isArray(c.lineups)) return c.lineups;
   return S.lineups.filter((l) => (l.channels || []).includes(c.id)).map((l) => l.id);
@@ -79,11 +103,7 @@ function xmltvOnly(c) {
   const ls = lineupsOf(c).map((id) => S.lineups.find((l) => l.id === id)).filter(Boolean);
   return ls.length > 0 && ls.every((l) => l.guide === "xmltv");
 }
-function lowConfidence(c) {
-  const p = S.pending.get(c.id);
-  if (p?.guide?.cands?.length) return pct(p.guide.cands[p.guide.idx]?.score ?? p.guide.cands[p.guide.idx]?.confidence) < HIGH;
-  return c.guide?.confidence != null && pct(c.guide.confidence) < LOW;
-}
+function lowConfidence(c) { return guideStatus(c) === "review"; }
 function visibleChannels() {
   const q = S.q.trim().toLowerCase();
   const words = q ? q.split(/\s+/) : [];
@@ -91,7 +111,7 @@ function visibleChannels() {
     if (S.lineup && !lineupsOf(c).includes(S.lineup)) return false;
     if (S.group && (c.group || "") !== S.group) return false;
     if (S.filter === "attention" && !needsAttention(c)) return false;
-    if (S.filter === "unmatched" && (hasGuide(c) || leftAsIs(c))) return false;
+    if (S.filter === "unmatched" && (guideStatus(c) !== "unmatched" || leftAsIs(c))) return false;
     if (S.filter === "nobackups" && (backupsOf(c).length || leftAsIs(c))) return false;
     if (S.filter === "low" && (!lowConfidence(c) || leftAsIs(c))) return false;
     if (S.filter === "left" && !leftAsIs(c)) return false;
@@ -163,7 +183,7 @@ function renderFrame() {
       <div class="toolbar">
         <label class="search" style="flex:1 1 180px"><span class="sr-only">Filter channels</span>${icon("search")}<input class="input input-sm" data-search data-ch-q placeholder="Filter channels" value="${esc(S.q)}"><kbd>/</kbd></label>
         <div class="seg" role="group" aria-label="Filter">
-          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "Low confidence")}${segBtn("left", "Left as is")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
+          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "Review")}${segBtn("left", "Left as is")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
         </div>
         <span class="spacer"></span>
         <label class="sr-only" for="lineupFilter">Lineup</label>
@@ -619,7 +639,9 @@ function applyAutoMatch(ids, res) {
     const skip = xmltvOnly(c);
     const cands = skip ? [] : (r.guide || r.guide_candidates || []).filter((x) => x && x.station_id && x.station_id !== c.guide?.station_id);
     const backups = (r.backups || []).filter((b) => !ownKeys.has(refKey(b))).map((b) => ({ ...b, checked: pct(b.score) >= HIGH }));
-    const guide = { cands, idx: 0, checked: cands.length > 0 && pct(cands[0].score ?? cands[0].confidence) >= HIGH && !hasGuide(c), skipped: skip };
+    const status = skip ? "" : (r.guide_status || "");
+    const sure = status ? status === "matched" : cands.length > 0 && pct(cands[0].score ?? cands[0].confidence) >= HIGH;
+    const guide = { cands, idx: 0, status, checked: cands.length > 0 && sure && !hasGuide(c), skipped: skip };
     if (!cands.length && !backups.length && !skip) continue;
     if (cands.length) guideN++;
     backN += backups.length;
