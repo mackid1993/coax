@@ -14,15 +14,30 @@ reader.Close()), which has proven reliable with Channels DVR:
   two connections on one line). Close is idempotent.
 
 The engine (app/engine) owns all stream logic: reserve, stalls, failover, keepalive,
-A/V checks, transcode, viewer buffer. If the engine process exits while the DVR is
-still connected, it is restarted on the same line and slot (the engine resumes its
-timeline from its own state files), up to RESTART_LIMIT times per RESTART_WINDOW.
+A/V checks, transcode, viewer buffer. The hub watches the engine from outside and never
+gives up while the DVR is connected:
+
+- engine exits: restart it on the same line and slot (it resumes its timeline from its own
+  state files; COAX_RESTART=1 tells it to trust that state for up to a minute).
+- engine frozen (no bytes at all for STALL_TIMEOUT after video has flowed): kill and restart.
+- no real video (only keepalive) for DEAD_TIMEOUT: retune with a fresh engine; every second
+  retune in a row moves to another free line of the same provider when there is one.
+- between engine processes the hub sends MPEG-TS null packets so the DVR keeps the
+  connection (and a recording keeps going). Restarts back off up to BACKOFF_MAX.
+
+Owning the whole pipeline also lets the hub share what one engine learned: streams that
+failed recently are tried last (tune order and backup order), a failover onto another
+provider's line holds that line's slot, a just-released line is used last, and each
+channel's 10-minute engine status lines are kept in cache/history/<channel id>.jsonl.
 """
 
 import collections
+import hashlib
+import json
 import logging
 import re
 import os
+import select
 import signal
 import subprocess
 import sys
@@ -34,10 +49,39 @@ log = logging.getLogger("coax.hub")
 READ_SIZE = 64 * 1024
 from app import USER_AGENT
 ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
-RESTART_LIMIT = 5
-RESTART_WINDOW = 600.0
-RESTART_DELAY = 1.0
+RESTART_WINDOW = 600.0     # restarts within this window make the next one wait longer
+RESTART_DELAY = 1.0        # first restart delay; doubles per recent restart
+BACKOFF_MAX = 15.0
 STOP_TIMEOUT = 3.0
+STALL_TIMEOUT = 25.0       # no bytes at all from an engine that already sent video: frozen
+DEAD_TIMEOUT = 90.0        # bytes but no real video for this long: retune
+LINE_COOLDOWN = 5.0        # a line released this recently is used last
+HISTORY_MAX = 1024 * 1024  # per-channel history file is trimmed past this size
+
+# One MPEG-TS null packet (PID 0x1FFF), the same one the engine sends as keepalive.
+NUL_PKT = b"G\x1f\xff\x10" + b"\xff" * 184
+REF = re.compile(r"\[ref ([0-9a-f]{8})\]")
+_HSX = re.compile(r"(/live/[^/?]+/[^/?]+/[0-9]+)\.ts(?=$|\?)")
+
+
+def _has_video(chunk, pos):
+    """True if the chunk holds any packet that is not a null packet. pos = bytes already sent mod 188."""
+    i = (188 - pos) % 188
+    n = len(chunk)
+    while i + 3 < n:
+        if chunk[i] == 0x47 and ((chunk[i + 1] & 0x1F) << 8 | chunk[i + 2]) != 0x1FFF:
+            return True
+        i += 188
+    return False
+
+
+def url_refs(url):
+    """Short ids the engine logs for a stream URL (raw, and the HLS form hlsloop switches to)."""
+    out = set()
+    for u in (url, _HSX.sub(r"\1.m3u8", url or "", count=1)):
+        if u:
+            out.add(hashlib.md5(u.encode()).hexdigest()[:8])
+    return out
 
 
 def default_engine_command(fmt, url, user_agent, channel_id):
@@ -138,6 +182,11 @@ class Session:
         self.events = collections.deque(maxlen=60)  # what the engine corrected, newest last
         self.stream_no = 1          # which of the channel's streams is playing (1 = main)
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
+        self.degraded = False       # last 10-minute status showed repeated failovers or long keepalive
+        self.dead_retunes = 0       # retunes in a row without real video
+        self.spawns = 0
+        self._pos = 0               # bytes sent mod 188, so injected null packets stay aligned
+        self.had_video = False      # real video has reached the DVR at least once
         self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
         self.proc = None
         self.closed = False
@@ -153,6 +202,11 @@ class Session:
         # Two DVR connections can run the same channel at once; keep their engine state files
         # apart. The first session keeps the plain names (so files do not pile up in /tmp).
         env["COAX_SESSION"] = "~%d" % self.instance if self.instance else ""
+        if self.spawns:
+            env["COAX_RESTART"] = "1"   # resume from the previous engine's state even if it is a little old
+        else:
+            env.pop("COAX_RESTART", None)
+        self.spawns += 1
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, start_new_session=True, bufsize=0, env=env)
         threading.Thread(target=self._pump_stderr, args=(proc,), daemon=True,
@@ -193,6 +247,17 @@ class Session:
                     except (IndexError, ValueError, TypeError):
                         pass
                 break
+        m = REF.search(line)
+        if m:
+            if "switching to stream" in line:
+                self.hub._follow(self, m.group(1))
+            elif re.search(r"\b(failed|is not answering)\b", line):
+                self.hub._note_bad(m.group(1))
+        if "status: " in line:
+            self.hub._history(self, line)
+            m = re.search(r"(\d+) (?:switches|failovers), (\d+)s keepalive", line)
+            if m:
+                self.degraded = int(m.group(1)) >= 2 or int(m.group(2)) >= 30
         m = re.search(r"transcoding with (.+)$", line)
         if m:
             self.encoder = m.group(1).strip()
@@ -241,18 +306,23 @@ class Session:
             except Exception:  # noqa: BLE001
                 pass
 
-    def _may_restart(self):
+    def _backoff(self):
         now = time.monotonic()
         self.restarts = [t for t in self.restarts if now - t < RESTART_WINDOW]
-        if len(self.restarts) >= RESTART_LIMIT:
-            return False
         self.restarts.append(now)
-        return True
+        return min(RESTART_DELAY * 2 ** (len(self.restarts) - 1), BACKOFF_MAX)
+
+    def _keepalive(self):
+        """Null packets for the DVR while no engine output is coming (only on a packet boundary, and
+        only once video has flowed, so a fresh tune starts exactly as the engine sends it)."""
+        if self._pos or not self.had_video:
+            return b""
+        return NUL_PKT * 7
 
     # -- the copy loop (ah4c copyFlush) -------------------------------------------
 
     def iter_bytes(self):
-        """Yield engine output until the DVR leaves or the engine gives up."""
+        """Yield engine output until the DVR leaves. Never ends on its own while the DVR is connected."""
         while True:
             with self._lock:
                 if self.closed:
@@ -266,17 +336,46 @@ class Session:
                         return
                 proc = self.proc
                 self.reading = True
+            why = None
+            started = time.monotonic()
+            last_byte = last_video = None
             try:
                 fd = proc.stdout.fileno()
                 while True:
+                    try:
+                        ready, _, _ = select.select([fd], [], [], 1.0)
+                    except (OSError, ValueError):
+                        break
+                    now = time.monotonic()
+                    if not ready:
+                        if last_video is not None and now - last_byte >= STALL_TIMEOUT:
+                            why = "frozen"
+                            break
+                        if now - (last_video or started) >= DEAD_TIMEOUT:
+                            why = "dead"
+                            break
+                        if now - (last_byte or started) >= 2:
+                            ka = self._keepalive()
+                            if ka:
+                                yield ka
+                        continue
                     try:
                         chunk = os.read(fd, READ_SIZE)
                     except OSError:
                         chunk = b""
                     if not chunk:
                         break
+                    last_byte = now
+                    if (last_video is None or now - last_video >= 1.0) and _has_video(chunk, self._pos):
+                        last_video = now
+                        self.had_video = True
+                        self.dead_retunes = 0
                     self.bytes_out += len(chunk)
+                    self._pos = (self._pos + len(chunk)) % 188
                     yield chunk
+                    if now - (last_video or started) >= DEAD_TIMEOUT:
+                        why = "dead"
+                        break
             finally:
                 # Only the reading thread closes the pipe it reads.
                 with self._lock:
@@ -285,23 +384,53 @@ class Session:
                     proc.stdout.close()
                 except Exception:  # noqa: BLE001
                     pass
-            # Engine output ended.
-            try:
-                code = proc.wait(timeout=STOP_TIMEOUT)
-            except subprocess.TimeoutExpired:
-                code = "still running, killed"
+            if why is None:
+                try:
+                    code = proc.wait(timeout=STOP_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    code = "still running, killed"
             with self._lock:
                 if self.closed:
                     return
-                self._kill(proc)
-                self.proc = None
-                if not self._may_restart():
-                    log.warning("[%s] engine exited (code %s); restart limit reached, ending the stream",
-                                self.name, code)
+            self._kill(proc)   # the old engine is gone before anything new connects
+            with self._lock:
+                if self.closed:
                     return
-            log.warning("[%s] engine exited (code %s); restarting it on the same line", self.name, code)
-            self.event("restart", "Engine stopped (code %s); restarted on the same line" % code, "warn")
-            time.sleep(RESTART_DELAY)
+                self.proc = None
+            moved = False
+            if why == "frozen":
+                log.warning("[%s] engine sent nothing for %.0fs; restarting it on the same line", self.name, STALL_TIMEOUT)
+                self.event("restart", "Engine froze for %.0fs; restarted it" % STALL_TIMEOUT, "warn")
+            elif why == "dead":
+                self.dead_retunes += 1
+                if self.dead_retunes % 2 == 0:
+                    moved = self.hub._move_line(self)
+                if moved:
+                    log.warning("[%s] no video for %.0fs; retuning on line %s / %s", self.name, DEAD_TIMEOUT,
+                                self.provider_name, self.line_name)
+                    self.event("restart", "No video for %.0fs; retuned on %s" % (DEAD_TIMEOUT, self.line_name), "warn")
+                else:
+                    log.warning("[%s] no video for %.0fs; retuning with a fresh engine", self.name, DEAD_TIMEOUT)
+                    self.event("restart", "No video for %.0fs; retuned with a fresh connection" % DEAD_TIMEOUT, "warn")
+            else:
+                log.warning("[%s] engine exited (code %s); restarting it on the same line", self.name, code)
+                self.event("restart", "Engine stopped (code %s); restarted on the same line" % code, "warn")
+            if self._pos:   # finish the packet the old engine left half-written
+                pad = b"\xff" * (188 - self._pos)
+                self._pos = 0
+                yield pad
+            ka = self._keepalive()
+            if ka:
+                yield ka
+            end = time.monotonic() + self._backoff()
+            while True:
+                left = end - time.monotonic()
+                if left <= 0 or self.closed:
+                    break
+                time.sleep(min(1.0, left))
+                ka = self._keepalive() if left >= 1.0 and not self.closed else b""
+                if ka:
+                    yield ka
 
     def close(self):
         """Kill the engine, then release the slot. Safe to call more than once."""
@@ -327,6 +456,10 @@ class Hub:
         self._slots = {}                # (provider_id, line_id) -> [Session]
         self._sessions = []
         self.port = None                # the port coax listens on; main may set it (else config)
+        self.history_dir = None         # default: <data dir>/cache/history
+        self._refs = {}                 # engine log ref -> (provider_id, line_id, stream_id)
+        self._bad = {}                  # (provider_id, stream_id) -> [retry after (monotonic), strikes]
+        self._released = {}             # (provider_id, line_id) -> monotonic time it was last released
 
     def _config(self):
         try:
@@ -364,19 +497,125 @@ class Hub:
     def _hold_locked(self, session, key):
         self._slots.setdefault(key, []).append(session)
 
+    def _drop_locked(self, session, key):
+        holders = self._slots.get(key, [])
+        if session in holders:
+            holders.remove(session)
+            self._released[key] = time.monotonic()
+        if not holders:
+            self._slots.pop(key, None)
+
     def _release(self, session):
         """Give back the session's main slot and every backup slot it holds."""
         with self._lock:
             keys = [(session.provider_id, session.line_id)] + list(session.extra_slots)
             session.extra_slots = []
             for key in keys:
-                holders = self._slots.get(key, [])
-                if session in holders:
-                    holders.remove(session)
-                if not holders:
-                    self._slots.pop(key, None)
+                self._drop_locked(session, key)
             if session in self._sessions:
                 self._sessions.remove(session)
+
+    # -- what the hub learns from engines ------------------------------------------
+
+    def _remember(self, url, provider_id, line_id, stream_id):
+        if len(self._refs) > 5000:
+            self._refs.clear()
+        for ref in url_refs(url):
+            self._refs[ref] = (provider_id, line_id, str(stream_id))
+
+    def _is_bad(self, provider_id, stream_id):
+        entry = self._bad.get((provider_id, str(stream_id)))
+        return bool(entry) and entry[0] > time.monotonic()
+
+    def _note_bad(self, ref):
+        """An engine gave up on a stream: try it last everywhere for a while (60 s, doubling to 10 min)."""
+        hit = self._refs.get(ref)
+        if hit is None:
+            return
+        key = (hit[0], hit[2])
+        with self._lock:
+            strikes = (self._bad.get(key) or [0, 0])[1]
+            self._bad[key] = [time.monotonic() + min(60 * 2 ** strikes, 600), strikes + 1]
+
+    def _follow(self, session, ref):
+        """The engine switched streams: hold the line it now uses, and show which stream it is."""
+        hit = self._refs.get(ref)
+        if hit is None:
+            return
+        pid, lid, sid = hit
+        with self._lock:
+            self._bad.pop((pid, sid), None)
+            for key in list(session.extra_slots):
+                self._drop_locked(session, key)
+            session.extra_slots = []
+            if pid != session.provider_id and session in self._sessions:
+                self._hold_locked(session, (pid, lid))
+                session.extra_slots.append((pid, lid))
+        channel = next((c for c in self._config().get("channels") or []
+                        if str(c.get("id")) == str(session.channel_id)), None)
+        for i, st in enumerate((channel or {}).get("streams") or []):
+            if st.get("provider") == pid and str(st.get("stream_id")) == sid:
+                session.stream_no = i + 1
+                break
+
+    def _lines(self, provider):
+        """Enabled lines, a line released in the last LINE_COOLDOWN seconds last."""
+        now = time.monotonic()
+        lines = [l for l in provider.get("lines") or [] if l.get("enabled", True)]
+        return sorted(lines, key=lambda l: now - self._released.get((provider.get("id"), l.get("id")), -1e9)
+                      < LINE_COOLDOWN)
+
+    def _move_line(self, session):
+        """Move a session to another free line of its provider (fresh login). False if there is none."""
+        provider = self._providers(self._config()).get(session.provider_id)
+        if provider is None:
+            return False
+        with self._lock:
+            if session.closed:
+                return False
+            old = (session.provider_id, session.line_id)
+            new = next((l for l in self._lines(provider)
+                        if l.get("id") != session.line_id and self._free_locked(provider, l)), None)
+            if new is None:
+                return False
+            self._drop_locked(session, old)
+            self._hold_locked(session, (session.provider_id, new.get("id")))
+            old_line = (session.line_id, session.line_name)
+            session.line_id, session.line_name = new.get("id"), new.get("name") or new.get("id")
+        try:
+            url = self._stream_url(provider, new, session.stream_id)
+        except Exception:  # noqa: BLE001
+            url = None
+        if not url:
+            with self._lock:
+                self._drop_locked(session, (session.provider_id, session.line_id))
+                session.line_id, session.line_name = old_line
+                self._hold_locked(session, old)
+            return False
+        session.url = url
+        self._remember(url, session.provider_id, session.line_id, session.stream_id)
+        return True
+
+    def _history(self, session, line):
+        """Keep the engine's 10-minute status lines per channel (survives restarts)."""
+        try:
+            folder = self.history_dir
+            if folder is None:
+                from app import config as configmod
+                folder = os.path.join(configmod.DATA_DIR, "cache", "history")
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, "%s.jsonl" % re.sub(r"[^0-9A-Za-z_-]", "_", str(session.channel_id)))
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"t": round(time.time()), "channel": session.name,
+                                         "line": session.line_name, "status": line}) + "\n")
+            if os.path.getsize(path) > HISTORY_MAX:
+                with open(path, encoding="utf-8") as handle:
+                    rows = handle.readlines()
+                with open(path + ".tmp", "w", encoding="utf-8") as handle:
+                    handle.writelines(rows[len(rows) // 2:])
+                os.replace(path + ".tmp", path)
+        except Exception:  # noqa: BLE001 - history is best effort
+            pass
 
     # -- tune (ah4c tune()) ---------------------------------------------------------
 
@@ -387,12 +626,12 @@ class Hub:
         if channel_cfg is None or not channel_cfg.get("enabled", True):
             return None
         providers = self._providers(cfg)
-        for stream, provider in self._candidates(channel_cfg, providers):
+        cands = sorted(self._candidates(channel_cfg, providers),
+                       key=lambda sp: self._is_bad(sp[1].get("id"), sp[0].get("stream_id")))
+        for stream, provider in cands:
             if not provider.get("enabled", True):
                 continue
-            for line in provider.get("lines") or []:
-                if not line.get("enabled", True):
-                    continue
+            for line in self._lines(provider):
                 with self._lock:
                     if not self._free_locked(provider, line):
                         continue
@@ -410,6 +649,7 @@ class Hub:
                 if not session.url:
                     self._release(session)
                     continue  # this line can't serve the stream (pattern, missing stream); try the next
+                self._remember(session.url, provider.get("id"), line.get("id"), stream.get("stream_id"))
                 try:
                     from app.providers import stream_format
                     session.fmt = stream_format(provider, stream) or session.fmt
@@ -447,7 +687,9 @@ class Hub:
                 # then stays on its own stream.
                 return []
             own = mine[0]
-            for stream, provider in self._candidates(channel_cfg, providers):
+            cands = sorted(self._candidates(channel_cfg, providers),
+                           key=lambda sp: self._is_bad(sp[1].get("id"), sp[0].get("stream_id")))
+            for stream, provider in cands:
                 if not provider.get("enabled", True):
                     continue
                 pid = provider.get("id")
@@ -455,7 +697,9 @@ class Hub:
                 if pid == own.provider_id:
                     line = next((l for l in lines if l.get("id") == own.line_id), None)
                 else:
-                    line = next((l for l in lines if self._free_locked(provider, l)), None)
+                    held = [k[1] for k in own.extra_slots if k[0] == pid]
+                    line = next((l for l in lines if l.get("id") in held), None) or \
+                        next((l for l in self._lines(provider) if self._free_locked(provider, l)), None)
                 if line is not None:
                     plan.append((provider, line, str(stream.get("stream_id"))))
         urls = []
@@ -466,6 +710,7 @@ class Hub:
                 log.warning("backup URL for stream %s on %s failed: %s", stream_id, provider.get("id"), exc)
                 continue
             if url:
+                self._remember(url, provider.get("id"), line.get("id"), stream_id)
                 urls.append(url)
         return urls
 
@@ -488,6 +733,7 @@ class Hub:
                 "speed": {"slow": s.slow, "since": s.slow_since, "reserve": s.reserve,
                           "empty": s.reserve_empty},
                 "stream_no": s.stream_no,
+                "degraded": s.degraded,
                 "events": list(s.events)[-25:],
                 "engine_pid": proc.pid if proc is not None and proc.poll() is None else None,
                 "clients": [{"ip": s.client_ip, "user_agent": s.user_agent,

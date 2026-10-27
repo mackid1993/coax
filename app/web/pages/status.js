@@ -133,7 +133,7 @@ function cardInner(x, key) {
         <div><div class="stat-label">Bitrate</div><div class="stat-value">${fmtRate(h[h.length - 1] || 0)}</div></div>
         <div><div class="stat-label">Uptime</div><div class="stat-value">${fmtDuration(x.uptime)}</div></div>
       </div>
-      <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}${feedBadge(x)}</div>
+      <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}${feedBadge(x)}${x.degraded ? `<span class="badge badge-warn" title="The last 10 minutes had repeated failovers or long gaps without video. coax is still recovering it on its own."><span class="dot"></span>Unsteady feed</span>` : ""}</div>
       ${eventsHtml(x)}
       <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
       ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtDuration(c.connected > 1e9 ? Date.now() / 1000 - c.connected : c.connected)}</span>` : ""}</span>`).join("")}</div>` : ""}`;

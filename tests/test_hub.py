@@ -115,16 +115,75 @@ class HubTests(unittest.TestCase):
         self.assertTrue(r.finished.wait(5))
         self.assertEqual(h.line_status()[0]["used"], 0)
 
-    def test_restart_limit_ends_stream_and_close_still_releases(self):
-        hubmod.RESTART_DELAY = 0.0
-        h, eng = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]), "--exit-after", "0.05")
+    def test_crashing_engine_keeps_restarting_with_keepalive(self):
+        """Never give up while the DVR is connected; null packets fill the gaps between engines."""
+        hubmod.RESTART_DELAY, old_max = 0.0, hubmod.BACKOFF_MAX
+        hubmod.BACKOFF_MAX = 0.0
+        try:
+            h, eng = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]), "--exit-after", "0.05")
+            s = h.open("uuid-1", "ip", "ua")
+            r = Reader(s)
+            r.start()
+            self.assertTrue(wait_for(lambda: eng.count() >= 8, 15))
+            self.assertFalse(r.finished.is_set())
+            self.assertEqual(r.misaligned, 0)
+            s.close()
+            self.assertTrue(r.finished.wait(5))
+            self.assertEqual(h.line_status()[0]["used"], 0)
+        finally:
+            hubmod.BACKOFF_MAX = old_max
+
+    def test_frozen_engine_is_restarted(self):
+        old = hubmod.STALL_TIMEOUT
+        hubmod.STALL_TIMEOUT = 0.6
+        try:
+            h, eng = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]), "--freeze-after", "0.3")
+            s = h.open("uuid-1", "ip", "ua")
+            r = Reader(s)
+            r.start()
+            self.assertTrue(wait_for(lambda: eng.count() >= 2, 10))
+            self.assertTrue(any(e["kind"] == "restart" and "froze" in e["text"] for e in s.events))
+            s.close()
+            self.assertTrue(r.finished.wait(5))
+        finally:
+            hubmod.STALL_TIMEOUT = old
+
+    def test_no_video_retunes_and_moves_to_another_line(self):
+        old = hubmod.DEAD_TIMEOUT
+        hubmod.DEAD_TIMEOUT = 0.5
+        try:
+            h, eng = make(config([provider("p1", 1, 1)], [channel(1, [("p1", "a")])]), "--nulls-only")
+            s = h.open("uuid-1", "ip", "ua")
+            first = s.line_id
+            r = Reader(s)
+            r.start()
+            self.assertTrue(wait_for(lambda: eng.count() >= 3, 15))
+            self.assertFalse(r.finished.is_set())
+            self.assertNotEqual(s.line_id, first)   # second retune in a row moved to the free line
+            used = sorted(l["used"] for l in h.line_status())
+            self.assertEqual(used, [0, 1])          # never two lines at once
+            s.close()
+            self.assertTrue(r.finished.wait(5))
+            self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
+        finally:
+            hubmod.DEAD_TIMEOUT = old
+
+    def test_failover_holds_other_providers_line_and_failed_stream_goes_last(self):
+        cfg = config([provider("p1", 1), provider("p2", 1)],
+                     [channel(1, [("p1", "a"), ("p2", "b")]), channel(2, [("p2", "c")])])
+        h, _ = make(cfg)
         s = h.open("uuid-1", "ip", "ua")
-        r = Reader(s)
-        r.start()
-        self.assertTrue(r.finished.wait(15))
-        self.assertEqual(eng.count(), hubmod.RESTART_LIMIT + 1)
-        s.close()  # the server always closes after iter_bytes ends
-        self.assertEqual(h.line_status()[0]["used"], 0)
+        h.backup_urls(1)
+        ref_b = sorted(hubmod.url_refs("fake://p2/l1/b"))[0]
+        s._watch("[hlsloop stream] stalled; switching to stream 2 of 2 [ref %s]" % ref_b)
+        self.assertEqual(s.extra_slots, [("p2", "l1")])
+        self.assertEqual(s.stream_no, 2)
+        self.assertIsNone(h.open("uuid-2", "ip", "ua"))        # p2's only line is now held
+        ref_a = sorted(hubmod.url_refs("fake://p1/l1/a"))[0]
+        s._watch("[hlsloop stream] stream 1 of 2 failed; not using it again for 60s [ref %s]" % ref_a)
+        self.assertEqual(h.backup_urls(1)[0], "fake://p2/l1/b")  # the failed main stream goes last
+        s.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
 
     def test_engine_ignoring_sigterm_is_killed(self):
         h, _ = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]), "--ignore-term")

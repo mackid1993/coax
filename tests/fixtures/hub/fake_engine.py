@@ -25,6 +25,8 @@ parser.add_argument("--exit-code", type=int, default=1)
 parser.add_argument("--ignore-term", action="store_true")
 parser.add_argument("--junk", type=int, default=0, help="bytes of garbage before the first packet")
 parser.add_argument("--odd-writes", action="store_true", help="write in sizes that split packets")
+parser.add_argument("--freeze-after", type=float, default=0.0, help="stop writing (but stay alive) after N seconds")
+parser.add_argument("--nulls-only", action="store_true", help="send only MPEG-TS null packets (no video)")
 args = parser.parse_args()
 
 if args.ignore_term:
@@ -46,7 +48,12 @@ try:
         if args.exit_after and time.monotonic() - start >= args.exit_after:
             out.flush()
             os._exit(args.exit_code)
-        data = b"".join(b"\x47" + struct.pack(">I", counter + i) + b"\xff" * 183 for i in range(per_tick))
+        if args.freeze_after and time.monotonic() - start >= args.freeze_after:
+            time.sleep(3600)
+        if args.nulls_only:
+            data = (b"\x47\x1f\xff\x10" + b"\xff" * 184) * per_tick
+        else:
+            data = b"".join(b"\x47" + struct.pack(">I", counter + i) + b"\xff" * 183 for i in range(per_tick))
         counter += per_tick
         if args.odd_writes:
             data = pending + data

@@ -56,6 +56,10 @@ Channel names, providers and logos below are made up for the demo.
 - **Backup streams per channel**, mixed across providers, with automatic failover in the stream engine and
   suggested matches (same name, call sign, or provider guide ID).
 - **Tuner sharing**: a second viewer of the same channel shares the running stream and uses no extra line.
+- **Never gives up on a stream.** While Channels DVR is connected, coax keeps recovering: a frozen engine is
+  restarted, a stream with no video is retuned (alternating to another free line of the provider when there is one),
+  and null packets hold the connection open in between, so a recording keeps going. Streams that failed recently
+  are tried last, and each channel's 10-minute health lines are kept in `data/cache/history/`.
 - **Gracenote guide data** through Channels DVR's own station search, with one-click suggestions, or
   **XMLTV** from your provider.
 - **Optional transcoding** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics

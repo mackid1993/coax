@@ -92,6 +92,12 @@ cdvr = CHANNELS_DVR.strip().rstrip("/")
 if cdvr and "://" not in cdvr:
     cdvr = "http://" + cdvr
 IAPI = "http://127.0.0.1:%d" % COAX_PORT
+# Restarted by coax (COAX_RESTART=1): trust the previous state file for up to a minute, even from another line.
+RST = os.environ.get("COAX_RESTART") == "1"
+RSW = 60 if RST else 4
+
+def ref(u):
+    return hashlib.md5((u or "").encode()).hexdigest()[:8]
 
 def iapi(path):
     # coax's internal API (served on 127.0.0.1 only, no key)
@@ -433,12 +439,12 @@ resumed = False
 rg = 0.0
 try:
     j = json.load(open(st))
-    if time.time() - j["t"] < 4 and j.get("src") == src:
+    if time.time() - j["t"] < RSW and (j.get("src") == src or RST):
         dl = {int(k): v for k, v in j["dl"].items()}
         last = dict(dl)
         off = j.get("off", 0.0)
-        rcur = j.get("cur")
-        prim = j.get("prim")
+        rcur = j.get("cur") if j.get("src") == src else None
+        prim = j.get("prim") if j.get("src") == src else None
         xb = float(j.get("xb", 0.0))
         vpk = max(1, int(j.get("pk", 1)))
         rstk = bool(j.get("stk"))
@@ -560,7 +566,7 @@ def handoff(why):
     nxt = None
     pt = mono()
     if not stalled:
-        log("stream %d of %d failed; not using it again for %.0fs" % (i0 + 1, len(fl), mark(cur)))
+        log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
     cand = [fl[(i0 + j) % len(fl)] for j in range(1, len(fl))]
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
     for u in cand:
@@ -570,7 +576,7 @@ def handoff(why):
         if pr is not None:
             nxt = u
             break
-        log("backup stream %d of %d is not answering; not trying it again for %.0fs" % (fl.index(u) + 1, len(fl), mark(u)))
+        log("backup stream %d of %d is not answering; not trying it again for %.0fs [ref %s]" % (fl.index(u) + 1, len(fl), mark(u), ref(u)))
     if nxt is None:
         if not stalled:
             ost = got
@@ -578,7 +584,7 @@ def handoff(why):
         stalled = True
         got = mono()
         return
-    log(why + "; switching to stream %d of %d" % (fl.index(nxt) + 1, len(fl)))
+    log(why + "; switching to stream %d of %d [ref %s]" % (fl.index(nxt) + 1, len(fl), ref(nxt)))
     gap = mono() - ost if stalled else (gap or 0.0) + mono() - got if gap is not None or dlv else None
     cur = nxt
     prr = [nxt, pr]
@@ -921,7 +927,7 @@ def writer():
             time.sleep(1)
 try:
     j_ = json.load(open(st))
-    if time.time() - j_["t"] < 4 and j_.get("src") == src:
+    if time.time() - j_["t"] < RSW and (j_.get("src") == src or RST):
         tout = float(j_.get("to", 0.0))
 except Exception:
     pass
