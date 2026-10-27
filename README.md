@@ -41,6 +41,9 @@ Channel names, providers and logos below are made up for the demo.
 - [Run it with a VPN (Gluetun)](#run-it-with-a-vpn-gluetun)
 - [First run](#first-run)
 - [Settings reference](#settings-reference)
+- [How playback stays smooth](#how-playback-stays-smooth)
+- [HLS or MPEG-TS](#hls-or-mpeg-ts)
+- [Recordings](#recordings)
 - [GPU transcoding](#gpu-transcoding)
 - [Updating](#updating)
 - [Data folder](#data-folder)
@@ -177,11 +180,257 @@ The *Status* page shows live sessions, viewers, which line each channel holds, r
 | Transcode | `off` (pass through, default) or one fixed format such as `1080p60`. See [GPU transcoding](#gpu-transcoding). |
 | Provider refresh hours | How often each provider's catalog is refreshed. A failed refresh keeps the last good catalog. |
 
+## How playback stays smooth
+
+IPTV feeds are uneven. Segments arrive late, a provider stalls, refuses a request, restarts a channel, or
+swaps a dead channel for a black "offline" clip. coax's stream engine absorbs this so Channels DVR gets a
+steady stream at real time, the way an HDMI encoder delivers one. Every tune runs its own engine process on
+one provider line; the engine holds the cushion and the hub keeps the connection alive around it.
+
+### The reserve
+
+- **The cushion lives in coax, not in the players.** On HLS the engine joins about 60 seconds back in the
+  provider's playlist (at least 3 segments, or the whole playlist if it is shorter), so you watch about a
+  minute behind live. It sends about 4 seconds ahead to Channels DVR and keeps the rest as its reserve. On
+  MPEG-TS the reserve is the burst of recent video the provider sends on connect, usually about 20 seconds.
+- **When the provider is late,** the reserve keeps video flowing. When it catches up, HLS downloads the
+  segments it missed and the reserve refills.
+- **Paced by timestamps.** Video leaves coax at exactly real time, timed by each frame's timestamp rather
+  than by bytes, including through a switch to a backup with a different bitrate or frame rate.
+- **A drained reserve.** If the provider falls behind for longer than the reserve covers, the log shows
+  `reserve: empty` (HLS) or `reserve empty` (MPEG-TS), and video arrives only as fast as the provider sends
+  it. This is the line that matches visible buffering. With transcoding off, the HLS reserve comes back on
+  a retune, and the MPEG-TS reserve through a fresh connection's burst. With transcoding on, coax refills
+  it by playing slightly slower; see [Refilling the reserve](#refilling-the-reserve-3-slower).
+
+### Keepalive
+
+Whenever the engine has no video to send for 2 seconds (3 on MPEG-TS), it sends MPEG-TS null packets, which
+every player discards, so Channels DVR keeps the connection and a recording keeps going. The log shows
+`sending keepalive packets` and then `video flowing again after Ns`. Occasional short gaps are normal.
+
+### Offline placeholders and failover
+
+Two feeds of the same channel are separate encodes that can run minutes apart, and providers do not send the
+clock time needed to line them up, so a switch to a backup always jumps forward or back in the program.
+coax therefore stays on the feed you are watching through anything it can ride out, and switches only as a
+last resort.
+
+| Situation | What coax does |
+| --- | --- |
+| Late segments, stalls, stale playlists, provider restarts, refused or timed-out requests | Keeps retrying the same feed. On HLS, video that comes back within about a minute is fetched from the playlist, so you continue where you were. Busy answers (429, 503, 509) back off, honoring `Retry-After` up to 30 seconds. |
+| The provider serves its offline placeholder | Switches to the next stream at once, and never plays the placeholder. |
+| No new video for 60 seconds (sooner if the reserve is about to run out) | Switches to the next stream. |
+| Audio and video more than 3 seconds apart in the feed | Holds that feed back for up to about 30 seconds while it tries a backup, so you do not hear one moment over the picture of another. With no working backup it is passed through. |
+| Far slower than real time (below 0.75x) for 5 minutes | Switches to the next stream. A merely slow feed never triggers a switch. |
+| No backup on the channel | Keeps retrying the same feed until the provider comes back. |
+
+- **Order.** Backups are tried in the order the channel's streams are saved on the *Channels* page. A stream
+  that failed recently, on any channel, is tried last, both for a new tune and for failover. A failed feed
+  is left alone for 1, 2, 4, 8, then 10 minutes, so a channel whose feeds are all down waits instead of
+  hopping between dead feeds.
+- **Before switching,** coax checks that the backup answers with a real stream, not the placeholder. Once on
+  a backup it stays there as long as it works.
+- **Across providers.** A backup on another provider is only offered while that provider has a free line,
+  and after a switch coax holds that line for the channel. The Status page shows which stream is playing.
+- **At the switch,** timestamps continue where the old feed stopped and the new remuxer starts before the
+  old one finishes, so the output does not pause.
+
+### Tuner sharing
+
+Channels DVR shares one tuner, one connection to coax, between every device watching the same channel. A
+device that joins later starts at the newest video Channels DVR has, so it cannot use a cushion built up in
+the first player. coax keeps the cushion on its side and sizes what it hands out to the devices watching:
+
+1. Every 2 seconds the engine asks Channels DVR (`/dvr/activity`) how many devices are reading the channel.
+   It finds the channel by looking up coax's M3U in Channels DVR's sources; if that source is out of date,
+   coax asks Channels DVR to refresh it, the same as the *Refresh* button.
+2. **A device joins:** coax sends an extra 5 seconds out of the reserve at once. Channels DVR passes it to
+   every device on the tuner, so the newcomer starts with a cushion and the others gain one too. This
+   happens on every join, including a device coming back.
+3. **A device leaves:** nothing is taken back, so the devices still watching keep their cushion.
+4. **The floor.** On HLS, head starts stop once the reserve is down to about 20 seconds (two 10-second
+   segments), which is what riding out a late segment and failing over needs. On MPEG-TS the total head
+   start is capped at the burst depth minus 12 seconds, usually 8 to 14 seconds.
+5. **The rebuild.** On HLS, once no device has joined for 2 minutes and the reserve is under 30 seconds,
+   coax sends video about 1% slower than real time until the reserve is back to 30 seconds. The players'
+   extra cushion moves back into the reserve without the output ever pausing. 1% is too small to see or hear.
+
+Example on an HLS channel with 10-second segments:
+
+| What happens | Lead in the players | Reserve in coax |
+| --- | --- | --- |
+| TV tunes the channel | 4 s | 56 s |
+| Laptop joins | 9 s | 51 s |
+| Laptop leaves | 9 s | 51 s |
+| Laptop joins again | 14 s | 46 s |
+| More joins over the evening | up to 40 s | down to the 20 s floor |
+| No joins for 2 minutes, reserve under 30 s | eases down by about 1% | rebuilds to 30 s |
+
+Tuner sharing needs the *Channels DVR URL* in Settings. Without it, or if coax cannot find the channel in
+Channels DVR, every device gets the single-viewer head start and playback is otherwise the same. Keep tuner
+sharing on in Channels DVR.
+
+### Recovery
+
+The hub watches each engine from outside and never gives up while Channels DVR is connected:
+
+- **Engine stopped:** restarted on the same line, resuming its timeline from where it stopped.
+- **Engine frozen:** no bytes at all for 25 seconds after video has flowed. coax kills it and starts a new one.
+- **No real video for 90 seconds** (only keepalive): coax retunes with a fresh engine. Every second retune
+  in a row moves to another free line of the same provider when there is one.
+- **Between engines** the hub sends null packets itself, so the connection and any recording stay open.
+- **Backoff.** The first restart waits 1 second, and each further restart within 10 minutes doubles the
+  wait, up to 15 seconds.
+
+The Status page marks a channel as *Unsteady feed* when its last 10-minute summary shows two or more
+switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries are kept in
+`data/cache/history/`.
+
+## HLS or MPEG-TS
+
+Xtream-style providers usually offer each channel two ways:
+
+- **HLS** (`.m3u8`): a playlist of short video files (segments, usually 10 seconds each), with about the
+  last minute of them kept available.
+- **MPEG-TS** (`.ts`): one continuous stream over a single connection, starting with a short burst of
+  recent video.
+
+**Use HLS if your provider offers it.** Set it with *Stream format* on the provider (HLS is the default).
+Either way coax sends **MPEG-TS** to Channels DVR, so the DVR source's stream format stays MPEG-TS; only what
+coax reads from the provider differs.
+
+| | HLS (recommended) | MPEG-TS |
+| --- | --- | --- |
+| Reserve | about 56 s (a 60 s join minus the 4 s player head start) | about 20 s (what the provider bursts on connect) |
+| Provider hiccup | Missed segments are fetched again from the playlist; nothing is lost if they are still listed (usually about a minute) | Only the reserve covers it; video from an outage longer than the reconnect overlap is lost |
+| Reconnects | Continue the same timeline | Usually seamless (the overlap is removed), but the provider can land on a different timeline, which shows as a small skip or repeat |
+| Extra head start per joining device | 5 s each, up to about 40 s in total | 5 s each, capped at about 8 to 14 s so failover keeps its headroom |
+| Delay behind live | about 60 s | about 20 s |
+| Recording extension past the scheduled end | about 105 s | about 65 to 80 s |
+| Log prefix | `[hlsloop stream]` | `[tsloop stream]` |
+
+- **Xtream providers.** coax builds Xtream stream addresses as
+  `http://provider/live/<user>/<pass>/<id>.ts`. With *Stream format* on HLS, the engine reads the same
+  channel as `<id>.m3u8` and logs `input: provider stream URL is MPEG-TS; using its HLS form`. That is
+  normal.
+- **M3U providers.** A stream whose URL ends in `.m3u8` is read as HLS and one ending in `.ts` (or an Xtream
+  `/live/` address) as MPEG-TS, whatever the provider's setting. Other URLs follow the provider's *Stream
+  format*.
+- **Wrong format.** If the HLS engine gets something other than a playlist, the log shows
+  `response is not an m3u8 playlist`; set the provider to MPEG-TS. If the MPEG-TS engine gets a playlist, it
+  logs `this stream URL is HLS; set the provider format to HLS for it`.
+
+The MPEG-TS engine also:
+
+- **Stitches reconnects.** A reconnect re-sends video that was already sent; coax drops the overlap per
+  video frame and starts on a keyframe. If a reconnect lands too far behind to catch up, it replays a short
+  stretch instead of freezing.
+- **Refreshes a drifting feed.** A provider that delivers slightly slower than real time for a long time
+  gets a fresh connection for a new burst, at most once every 5 minutes (sooner if the reserve is nearly
+  empty). This can cause the occasional small skip.
+- **Reads floods at playback speed.** An offline channel that serves a recorded clip far faster than real
+  time is read at playback speed, with at most 60 seconds queued.
+
+## Recordings
+
+The engine runs a little behind the provider's live edge: that is the reserve. Channels DVR starts and stops
+recordings by the clock, so without help the last minute of a program would still be inside coax when the
+recording stops, and the ending would be cut off. coax handles this:
+
+- **It extends the recording in Channels DVR,** the same as editing its end time, by the engine's measured
+  delay **plus 45 seconds** for the provider itself running behind the broadcast (IPTV providers usually run
+  about 20 to 40 seconds behind). That is about 105 seconds for HLS and about 65 to 80 seconds for
+  MPEG-TS, never more than 3 minutes.
+- **Your padding is kept.** The extension is added on top of whatever end padding the recording or its pass
+  already has.
+- **Only recordings made through coax.** coax asks Channels DVR which recordings use coax's source and this
+  channel. Recordings from any other source (an antenna, another provider, TV Everywhere) are never
+  touched, even on the same channel.
+- **Once per recording.** Each recording's original length is saved in `data/cache/`, so a restart
+  mid-recording does not add the extension twice.
+- **Watching while recording is fine.** The stream itself is not changed for a recording.
+- **Recordings keep going through problems.** Keepalive packets and the hub's [recovery](#recovery) hold the
+  connection open while coax rides out an outage or restarts an engine.
+
+The log line is `recording: <show> on ch N extended by Ns on top of its own padding (...)`, and Channels DVR
+shows the later end time. This needs the *Channels DVR URL* in Settings. If your provider runs more than
+about 45 seconds behind the broadcast, add a little end padding for those channels yourself.
+
 ## GPU transcoding
 
 Transcoding is off by default and most setups do not need it. When on, coax uses the first encoder that works:
 Intel or AMD graphics through VAAPI, then NVIDIA NVENC, then the CPU. The image build fails if its `ffmpeg`
 lacks `h264_vaapi` or `h264_nvenc`, so both are always present.
+
+**Why turn it on.** Transcoding is the only way coax can keep one steady format across backup feeds and
+refill the reserve after a long outage:
+
+- **One format for every feed.** A failover to a backup with a different frame rate or resolution does not
+  make Channels DVR (Apple TV in particular) drop frames or drift the audio.
+- **The reserve refills itself** after a long outage (see below).
+
+The costs: GPU (or CPU) time, a little picture quality, and a few seconds more delay behind live. If your
+hardware allows it, ideally with a GPU, it is worth turning on.
+
+### Presets
+
+Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in that format.
+
+| Preset | Output | Video bitrate |
+| --- | --- | --- |
+| `off` | passed through untouched (default) | as the provider sends it |
+| `1080p60` | 1080p, 59.94 fps | 6 Mbps |
+| `1080p30` | 1080p, 29.97 fps | 4.5 Mbps |
+| `720p60` | 720p, 59.94 fps | 4.5 Mbps |
+| `720p30` | 720p, 29.97 fps | 3 Mbps |
+| `1080p50`, `1080p25`, `720p50`, `720p25` | the same for 50 Hz countries | |
+
+- **Which frame rate?** The highest one your channels use. 60 suits sports, news and most US broadcast
+  channels; a 30 fps channel just shows each frame twice. 30 is fine for mostly movies and entertainment and
+  is easier on weak hardware, but 60 fps sports will look choppier. In 50 Hz countries (Europe, the UK,
+  Australia and others) use 50 or 25, since 60 or 30 there makes motion judder.
+- **Which size?** 1080p with a GPU, 720p on weak hardware or when encoding on the CPU. The bitrates match what
+  IPTV providers typically send.
+- Audio is always stereo AAC at 48 kHz, 192 kbps. Interlaced sources are deinterlaced.
+
+### How the GPU is used
+
+With a GPU, the whole transcode stays on it: decoding, deinterlacing, frame rate, scaling and encoding.
+
+- **Intel or AMD (VAAPI):** `-hwaccel vaapi` decoding, `deinterlace_vaapi`, `scale_vaapi`, and `h264_vaapi`.
+- **NVIDIA:** CUDA decoding, `bwdif_cuda`, `scale_cuda`, and `h264_nvenc`.
+- **CPU:** `libx264` (`veryfast`). Encoding 1080p60 on the CPU takes most of a modern core per stream, and
+  small machines cannot keep up; use a 720p preset there.
+
+If GPU decoding fails on a stream (some codecs or profiles), coax decodes that stream on the CPU and keeps
+encoding on the GPU, and logs `transcode: GPU decoding failed on this stream, decoding on the CPU instead
+(encoding stays on the GPU)`. The image uses Jellyfin's ffmpeg build (8.1.3), which has the full set of
+VAAPI and CUDA filters.
+
+### Refilling the reserve (3% slower)
+
+With transcoding on, playback runs 3% slower for a while after a provider problem. If the reserve stays below
+half for 75 seconds on HLS or 60 seconds on MPEG-TS (about 30 s and 10 s), video and audio play 3% slower
+together, with the audio pitch unchanged, until the reserve is back to about 45 s on HLS or 16 s on MPEG-TS.
+This does not start in the first 90 seconds after a tune, nor within a minute of the last speed change. The
+rest of the time video plays at its real speed.
+
+- **Two clean switches per refill.** The encoder restarts once when the slowdown starts and once when it
+  ends, with the speed set from the first frame, so audio and video cannot drift apart. Each restart waits
+  for a keyframe and keeps the output timeline continuous, so the picture does not pause.
+- **Refill rate:** about 1.8 s of reserve per minute.
+- **What you might see:** on a 60 fps source, one repeated frame about twice a second, which a smooth, fast
+  camera pan can show as a tiny hitch. A second screen showing the same channel in real time drifts away by
+  about 1.8 s a minute.
+- **Transcoding only:** without transcoding the audio is copied as is, and slowing it would mean stretching
+  its timestamps, which causes crackle or drift.
+- **Why 3%:** people comparing two moving patterns side by side can just tell speeds apart at roughly 5 to
+  10%, and listeners notice a change in speaking tempo at about 5%. 3% stays under both. Music is less
+  forgiving, and trained listeners can notice it there.
+
+The log shows `playing 3 percent slower, pitch unchanged` when a refill starts and `back to real speed`
+when it ends, and the Status page shows the same.
 
 **Which encoder is in use.** When a transcoding stream starts, the log (Status page, or
 `docker logs coax`) shows one of:
@@ -270,6 +519,9 @@ data/
     catalog-<provider>.json   last good catalog for each provider
     xmltv-<lineup>.xml        generated guide for each lineup
     xmltv-ids-<provider>.json XMLTV channel ids offered in the Guide picker
+    history/<channel>.jsonl   each channel's 10-minute stream summaries
+    hlsloop-jobs-<channel>.json, tsloop-jobs-<channel>.json
+                              original length of recordings coax extended; dropped after 24 hours
 ```
 
 To move coax to another machine, copy the folder. To start over, stop coax and delete `config.json`.
@@ -292,6 +544,58 @@ make the folder writable yourself (`sudo chown -R 1000:1000 data`).
 - **GPU not used.** Look for the `transcoding with ...` line in the log, run `vainfo` or `nvidia-smi` as
   shown under [GPU transcoding](#gpu-transcoding), and check `/dev/dri`, `group_add`, or the NVIDIA runtime.
 - **VPN: coax cannot reach the DVR.** Check `FIREWALL_OUTBOUND_SUBNETS`.
+- **Every tune fails with `response is not an m3u8 playlist`.** The provider sends MPEG-TS; set its *Stream
+  format* to MPEG-TS. See [HLS or MPEG-TS](#hls-or-mpeg-ts).
+- **Viewer head start or recording extension missing.** Both need the *Channels DVR URL*. The log explains
+  lines starting with `viewer buffer: off` or `viewer buffer: waiting`.
+
+### Check that it's working
+
+Tune a channel and open the Status page or the log (`docker logs coax`). Engine lines start with
+`[hlsloop stream]` or `[tsloop stream]`.
+
+| | Healthy | Look closer if you see |
+| --- | --- | --- |
+| HLS | The channel found in Channels DVR, the occasional `catching up N segments`, and a `status:` line every 10 minutes with a full reserve | `reserve: empty` often, repeated `switching to stream`, or `fetch loop stuck` |
+| MPEG-TS | `first video received`, and a `status:` line every 10 minutes with a reserve around 15 to 25 s and few errors | `reserve empty` often, repeated `switching to stream`, or a stuck reader |
+
+Common lines:
+
+| Message | Meaning |
+| --- | --- |
+| `viewer buffer: this stream is Channels DVR <source> ch N` | coax found this channel in Channels DVR. |
+| `viewer buffer: N viewers on Channels DVR ch N, sent the new viewer a Ns head start` | Another device joined. `reserve at its floor` (HLS) or `head start dropped` (MPEG-TS) means there was not room for the full 5 seconds. |
+| `viewer buffer: Channels DVR source <source> is out of date, refreshing it` | The DVR's copy of coax's M3U was stale, so coax refreshed it. |
+| `catching up N segments` / `playlist stale Ns, re-resolving` | The provider stalled; the reserve covered it. |
+| `provider restarted the channel, rejoining at the live edge` | The provider restarted the channel. |
+| `...; switching to stream N of M` | Failover to the next stream. |
+| `stream N of M failed; not using it again for Ns` | A feed failed and is skipped for that long. |
+| `audio and video are Ns apart in this feed; holding it back` | The provider sent audio and video out of step. |
+| `skipped segment N` | A segment could not be downloaded in time. |
+| `stream error (...); reconnect N in Ns` | MPEG-TS: the connection dropped. Normal once in a while. |
+| `engine sent nothing for 25s; restarting it on the same line` | The hub restarted a frozen engine. |
+| `no video for 90s; retuning ...` | The hub retuned a stream that carried only keepalive. |
+| `status: ...` | A summary every 10 minutes: reserve, retries, switches and keepalive time. |
+
+### What coax can't fix
+
+- **A switch to a backup jumps forward or back in the program.** Feeds of the same channel can run minutes
+  apart. A provider that restarts a channel can cause the same jump without any switch.
+- **A provider outage longer than the reserve** on a channel with no working backup. The picture freezes;
+  when the provider comes back coax recovers on its own, but video from the outage is lost.
+- **Feeds with a different resolution, frame rate or codec** can cause a brief flicker at a failover while
+  the player's decoder resets, and a different frame rate can make some players (Channels DVR on Apple TV)
+  drop frames until you tune again. Transcoding hides this.
+- **A drained reserve** only comes back on a retune unless transcoding is on (MPEG-TS can also top it up with
+  a fresh connection).
+- **A bad feed that keeps running,** for example audio slightly out of sync. coax cannot detect it; put
+  another stream first for that channel.
+- **Problems after coax,** such as a device's Wi-Fi dropping out for longer than its head start.
+- **Connection limits.** Providers often count a stream as active for a short time after the last request,
+  so a failover or retune can briefly look like two connections. If every connection on your account is
+  busy at that moment, the switch may have to wait.
+- **MPEG-TS only:** video from an outage longer than the reconnect overlap is lost, a reconnect onto a
+  different provider timeline shows a small skip or repeat, and the cushion is about 20 s instead of 60 s.
 
 ## Building from source
 
