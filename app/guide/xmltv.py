@@ -48,11 +48,11 @@ def provider_xmltv_url(provider):
         return (provider.get("xmltv_url") or "").strip()
 
 
-def download(url, dest_path, user_agent=""):
+def download(url, dest_path, user_agent=None):
     """Stream `url` into `dest_path`. Raises on HTTP or network errors."""
     import requests   # lazy so the module imports without it in minimal test setups
 
-    headers = {"User-Agent": user_agent} if user_agent else {}
+    headers = {"User-Agent": user_agent or __import__("app").USER_AGENT}
     with requests.get(url, headers=headers, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
         response.raise_for_status()
         with open(dest_path, "wb") as f:
@@ -388,7 +388,7 @@ def _fetch_and_parse(url, provider, wanted, route, folder):
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".tmp-dl-", suffix=".xml")
     os.close(fd)
     try:
-        download(url, tmp, provider.get("user_agent") or "")
+        download(url, tmp, __import__("app").USER_AGENT)
         with open_source(tmp) as stream:
             return parse_source(stream, wanted, route)
     finally:

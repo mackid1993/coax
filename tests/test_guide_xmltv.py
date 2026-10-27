@@ -109,7 +109,7 @@ class RefreshTests(XmltvTestBase):
     def test_filters_and_renames(self):
         summary, fake = self.run_refresh(self.default_mapping())
         self.assertTrue(summary["lineups"]["main"]["ok"], summary)
-        self.assertIn(("http://p1.test/xmltv", "UA1"), fake.calls)
+        self.assertIn(("http://p1.test/xmltv", "TiviMate/5.1.6 (Android 12)"), fake.calls)
         tree = ET.parse(os.path.join(self.tmp.name, "xmltv-main.xml"))
         root = tree.getroot()
         self.assertEqual(root.tag, "tv")

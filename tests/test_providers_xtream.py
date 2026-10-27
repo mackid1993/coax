@@ -53,7 +53,7 @@ class XtreamTests(unittest.TestCase):
         for req in self.fake.requests:
             self.assertEqual(req["query"]["username"], "user1")
             self.assertEqual(req["query"]["password"], "secret1")
-            self.assertEqual(req["headers"].get("User-Agent"), "MyAgent/1.0")
+            self.assertEqual(req["headers"].get("User-Agent"), "TiviMate/5.1.6 (Android 12)")
 
     def test_default_user_agent(self):
         self.fake.json("get_live_categories", "xtream_categories.json")

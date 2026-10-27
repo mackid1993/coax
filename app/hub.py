@@ -29,7 +29,7 @@ import time
 log = logging.getLogger("coax.hub")
 
 READ_SIZE = 64 * 1024
-DEFAULT_USER_AGENT = "VLC/3.0.21 LibVLC/3.0.21"
+from app import USER_AGENT
 ENGINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
 RESTART_LIMIT = 5
 RESTART_WINDOW = 600.0
@@ -69,7 +69,7 @@ class Session:
         self.line_name = line.get("name") or line.get("id")
         self.stream_id = str(stream.get("stream_id"))
         self.fmt = provider.get("format") or "hls"
-        self.engine_ua = provider.get("user_agent") or DEFAULT_USER_AGENT
+        self.engine_ua = USER_AGENT
         self.url = url
         self.client_ip = client_ip
         self.user_agent = user_agent

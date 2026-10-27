@@ -10,7 +10,7 @@ log = logging.getLogger("coax.providers")
 
 # Many IPTV panels reject the default python-requests agent, so a player-like
 # agent is used unless the provider sets its own.
-DEFAULT_USER_AGENT = "VLC/3.0.21 LibVLC/3.0.21"
+from app import USER_AGENT as DEFAULT_USER_AGENT
 
 # (connect, read) timeouts in seconds.
 TIMEOUT = (10, 60)
@@ -29,7 +29,7 @@ class ProviderError(Exception):
 
 
 def user_agent(provider):
-    return (provider.get("user_agent") or "").strip() or DEFAULT_USER_AGENT
+    return DEFAULT_USER_AGENT
 
 
 def secrets_of(provider):

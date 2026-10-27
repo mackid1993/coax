@@ -107,7 +107,7 @@ class DownloadTests(unittest.TestCase):
         result = m3u.fetch_catalog(make_provider(self.fake.url + "/list.m3u", user_agent="UA/2"))
         self.assertEqual(len(result["streams"]), 5)  # duplicate URL dropped
         self.assertEqual(result["groups"], ["News", "Sports", "Misc", "Uncategorized"])
-        self.assertEqual(self.fake.requests[0]["headers"]["User-Agent"], "UA/2")
+        self.assertEqual(self.fake.requests[0]["headers"]["User-Agent"], "TiviMate/5.1.6 (Android 12)")
         first = result["streams"][0]
         self.assertEqual(first["stream_id"], m3u.stream_id_for(first["url"]))
 

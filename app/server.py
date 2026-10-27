@@ -1666,7 +1666,7 @@ def test_provider(provider):
 
 
 def probe_provider(provider, timeout=15):
-    headers = {"User-Agent": provider.get("user_agent") or "coax"}
+    headers = {"User-Agent": __import__("app").USER_AGENT}
     try:
         if provider.get("type") == "xtream":
             if not provider.get("lines"):
