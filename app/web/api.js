@@ -35,7 +35,7 @@ export const routes = {
   automatch: () => "/api/automatch",
   automatchStart: () => "/api/automatch/start",
   automatchJob: (result) => `/api/automatch/job${result ? "?result=1" : ""}`,
-  gracenoteSearch: (q) => `/api/gracenote/search${qs({ q })}`,
+  gracenoteSearch: (q, local) => `/api/gracenote/search${qs(local ? { q, local: 1 } : { q })}`,
   gracenoteSuggest: (p) => `/api/gracenote/suggest${qs(p)}`,
   gracenoteBulkSuggest: () => "/api/gracenote/bulk-suggest",
   xmltvIds: (provider, q, limit = 200) => `/api/xmltv/ids${qs({ provider, q, limit })}`,
@@ -139,7 +139,7 @@ export const api = {
   // {channels: [{id, guide: {...}, streams: [...]}]}
   applyChannels: (channels) => post(routes.channelsApply(), { channels }, { timeout: 60000 }),
 
-  gracenoteSearch: async (q) => list(await get(routes.gracenoteSearch(q), { timeout: 30000 }), "results"),
+  gracenoteSearch: async (q, local = false) => list(await get(routes.gracenoteSearch(q, local), { timeout: local ? 15000 : 30000 }), "results"),
   gracenoteSuggest: (p) => get(routes.gracenoteSuggest(p), { timeout: 60000 }),
   xmltvIds: async (provider, q) => list(await get(routes.xmltvIds(provider, q)), "items"),
 

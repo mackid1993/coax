@@ -750,11 +750,14 @@ function guideModal(c) {
     const seq = ++gnSeq;
     list.innerHTML = `<span class="skel" style="height:52px;border-radius:12px"></span><span class="skel" style="height:52px;border-radius:12px"></span>`;
     try {
+      const quick = await api.gracenoteSearch(q, true).catch(() => []);
+      if (seq !== gnSeq) return;
+      if (quick.length) list.innerHTML = candList(quick, g.station_id) + `<div class="faint small" style="padding:6px 2px">Searching all of Gracenote…</div>`;
       const r = await api.gracenoteSearch(q);
       if (seq !== gnSeq) return;
       list.innerHTML = r.length ? candList(r, g.station_id) : `<div class="faint small">No stations found for “${esc(q)}”.</div>`;
     } catch (e) { if (seq === gnSeq) list.innerHTML = `<div class="callout">${icon("alert")}<div>${esc(e.message)}</div></div>`; }
-  }, 300);
+  }, 200);
   $("#gnQ", el).addEventListener("input", searchGn);
   if (!p?.guide?.cands?.length) searchGn();
   let xmSeq = 0;
@@ -798,6 +801,8 @@ function guideModal(c) {
     if (e.key !== "Enter" || e.isComposing) return;
     if (e.target.matches("button, select, a")) return;
     e.preventDefault();
+    if (e.target.id === "gnQ") { searchGn(); return; }
+    if (e.target.id === "xmQ") return;
     if (e.target.id === "gnManual" && e.target.value.trim()) $("[data-manual]", el).click();
     save(!e.shiftKey);
   });

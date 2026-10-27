@@ -1315,13 +1315,28 @@ class Handler(BaseHTTPRequestHandler):
         if not query:
             raise bad_request("q is required")
         gracenote = lazy("app.guide.gracenote")
-        try:
-            results = gracenote.search(self._cdvr_url(), query)
-        except ApiError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - Channels DVR unreachable or answered badly
-            raise ApiError(502, "Channels DVR search failed: %s" % exc)
-        return {"results": results}
+        cdvr = self._cdvr_url()
+        local, wide, problem = [], [], None
+        countries = self._countries(None)
+        if countries:
+            try:
+                index = gracenote.lineup_index(cdvr, countries)
+                matcher = gracenote.Matcher(index.get("stations") or {})
+                if query.isdigit() and query in matcher.by_id:
+                    local = [matcher.by_id[query]]
+                local += [s for s in matcher.search(query, limit=40) if s not in local]
+            except Exception as exc:  # noqa: BLE001 - local index is a speed-up, not required
+                log.warning("gracenote: local lineup search failed: %s", exc)
+        if self.query.get("local") != "1" and len(query) >= 2:
+            try:
+                wide = gracenote.search(cdvr, query)
+            except Exception as exc:  # noqa: BLE001
+                problem = "Channels DVR search failed: %s" % exc
+        seen = {s["station_id"] for s in local}
+        results = local + [s for s in wide if s["station_id"] not in seen]
+        if not results and problem:
+            raise ApiError(502, problem)
+        return {"results": results[:60]}
 
     def _countries(self, value):
         """Parse countries for lineup restriction: "USA:10001,CAN:M5V 3L9" or [["USA", "10001"], ...].
