@@ -8,6 +8,7 @@ const PAGES = [
   { id: "lineups", label: "Lineups", icon: "lineups", load: () => import("./pages/lineups.js") },
   { id: "settings", label: "Settings", icon: "settings", load: () => import("./pages/settings.js") },
   { id: "status", label: "Status", icon: "status", load: () => import("./pages/status.js") },
+  { id: "logs", label: "Logs", icon: "logs", load: () => import("./pages/logs.js") },
 ];
 
 let current = null; // {id, mod}

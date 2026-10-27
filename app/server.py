@@ -134,7 +134,7 @@ class RingLogHandler(logging.Handler):
         return {"lines": items, "last_seq": last}
 
 
-LOG_BUFFER = RingLogHandler(2000)
+LOG_BUFFER = RingLogHandler(10000)
 
 
 # ---------------------------------------------------------------- catalog cache
@@ -502,6 +502,7 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr/sync", "h_lineup_dvr_sync"),
         ("GET", r"/api/status", "h_status"),
         ("GET", r"/api/network", "h_network"),
+        ("GET", r"/api/log/download", "h_log_download"),
         ("GET", r"/api/log", "h_log"),
     ]
     COMPILED = [(m, re.compile("^" + p + "$"), n) for m, p, n in ROUTES]
@@ -1657,8 +1658,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_log(self):
         since = parse_int(self.query.get("since"), "since", 0, 0)
-        limit = parse_int(self.query.get("limit"), "limit", 500, 1, 2000)
+        limit = parse_int(self.query.get("limit"), "limit", 500, 1, 10000)
         return self.app.log_buffer.tail(since, limit)
+
+    def h_log_download(self):
+        lines = self.app.log_buffer.tail(0, 0)["lines"]
+        text = "".join("%s %-7s %s: %s\n" % (l["ts"], l["level"], l["name"], l["msg"]) for l in lines)
+        name = "coax-log-%s.txt" % time.strftime("%Y%m%d-%H%M%S")
+        self._send_bytes(200, text.encode("utf-8"), "text/plain; charset=utf-8",
+                         {"Content-Disposition": 'attachment; filename="%s"' % name, "Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------- helpers outside the handler
