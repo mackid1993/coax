@@ -54,7 +54,9 @@ must change, say so in your final report instead of changing it silently.
     "id": "p1", "name": "My provider", "type": "xtream",
     "server": "http://host:80", "m3u_url": "", "xmltv_url": "",
     "user_agent": "", "format": "hls", "refresh_hours": 24,
-    "lines": [{"id": "l1", "name": "Line 1", "username": "...", "password": "...", "max_streams": 1}],
+    "lines": [{"id": "l1", "name": "Line 1", "username": "...", "password": "...", "max_streams": 1,
+               "search": "", "replace": ""}],
+    "auto_add": false,
     "groups": ["US| NEWS"]
   }],
   "channels": [{
@@ -75,6 +77,28 @@ must change, say so in your final report instead of changing it silently.
 - Passwords are stored in config.json (file mode 0600) and never logged or returned by the API in full
   (return `"********"`; saving `"********"` keeps the old value).
 - `config.py` fills defaults for missing keys and migrates by `version`.
+
+## Groups, refresh, and connection pools (must work like Dispatcharr)
+- **Group selection.** After adding a provider, coax fetches its live categories. The user picks which groups to
+  bring in (searchable checklist with stream counts, select all/none). Only streams in selected groups are
+  offered in the Channels tab. Selection is stored in `provider.groups`.
+- **Scheduled refresh.** Each provider refreshes on its `refresh_hours` schedule and on demand. A refresh updates
+  stream names, logos and URLs, adds new streams in selected groups to the catalog, and reports streams that
+  disappeared (channels pointing at a vanished `stream_id` are flagged in the UI, never deleted). Optional per
+  provider: `auto_add` new streams in selected groups as disabled channels.
+- **Connection pools.** A provider can have several lines (separate logins on the same service, like three Trex
+  lines), each with its own `max_streams`. Several providers can be configured side by side, and a channel's
+  streams can mix providers. When a client tunes a channel, the hub walks the channel's streams in order and
+  takes the first stream whose provider has a line with a free slot; that line's credentials build the URL. A
+  tune fails with 503 only when no stream of the channel has any free line. A second client on the same channel
+  shares the running session and uses no extra slot.
+- **Line URL building.** Xtream lines substitute their own username and password into the stream URL. M3U lines
+  may set an optional regex `search`/`replace` pair applied to the stream URL (same idea as Dispatcharr's
+  account profiles); empty means use the URL unchanged.
+- **Backups across providers.** The backup list handed to the engine uses the session's line for streams on the
+  same provider, and a currently free line for streams on other providers. The engine already treats busy
+  responses (429/503/509) as retry-and-move-on, so a slot taken in the meantime is handled.
+- The Status page shows every line with used/max slots and which channel holds each slot.
 
 ## Contracts between modules
 
