@@ -1603,9 +1603,11 @@ class Handler(BaseHTTPRequestHandler):
             if guide is not None:
                 if not isinstance(guide, dict):
                     raise bad_request("channel %s: guide must be an object" % cid)
-                extra = set(guide) - {"mode", "station_id", "xmltv_id", "xmltv_provider"}
-                if extra:
-                    raise bad_request("channel %s: unknown guide field %s" % (cid, ", ".join(sorted(extra))))
+                # Keep the fields coax uses; ignore any others instead of failing the whole save.
+                allowed = {"mode", "station_id", "xmltv_id", "xmltv_provider", "call_sign", "station_name",
+                           "confidence", "reviewed"}
+                guide = {k: v for k, v in guide.items() if k in allowed}
+                entry["guide"] = guide
             streams = stream_refs(entry["streams"], "channel %s streams" % cid) if "streams" in entry else None
             if streams is not None and len({(r["provider"], r["stream_id"]) for r in streams}) != len(streams):
                 raise bad_request("channel %s: a stream is listed twice" % cid)
