@@ -55,6 +55,7 @@ def default_provider():
     return {
         "id": "", "name": "", "type": "xtream", "server": "", "m3u_url": "", "xmltv_url": "",
         "user_agent": "", "format": "hls", "refresh_hours": 24, "lines": [], "auto_add": False, "groups": [],
+        "max_streams": 0,
     }
 
 
@@ -188,6 +189,7 @@ def validate(cfg):
             _url(provider.get("m3u_url", ""), label + ": M3U URL", required=True)
         _url(provider.get("xmltv_url", ""), label + ": XMLTV URL")
         _str(provider.get("user_agent"), label + ": user agent")
+        _int_in(provider.get("max_streams", 0), 0, 1000, label + ": max streams")
         _num_in(provider.get("refresh_hours"), 1, 24 * 30, label + ": refresh hours")
         _require(isinstance(provider.get("auto_add"), bool), label + ": auto_add must be true or false")
         groups = provider.get("groups")

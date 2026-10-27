@@ -162,6 +162,19 @@ class HubTests(unittest.TestCase):
             s.close()
         self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
 
+    def test_provider_total_cap(self):
+        p = provider("p1", 1, 1, 1)
+        p["max_streams"] = 2
+        h, _ = make(config([p], [channel(i, [("p1", str(i))]) for i in (1, 2, 3)]))
+        a = h.open("uuid-1", "ip", "ua")
+        b = h.open("uuid-2", "ip", "ua")
+        self.assertIsNone(h.open("uuid-3", "ip", "ua"))
+        a.close()
+        c = h.open("uuid-3", "ip", "ua")
+        self.assertIsNotNone(c)
+        b.close()
+        c.close()
+
     def test_backup_urls_use_session_line(self):
         cfg = config([provider("p1", 1, 1), provider("p2", 1)], [channel(1, [("p1", "a"), ("p1", "b"), ("p2", "c")]),
                                                                  channel(2, [("p1", "z")])])

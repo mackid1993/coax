@@ -139,7 +139,7 @@ function showTest(r) {
 function blankLine(i, type) { return { name: `Line ${i}`, username: "", password: "", max_streams: type === "m3u" ? 0 : 1, search: "", replace: "" }; }
 
 function editModal(p) {
-  const d = p ? JSON.parse(JSON.stringify(p)) : { name: "", type: "xtream", server: "", m3u_url: "", xmltv_url: "", user_agent: "", format: "hls", refresh_hours: 24, auto_add: false, lines: [blankLine(1, "xtream")] };
+  const d = p ? JSON.parse(JSON.stringify(p)) : { name: "", type: "xtream", server: "", m3u_url: "", xmltv_url: "", user_agent: "", format: "hls", refresh_hours: 24, max_streams: 0, auto_add: false, lines: [blankLine(1, "xtream")] };
   if (!d.lines?.length) d.lines = [blankLine(1, d.type)];
   const m = openModal({
     title: p ? `Edit ${p.name}` : "Add provider",
@@ -154,6 +154,7 @@ function editModal(p) {
         <div class="field" data-m><label for="fM3u">M3U URL</label><input class="input mono" id="fM3u" value="${esc(d.m3u_url)}" placeholder="http://host/playlist.m3u"></div>
         <div class="field"><label for="fXmltv">XMLTV URL <span class="faint">(optional)</span></label><input class="input mono" id="fXmltv" value="${esc(d.xmltv_url)}" placeholder="Xtream: built from the first line"></div>
         <div class="field"><label for="fFormat">Stream format</label><select class="input" id="fFormat"><option value="hls" ${d.format !== "ts" ? "selected" : ""}>HLS (recommended)</option><option value="ts" ${d.format === "ts" ? "selected" : ""}>MPEG-TS</option></select><span class="hint">Which engine reads this provider's streams.</span></div>
+        <div class="field"><label for="fMax">Total stream limit</label><input class="input mono" type="number" min="0" id="fMax" value="${esc(d.max_streams ?? 0)}"><span class="hint">Most streams this provider allows at once across all its lines. 0 means only the per-line limits apply.</span></div>
         <div class="field"><label for="fRefresh">Refresh every (hours)</label><input class="input mono" id="fRefresh" type="number" min="1" max="720" value="${esc(d.refresh_hours ?? 24)}"></div>
         <div class="field full">${switchHtml("", d.auto_add, "Automatically add new streams in selected groups as disabled channels", 'id="fAuto"')}</div>
       </div>
@@ -202,7 +203,7 @@ function editModal(p) {
       ...(p ? { id: p.id } : {}),
       name: $("#fName", el).value.trim(), type: d.type,
       server: $("#fServer", el).value.trim(), m3u_url: $("#fM3u", el).value.trim(), xmltv_url: $("#fXmltv", el).value.trim(),
-      format: $("#fFormat", el).value, refresh_hours: Number($("#fRefresh", el).value) || 24,
+      format: $("#fFormat", el).value, max_streams: Number($("#fMax", el).value) || 0, refresh_hours: Number($("#fRefresh", el).value) || 24,
       auto_add: $("#fAuto", el).checked,
       lines: d.lines.map((l) => ({ ...(l.id ? { id: l.id } : {}), name: l.name, username: l.username || "", password: l.password || "", max_streams: Number(l.max_streams) || 0, search: l.search || "", replace: l.replace || "" })),
     };

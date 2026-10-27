@@ -215,7 +215,14 @@ class Hub:
 
     def _free_locked(self, provider, line):
         limit = _int(line.get("max_streams"))
-        return limit <= 0 or len(self._slots.get((provider.get("id"), line.get("id")), ())) < limit
+        if limit > 0 and len(self._slots.get((provider.get("id"), line.get("id")), ())) >= limit:
+            return False
+        cap = _int(provider.get("max_streams"))  # provider-wide total; 0 = no cap
+        if cap > 0:
+            used = sum(len(v) for (pid, _), v in self._slots.items() if pid == provider.get("id"))
+            if used >= cap:
+                return False
+        return True
 
     def _release(self, session):
         with self._lock:
