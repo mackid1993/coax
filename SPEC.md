@@ -16,8 +16,8 @@ Dispatcharr for this one job, reusing the stream engine already proven in produc
 - **One bind mount:** `./data:/data`.
 - **LAN only, no authentication.** Document clearly that it must not be exposed to the internet.
 - **Stdlib first.** Server is stdlib `http.server.ThreadingHTTPServer`. The only third-party Python dependency is
-  `requests` (the engine already uses it) and its pinned dependencies. No web framework, no JS framework, no CDN:
-  UI is plain HTML, CSS and vanilla JS served from the image.
+  `requests` (the engine already uses it) and its pinned dependencies. No server-side web framework and no CDN:
+  every UI asset is committed to the repo and served from the image (works offline, never changes under you).
 - **Python 3.13 in the image.** Code must also run on 3.11+ for local tests.
 - **Reliability over features.** Every background job catches and logs its own errors and never takes the server
   down. A provider outage during refresh keeps serving the last good catalog. Streaming never waits on refresh.
@@ -159,7 +159,24 @@ Single page, tabs: **Providers** (add Xtream or M3U, lines with max streams, tes
 provider, enable/disable), **Guide** (per channel mode, Gracenote search and one-click suggestions with
 confidence, XMLTV id picker), **Lineups**, **Settings** (base URL, Channels DVR URL, transcode with the engine's
 help text, join-behind and shutdown delay), **Status** (live sessions, line usage, last refresh results, log
-tail). Clean, dark-friendly, responsive, no external assets.
+tail).
+
+**It must look great, not like a default admin page.** Spend real effort on design:
+- A deliberate visual identity that alludes to coaxial cable and broadcast TV without using any trademarked
+  names: a dark theme by default with a light theme toggle, one confident accent color, subtle depth (layered
+  surfaces, soft shadows, gentle gradients), generous spacing, crisp typography.
+- Self-hosted fonts committed under `app/web/vendor/` (OFL-licensed, e.g. Inter or Geist for UI and JetBrains Mono
+  for numbers and logs), with their license files.
+- Polished components: sidebar navigation with inline SVG icons, cards, tables with sticky headers and paging or
+  virtual scrolling for 50,000+ streams, searchable multi-selects, toggle switches, toasts, modals, skeleton
+  loaders, empty states with guidance, drag-to-reorder channels, channel logos with graceful fallbacks.
+- Motion that feels smooth but restrained (150 to 250 ms transitions, respects `prefers-reduced-motion`).
+- A Status page that feels alive: per-channel cards with viewer count, line usage meters, uptime, a throughput
+  sparkline, and the log tail in a monospace panel, updated by polling every 2 to 5 seconds.
+- Keyboard accessible, visible focus, WCAG AA contrast, responsive down to tablet width.
+- A small vendored JS library is allowed if it clearly helps (for example Alpine.js or Preact with htm),
+  committed under `app/web/vendor/` at a pinned version with its license and SHA-256 noted in the README;
+  otherwise modern vanilla JS modules. No build step, and no npm at runtime or in the image.
 
 ## Packaging
 - `Dockerfile`: `python:3.13-slim-trixie` pinned by digest; apt from `snapshot.debian.org` at a fixed date with
