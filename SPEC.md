@@ -9,7 +9,7 @@ Dispatcharr for this one job, reusing the stream engine already proven in produc
 - **Appliance.** Fixed scope, built once, frozen. No auto-update, no code downloaded at runtime, no telemetry.
 - **Pinned everything.** Base image by digest, Debian packages from a fixed snapshot.debian.org date, Python
   dependencies by exact version and hash (`--require-hashes`), GitHub Actions by commit SHA, Gluetun by digest.
-  Published image tags are versions (`1.0.0`), never `latest` in docs or compose.
+  Releases publish `latest` plus version tags (`1.0.0`, `1.0`); compose uses `latest`, versions allow freezing.
 - **No database.** All state is JSON under `/data`. Config writes are atomic (write temp file, fsync, rename).
   Keep one rolling backup `config.json.bak`.
 - **No environment variables for configuration.** Everything is set in the web UI and stored in `/data/config.json`.

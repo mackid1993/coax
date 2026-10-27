@@ -56,8 +56,8 @@ services:
       - "7780:7780"
 
   coax:
-    # Pin a released version. ghcr.io/mackid1993/coax:main is for testing only.
-    image: ghcr.io/mackid1993/coax:1.0.0
+    # :latest is the newest release. To freeze a version, use its number instead (e.g. :1.0.0).
+    image: ghcr.io/mackid1993/coax:latest
     container_name: coax
     restart: unless-stopped
     # All traffic goes through Gluetun. No ports: here; they are on the gluetun service.

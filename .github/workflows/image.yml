@@ -4,7 +4,7 @@ name: image
 #   push to main / manual run -> build linux/amd64, smoke-test it, and upload it as a
 #                                 workflow artifact (coax-image.tar.gz). Nothing is published.
 #   tag v1.2.3                 -> build linux/amd64 + linux/arm64 and publish
-#                                 ghcr.io/mackid1993/coax:1.2.3 and :1.2. No "latest" tag.
+#                                 ghcr.io/mackid1993/coax:latest, :1.2.3 and :1.2.
 
 on:
   push:
@@ -124,6 +124,7 @@ jobs:
           flavor: |
             latest=false
           tags: |
+            type=raw,value=latest
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 

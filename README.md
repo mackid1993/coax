@@ -67,7 +67,8 @@ Open `http://<this-host>:7780` and continue with [First run](#first-run).
 Docker creates `./data` on first start. If it ends up owned by root, coax fixes that itself: the container
 starts as root only long enough to `chown` `/data` to uid 1000, then runs coax as uid 1000.
 
-The compose file pins a released version, for example `ghcr.io/mackid1993/coax:1.0.0`. The `:main` tag is
+The compose file uses `ghcr.io/mackid1993/coax:latest`, the newest release. Every release is also tagged
+with its version number (for example `:1.0.0`) if you want to freeze one. The `:main` tag is
 built from every commit on the main branch and is for testing only.
 
 ## Run it with a VPN (Gluetun)
@@ -232,8 +233,8 @@ coax is meant to be frozen. Updating is a deliberate step:
 1. Read the release notes for the new version on the
    [releases page](https://github.com/mackid1993/coax/releases).
 2. Back up `./data` (it is small).
-3. Change the version in your compose file, for example `ghcr.io/mackid1993/coax:1.0.0` to `:1.1.0`.
-   Do not use `latest`; coax never publishes it.
+3. On `:latest`, just pull. If you froze a version, change it in your compose file, for example
+   `:1.0.0` to `:1.1.0`.
 4. `docker compose pull && docker compose up -d` (add `-f docker-compose.vpn.yml` for the VPN setup).
 
 Gluetun is pinned too. Update it the same way when you choose to, by changing its tag and digest.
