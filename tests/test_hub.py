@@ -175,6 +175,21 @@ class HubTests(unittest.TestCase):
         b.close()
         c.close()
 
+    def test_close_from_other_thread_while_reading(self):
+        h, _ = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]))
+        for _ in range(5):
+            s = h.open("uuid-1", "ip", "ua")
+            r = Reader(s)
+            r.start()
+            self.assertTrue(wait_for(lambda: r.bytes > 0))
+            pid = s.proc.pid
+            stdout = s.proc.stdout
+            s.close()                      # another thread, while the reader is in os.read
+            self.assertTrue(r.finished.wait(5))
+            self.assertTrue(wait_for(lambda: not alive(pid)))
+            self.assertTrue(stdout.closed)  # the reader closed its own pipe
+            self.assertEqual(h.line_status()[0]["used"], 0)
+
     def test_backup_urls_use_session_line(self):
         cfg = config([provider("p1", 1, 1), provider("p2", 1)], [channel(1, [("p1", "a"), ("p1", "b"), ("p2", "c")]),
                                                                  channel(2, [("p1", "z")])])

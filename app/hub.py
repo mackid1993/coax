@@ -95,6 +95,7 @@ class Session:
         self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
         self.proc = None
         self.closed = False
+        self.reading = False       # a thread is inside os.read on proc.stdout
         self._lock = threading.Lock()  # guards proc and closed
 
     # -- engine process ---------------------------------------------------------
@@ -127,8 +128,11 @@ class Session:
                 pass
 
     @staticmethod
-    def _kill(proc):
-        """Stop the engine and everything it started (ffmpeg), then reap it."""
+    def _kill(proc, close_stdout=True):
+        """Stop the engine and everything it started (ffmpeg), then reap it.
+
+        close_stdout=False when another thread may still be reading the pipe; that
+        thread closes it once its read returns (the dead process gives EOF)."""
         if proc is None:
             return
         for sig, wait in ((signal.SIGTERM, STOP_TIMEOUT), (signal.SIGKILL, STOP_TIMEOUT)):
@@ -146,10 +150,11 @@ class Session:
             os.killpg(proc.pid, signal.SIGKILL)  # leftover children in the group
         except (ProcessLookupError, PermissionError):
             pass
-        try:
-            proc.stdout.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if close_stdout:
+            try:
+                proc.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _may_restart(self):
         now = time.monotonic()
@@ -175,16 +180,26 @@ class Session:
                         log.error("[%s] cannot start the engine: %s", self.name, exc)
                         return
                 proc = self.proc
-            fd = proc.stdout.fileno()
-            while True:
+                self.reading = True
+            try:
+                fd = proc.stdout.fileno()
+                while True:
+                    try:
+                        chunk = os.read(fd, READ_SIZE)
+                    except OSError:
+                        chunk = b""
+                    if not chunk:
+                        break
+                    self.bytes_out += len(chunk)
+                    yield chunk
+            finally:
+                # Only the reading thread closes the pipe it reads.
+                with self._lock:
+                    self.reading = False
                 try:
-                    chunk = os.read(fd, READ_SIZE)
-                except OSError:
-                    chunk = b""
-                if not chunk:
-                    break
-                self.bytes_out += len(chunk)
-                yield chunk
+                    proc.stdout.close()
+                except Exception:  # noqa: BLE001
+                    pass
             # Engine output ended.
             try:
                 code = proc.wait(timeout=STOP_TIMEOUT)
@@ -209,7 +224,8 @@ class Session:
                 return
             self.closed = True
             proc, self.proc = self.proc, None
-        self._kill(proc)
+            reading = self.reading
+        self._kill(proc, close_stdout=not reading)
         self.hub._release(self)
         log.info("[%s] %s disconnected after %.0fs, %d bytes; line %s / %s released", self.name,
                  self.client_ip, time.time() - self.started_at, self.bytes_out,
