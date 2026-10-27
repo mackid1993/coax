@@ -178,6 +178,7 @@ function editModal(p) {
   const drawLines = () => {
     $("#fLines", el).innerHTML = d.lines.map((l, i) => d.type === "xtream" ? `<div class="line-row">
         <div class="field"><label>Name</label><input class="input input-sm" data-f="name" value="${esc(l.name)}"></div>
+        <div class="field"><label>Server <span class="faint">(optional)</span></label><input class="input input-sm mono" data-f="server" value="${esc(l.server || "")}" placeholder="Same as provider" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" title="Only if this line uses a different address than the provider"></div>
         <div class="field"><label>Username</label><input class="input input-sm mono" data-f="username" value="${esc(l.username)}" autocomplete="off"></div>
         <div class="field"><label>Password</label><input class="input input-sm mono" type="password" data-f="password" value="${esc(l.password)}" autocomplete="new-password"></div>
         <div class="field"><label>Max streams</label><input class="input input-sm mono" type="number" min="0" data-f="max_streams" value="${esc(l.max_streams)}"></div>
@@ -205,7 +206,7 @@ function editModal(p) {
       server: $("#fServer", el).value.trim(), m3u_url: $("#fM3u", el).value.trim(), xmltv_url: $("#fXmltv", el).value.trim(),
       format: $("#fFormat", el).value, max_streams: Number($("#fMax", el).value) || 0, refresh_hours: $("#fRefresh", el).value === "" ? 24 : Number($("#fRefresh", el).value),
       auto_add: $("#fAuto", el).checked,
-      lines: d.lines.map((l) => ({ ...(l.id ? { id: l.id } : {}), name: l.name, username: l.username || "", password: l.password || "", max_streams: Number(l.max_streams) || 0, search: l.search || "", replace: l.replace || "" })),
+      lines: d.lines.map((l) => ({ ...(l.id ? { id: l.id } : {}), name: l.name, username: l.username || "", password: l.password || "", server: (l.server || "").trim(), max_streams: Number(l.max_streams) || 0, search: l.search || "", replace: l.replace || "" })),
     };
   };
   const validate = (b) => {

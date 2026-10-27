@@ -372,7 +372,7 @@ tr.drop-after td { box-shadow: inset 0 -2px 0 var(--accent); }
 .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; }
 .stat-value { font-family: var(--mono); font-size: 17px; font-weight: 500; margin-top: 2px; }
 .lines-list { display: flex; flex-direction: column; gap: 10px; }
-.line-row { display: grid; grid-template-columns: 1.1fr 1.2fr 1.2fr 110px 36px; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-1); }
+.line-row { display: grid; grid-template-columns: 1fr 1.3fr 1.1fr 1.1fr 96px 36px; gap: 10px; align-items: end; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-1); }
 .line-row.m3u { grid-template-columns: 1fr 1.4fr 1.4fr 110px 36px; }
 
 /* ---------- Group picker ---------- */

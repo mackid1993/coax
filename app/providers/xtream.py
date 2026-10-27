@@ -79,7 +79,7 @@ def _api(provider, action=None):
         params["action"] = action
     label = "Xtream %s" % (action or "account info")
     deadline = time.monotonic() + API_DEADLINE
-    resp = get(base_url(provider.get("server")) + "/player_api.php", provider, params=params, label=label,
+    resp = get(base_url(line_server(provider, line)) + "/player_api.php", provider, params=params, label=label,
                stream=True, deadline=deadline)
     try:
         raw = read_body(resp, deadline, label)
@@ -207,11 +207,16 @@ def fetch_catalog(provider):
     return {"groups": groups, "streams": result}
 
 
+def line_server(provider, line):
+    """The line's own server address if it has one, else the provider's."""
+    return (line.get("server") or "").strip() or provider.get("server")
+
+
 def stream_url(provider, line, stream_id):
     """{server}/live/{username}/{password}/{stream_id}.ts for the given line."""
     safe = "@:+!$&'()*,;=-._~"
     return "%s/live/%s/%s/%s.ts" % (
-        base_url(provider.get("server")),
+        base_url(line_server(provider, line)),
         quote(line.get("username") or "", safe=safe),
         quote(line.get("password") or "", safe=safe),
         quote(id_text(stream_id), safe=safe),
@@ -221,4 +226,4 @@ def stream_url(provider, line, stream_id):
 def xmltv_url(provider):
     line = first_line(provider)
     query = urlencode({"username": line.get("username") or "", "password": line.get("password") or ""})
-    return "%s/xmltv.php?%s" % (base_url(provider.get("server")), query)
+    return "%s/xmltv.php?%s" % (base_url(line_server(provider, line)), query)

@@ -820,6 +820,9 @@ class Handler(BaseHTTPRequestHandler):
             for k in ("m3u_url", "xmltv_url"):
                 if provider.get(k):
                     provider[k] = fix_url(provider[k])
+        for line in provider.get("lines") or []:
+            if isinstance(line, dict) and isinstance(line.get("server"), str):
+                line["server"] = fix_url(line["server"])
         if provider.get("type") == "m3u" and not provider.get("lines"):
             provider["lines"] = [dict(configmod.default_line(), name="Default", max_streams=0)]
         lines = provider.get("lines")

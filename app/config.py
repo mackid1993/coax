@@ -60,7 +60,8 @@ def default_provider():
 
 
 def default_line():
-    return {"id": "", "name": "", "username": "", "password": "", "max_streams": 1, "search": "", "replace": ""}
+    return {"id": "", "name": "", "server": "", "username": "", "password": "", "max_streams": 1, "search": "",
+            "replace": ""}
 
 
 def default_xmltv_source():
@@ -204,7 +205,7 @@ def validate(cfg):
             _require(isinstance(lid, str) and ID_PATTERN.match(lid), label + ": line id %r is not valid" % (lid,))
             _require(lid not in line_ids, label + ": line id %s is used twice" % lid)
             line_ids.add(lid)
-            for key in ("name", "username", "password", "search", "replace"):
+            for key in ("name", "server", "username", "password", "search", "replace"):
                 _str(line.get(key), "%s line %s: %s" % (label, lid, key))
             _int_in(line.get("max_streams"), 0, 1000, "%s line %s: max streams" % (label, lid))
             if provider["type"] == "xtream":
