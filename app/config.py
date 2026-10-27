@@ -112,6 +112,12 @@ def fill_defaults(cfg):
             if lineup.get("sort") not in LINEUP_SORTS:
                 lineup["sort"] = "manual"
             lineup.setdefault("start_number", None)
+    for ch in cfg.get("channels") or []:
+        g = ch.get("guide") if isinstance(ch, dict) else None
+        if isinstance(g, dict) and g.get("mode") in (None, "", "none"):
+            if g.get("station_id") or g.get("xmltv_id"):
+                g["mode"] = "both" if g.get("station_id") and g.get("xmltv_id") else (
+                    "gracenote" if g.get("station_id") else "xmltv")
     if not isinstance(cfg.get("timezone"), str):
         cfg["timezone"] = ""
     if not isinstance(cfg.get("gracenote"), dict):

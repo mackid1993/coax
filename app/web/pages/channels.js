@@ -64,10 +64,11 @@ async function reload() {
 const chById = (id) => S.channels.find((c) => c.id === id);
 const backupsOf = (c) => (c.streams || []).slice(1);
 const leftAsIs = (c) => !!(c.guide || {}).reviewed;
-const needsAttention = (c) => !leftAsIs(c) && (!hasGuide(c) || lowConfidence(c) || !backupsOf(c).length);
+// Needs attention = a guide problem (no guide ID, or a weak match). Missing backups have their own filter.
+const needsAttention = (c) => !leftAsIs(c) && (!hasGuide(c) || lowConfidence(c));
 const hasGuide = (c) => {
   const g = c.guide || {};
-  return (g.mode === "gracenote" && g.station_id) || (g.mode === "xmltv" && g.xmltv_id) || (g.mode === "both" && (g.station_id || g.xmltv_id));
+  return !!(g.station_id || g.xmltv_id);
 };
 function lineupsOf(c) {
   if (Array.isArray(c.lineups)) return c.lineups;
