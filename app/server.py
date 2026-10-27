@@ -477,6 +477,7 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr", "h_lineup_dvr_add"),
         ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr/sync", "h_lineup_dvr_sync"),
         ("GET", r"/api/status", "h_status"),
+        ("GET", r"/api/network", "h_network"),
         ("GET", r"/api/log", "h_log"),
     ]
     COMPILED = [(m, re.compile("^" + p + "$"), n) for m, p, n in ROUTES]
@@ -1569,6 +1570,32 @@ class Handler(BaseHTTPRequestHandler):
         if result and not result.get("ok"):
             raise ApiError(502, result.get("error") or "Channels DVR sync failed")
         return result
+
+    # ------------------------------------------------------------ network
+    _net = {"at": 0.0, "data": None}
+    _net_lock = threading.Lock()
+
+    def h_network(self):
+        fresh = self.query.get("refresh") in ("1", "true")
+        with Handler._net_lock:
+            cached = Handler._net["data"]
+            if cached and not fresh and time.time() - Handler._net["at"] < 600:
+                return cached
+        data = {"ip": None, "country": None, "checked_at": None, "error": None}
+        try:
+            import requests
+            r = requests.get("https://ipinfo.io/json", timeout=8,
+                             headers={"User-Agent": "coax", "Accept": "application/json"})
+            r.raise_for_status()
+            info = r.json()
+            data["ip"] = info.get("ip")
+            data["country"] = info.get("country")
+        except Exception as exc:  # noqa: BLE001 - shown in the UI, never fatal
+            data["error"] = "could not look up the public IP (%s)" % type(exc).__name__
+        data["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with Handler._net_lock:
+            Handler._net.update(at=time.time(), data=data)
+        return data
 
     # ------------------------------------------------------------ status and log
     def h_status(self):

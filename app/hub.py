@@ -20,6 +20,7 @@ timeline from its own state files), up to RESTART_LIMIT times per RESTART_WINDOW
 """
 
 import logging
+import re
 import os
 import signal
 import subprocess
@@ -47,6 +48,19 @@ def default_engine_command(fmt, url, user_agent, channel_id):
 def _default_stream_url(provider, line, stream_id):
     from app.providers import stream_url  # lazy: no import-time dependency
     return stream_url(provider, line, stream_id)
+
+
+_REDACT = [
+    (re.compile(r"(/(?:live|hls|movie|series|timeshift)/[^/\s]+/)[^/\s]+/"), r"\1********/"),
+    (re.compile(r"((?:password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
+]
+
+
+def _redact(text):
+    """Hide provider passwords in engine log lines (stream URLs carry them)."""
+    for pattern, repl in _REDACT:
+        text = pattern.sub(repl, text)
+    return text
 
 
 def _int(value, default=0):
@@ -101,7 +115,7 @@ class Session:
     def _pump_stderr(self, proc):
         try:
             for raw in iter(proc.stderr.readline, b""):
-                line = raw.decode("utf-8", "replace").rstrip()
+                line = _redact(raw.decode("utf-8", "replace").rstrip())
                 if line:
                     log.info("[%s] %s", self.name, line)
         except Exception:  # noqa: BLE001
