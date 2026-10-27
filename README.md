@@ -6,7 +6,7 @@
   </picture>
 </h1>
 
-> **Not affiliated with Fancy Bits.** coax is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or supported by Fancy Bits, LLC or Channels DVR. Fancy Bits and Channels DVR will not provide support for coax; please do not contact them about it. Channels DVR is a trademark of Fancy Bits, LLC. All other trademarks and product names are the property of their respective owners and are used here only to describe compatibility.
+> **Not affiliated with Fancy Bits, LLC.** coax is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or supported by Fancy Bits, LLC or Channels DVR. Fancy Bits and Channels DVR will not provide support for coax; please do not contact them about it. Channels DVR is a trademark of Fancy Bits, LLC. All other trademarks and product names are the property of their respective owners and are used here only to describe compatibility.
 
 coax is designed specifically for [Channels DVR](https://getchannels.com/). It is a small,
 self-hosted IPTV appliance: you give it your IPTV playlists (Xtream Codes logins or M3U URLs), and it gives
