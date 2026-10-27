@@ -192,17 +192,16 @@ class HubTests(unittest.TestCase):
         h, _ = make(cfg)
         s = h.open("uuid-1", "ip", "ua")                          # p1/l1
         self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])
-        self.assertEqual(s.extra_slots, [("p2", "l1")])
-        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])  # reused, not doubled
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p2/l1/b"])
         used = {(l["provider_id"], l["line_id"]): l["used"] for l in h.line_status()}
-        self.assertEqual(used, {("p1", "l1"): 1, ("p2", "l1"): 1})
-        self.assertIsNone(h.open("uuid-2", "ip", "ua"))           # p2's only line is held for the backup
-        s.close()
-        s.close()
-        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
-        t = h.open("uuid-2", "ip", "ua")
+        self.assertEqual(used, {("p1", "l1"): 1, ("p2", "l1"): 0})  # reading the list reserves nothing
+        t = h.open("uuid-2", "ip", "ua")                          # so another channel can still tune p2
         self.assertEqual(t.provider_id, "p2")
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a"])     # p2 now busy: left out
+        s.close()
+        s.close()
         t.close()
+        self.assertTrue(all(l["used"] == 0 for l in h.line_status()))
 
     def test_backup_omitted_when_other_provider_is_full(self):
         cfg = config([provider("p1", 1), provider("p2", 1)],
@@ -254,12 +253,12 @@ class HubTests(unittest.TestCase):
         hubmod.subprocess.Popen = boom
         try:
             s = h.open("uuid-1", "ip", "ua")
-            h.backup_urls(1)                                       # also holds p2/l1
+            h.backup_urls(1)                                       # read-only, holds nothing
             self.assertEqual(list(s.iter_bytes()), [])
         finally:
             hubmod.subprocess.Popen = real
         self.assertIsNone(s.proc)
-        self.assertEqual(sum(l["used"] for l in h.line_status()), 2)
+        self.assertEqual(sum(l["used"] for l in h.line_status()), 1)
         s.close()
         s.close()
         self.assertTrue(all(l["used"] == 0 for l in h.line_status()))

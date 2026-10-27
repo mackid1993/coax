@@ -395,6 +395,7 @@ class ConfigStore:
                         with open(self.path + ".bak", "rb") as handle:
                             cfg = json.loads(handle.read().decode("utf-8-sig"))
                         log.error("%s is not valid JSON (%s); using %s.bak", self.path, exc, self.path)
+                        atomic_write(self.path, json.dumps(cfg, indent=2).encode("utf-8"))
                     except (OSError, ValueError):
                         raise ConfigError("%s is not valid JSON: %s" % (self.path, exc))
                 created = False

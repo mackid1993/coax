@@ -186,7 +186,10 @@ class Session:
                 self.bytes_out += len(chunk)
                 yield chunk
             # Engine output ended.
-            code = proc.wait()
+            try:
+                code = proc.wait(timeout=STOP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                code = "still running, killed"
             with self._lock:
                 if self.closed:
                     return
@@ -321,12 +324,12 @@ class Hub:
     def backup_urls(self, channel_id):
         """Every usable stream of the channel, in order, for the engine's failover.
 
-        Streams on the running session's provider use the session's own line (no extra
-        slot). A stream on another provider needs a line slot of its own: the first call
-        reserves one free line per provider for the session (kept in session.extra_slots and
-        released with the session), later calls reuse it. If a provider has no free line,
-        its streams are left out, so no provider ever goes over its line or total limits.
-        Returns [] unless exactly one session runs the channel."""
+        Streams on the running session's provider use the session's own line. A stream on
+        another provider is included only if that provider has a free line right now; nothing
+        is reserved, because the engine reads this list often (status checks) and a held slot
+        would block other channels. If a failover and a new tune race for the same last line,
+        the provider answers busy and the engine moves on. Disabled providers and lines are
+        skipped. Returns [] unless exactly one session runs the channel."""
         cfg = self._config()
         channel_cfg = next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(channel_id)), None)
         if channel_cfg is None:
@@ -343,19 +346,14 @@ class Hub:
                 return []
             own = mine[0]
             for stream, provider in self._candidates(channel_cfg, providers):
+                if not provider.get("enabled", True):
+                    continue
                 pid = provider.get("id")
-                lines = provider.get("lines") or []
+                lines = [l for l in provider.get("lines") or [] if l.get("enabled", True)]
                 if pid == own.provider_id:
                     line = next((l for l in lines if l.get("id") == own.line_id), None)
                 else:
-                    held = next((lid for p, lid in own.extra_slots if p == pid), None)
-                    line = next((l for l in lines if l.get("id") == held), None) if held is not None else None
-                    if line is None:
-                        line = next((l for l in lines if self._free_locked(provider, l)), None)
-                        if line is not None:
-                            key = (pid, line.get("id"))
-                            self._hold_locked(own, key)
-                            own.extra_slots.append(key)
+                    line = next((l for l in lines if self._free_locked(provider, l)), None)
                 if line is not None:
                     plan.append((provider, line, str(stream.get("stream_id"))))
         urls = []
