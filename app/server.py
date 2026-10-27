@@ -369,10 +369,11 @@ def find_lineup(cfg, lineup_id):
 
 
 def channel_fields_from_stream(provider_id, stream):
+    from app.names import clean_name
     tvg_id = stream.get("tvg_id") or ""
     return {
-        "name": (stream.get("name") or "").strip() or "Stream %s" % stream.get("stream_id"),
-        "group": stream.get("group") or "",
+        "name": clean_name(stream.get("name")) or "Stream %s" % stream.get("stream_id"),
+        "group": clean_name(stream.get("group")),
         "logo": stream.get("logo") or "",
         "streams": [{"provider": provider_id, "stream_id": str(stream.get("stream_id"))}],
         "guide": {"mode": "none", "station_id": "", "xmltv_id": tvg_id,
