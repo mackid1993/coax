@@ -499,9 +499,11 @@ async function deleteSelected() {
 
 function autoNumberModal() {
   const sel = S.selected.size;
+  const lineupChoices = S.lineups.map((l) => `<option value="${esc(l.id)}" ${S.lineup === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   const m = openModal({
     title: "Auto-number channels",
     body: `<div class="form-grid">
+      <div class="field full"><label for="anLineup">Lineup</label><select class="input" id="anLineup" ${sel ? "disabled" : ""}><option value="">${sel ? "Selected channels" : "Visible channels"}</option>${lineupChoices}</select><span class="hint" id="anShared"></span></div>
       <div class="field"><label for="anStart">Start at</label><input class="input mono" id="anStart" value="${esc(S.channels[0]?.number || "1")}" inputmode="decimal" autofocus></div>
       <div class="field"><label for="anStep">Step</label><input class="input mono" id="anStep" value="1" inputmode="numeric"></div>
       <div class="field full">${switchHtml("", false, "Only enabled channels", 'id="anOnly"')}</div>
@@ -509,8 +511,24 @@ function autoNumberModal() {
     </div>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-ok>${icon("hash")}Renumber</button>`,
   });
+  const pickIds = () => {
+    if (sel) return S.channels.filter((c) => S.selected.has(c.id)).map((c) => c.id);
+    const lid = $("#anLineup", m.el).value;
+    if (!lid) return visibleChannels().map((c) => c.id);
+    const lineup = S.lineups.find((l) => l.id === lid);
+    const order = new Map((lineup?.channels || []).map((id, i) => [id, i]));
+    return S.channels.filter((c) => order.has(c.id)).map((c) => c.id);
+  };
+  const note = () => {
+    const ids = new Set(pickIds());
+    const lid = $("#anLineup", m.el).value;
+    const shared = S.channels.filter((c) => ids.has(c.id) && lineupsOf(c).some((x) => x !== lid)).length;
+    $("#anShared", m.el).textContent = `${ids.size} channels.` + (lid && shared ? ` ${shared} are also in another lineup and will get these numbers there too.` : "");
+  };
+  $("#anLineup", m.el).onchange = note;
+  note();
   $("[data-ok]", m.el).onclick = (e) => busy(e.currentTarget, async () => {
-    const ids = sel ? S.channels.filter((c) => S.selected.has(c.id)).map((c) => c.id) : visibleChannels().map((c) => c.id);
+    const ids = pickIds();
     try {
       const r = await api.autonumber({ start: Number($("#anStart", m.el).value) || 1, step: Number($("#anStep", m.el).value) || 1, ids, only_enabled: $("#anOnly", m.el).checked });
       const nums = r?.numbers || {};
