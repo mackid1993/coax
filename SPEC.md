@@ -206,6 +206,15 @@ tail).
 - `Dockerfile`: `python:3.13-slim-trixie` pinned by digest; apt from `snapshot.debian.org` at a fixed date with
   `ffmpeg`, `intel-media-va-driver-non-free` and `mesa-va-drivers` (amd64), `vainfo`; non-root user with
   `video`/`render` group access documented; `HEALTHCHECK` on `/healthz`; `EXPOSE 7780`.
+- **GPU support for Intel, AMD and NVIDIA.** The engine already picks NVENC, then VAAPI, then CPU (`hwpick`).
+  The image must make all three work: `intel-media-va-driver-non-free` (iHD) plus `i965-va-driver` for older
+  Intel (amd64 only), `mesa-va-drivers` for AMD, and an ffmpeg build whose `-encoders` list includes both
+  `h264_vaapi` and `h264_nvenc` (NVENC loads at runtime from the libraries the NVIDIA Container Toolkit injects).
+  The Dockerfile fails the build if either encoder is missing. Compose has commented blocks for `/dev/dri` with
+  `group_add` (Intel/AMD) and for the NVIDIA runtime (`deploy.resources.reservations.devices`, driver nvidia,
+  capabilities gpu/video/compute/utility, `NVIDIA_DRIVER_CAPABILITIES=all`; a container-runtime variable, not app
+  configuration). README has one short section per vendor, including Unraid notes, and says how to see in the log
+  which encoder was chosen.
 - `requirements.txt` with exact versions and hashes.
 - `docker-compose.yml`: coax only, `./data:/data`, optional commented `/dev/dri`, restart unless-stopped.
 - `docker-compose.vpn.yml`: same plus Gluetun pinned by digest, `VPN_SERVICE_PROVIDER=custom`, WireGuard config
