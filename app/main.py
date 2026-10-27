@@ -86,6 +86,8 @@ def main(argv=None):
         return 2
     port = int(cfg["server"].get("port") or 7780)
     hub = start_hub(store)
+    if hub is not None:
+        hub.port = port
     app = servermod.App(store, hub)
     app.dvr = start_dvr_sync(store)
     try:

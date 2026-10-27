@@ -25,8 +25,6 @@ export async function mount(el) {
   draft = {
     base_url: cfg.server?.base_url || "",
     port: cfg.server?.port ?? 7780,
-    behind: cfg.server?.new_client_behind_seconds ?? 30,
-    delay: cfg.server?.channel_shutdown_delay ?? 10,
     dvr: cfg.channels_dvr?.url || "",
     transcode: cfg.transcode || "off",
     xmltv_sources: JSON.parse(JSON.stringify(cfg.xmltv_sources || [])),
@@ -79,8 +77,6 @@ function wire() {
     const t = e.target;
     if (t.dataset.k) {
       draft[t.dataset.k] = t.type === "range" || t.type === "number" ? Number(t.value) : t.value;
-      if (t.id === "sBehind") $("#vBehind", root).textContent = `${t.value} s`;
-      if (t.id === "sDelay") $("#vDelay", root).textContent = `${t.value} s`;
     } else if (t.dataset.xf) {
       const i = Number(t.closest("[data-xi]").dataset.xi);
       draft.xmltv_sources[i][t.dataset.xf] = t.type === "number" ? Number(t.value) : t.value;

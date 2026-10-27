@@ -317,7 +317,12 @@ def _refresh(config):
 
     failed = set()
     try:
-        for provider in config.get("providers") or []:
+        sources = list(config.get("providers") or [])
+        for src in config.get("xmltv_sources") or []:
+            # A standalone guide feed behaves like a provider that only has an XMLTV URL.
+            sources.append({"id": src.get("id"), "name": src.get("name"), "type": "m3u",
+                            "xmltv_url": src.get("url") or "", "lines": []})
+        for provider in sources:
             pid = str(provider.get("id") or "")
             result = {"ok": False, "error": "", "channels": 0, "missing": []}
             summary["providers"][pid] = result

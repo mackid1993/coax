@@ -20,7 +20,8 @@ def _attr(value):
 
 def _title(value):
     """Channel title after the comma: one line, no surrounding whitespace."""
-    return re.sub(r"[\r\n\t]+", " ", "" if value is None else str(value)).strip()
+    text = re.sub(r"[\r\n\t]+", " ", "" if value is None else str(value))
+    return text.replace('"', "'").strip()
 
 
 def find_lineup(config, lineup_id):

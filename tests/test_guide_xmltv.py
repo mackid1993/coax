@@ -260,7 +260,7 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(
             lines[3],
             '#EXTINF:-1 channel-id="coax-1" tvg-id="coax-1" tvg-name="CNN \'Live\'" '
-            'tvg-logo="http://logo/cnn.png" group-title="News" channel-number="101",CNN "Live"')
+            'tvg-logo="http://logo/cnn.png" group-title="News" channel-number="101",CNN \'Live\'')
         self.assertEqual(lines[4], "http://192.168.1.50:7780/stream/uuid-1.ts")
         self.assertIn('tvc-guide-stationid="50000",BBC One', lines[5])
         self.assertTrue(text.endswith("\n"))

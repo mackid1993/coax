@@ -12,6 +12,7 @@ import email.utils
 import importlib
 import inspect
 import json
+import socket
 import logging
 import os
 import posixpath
@@ -521,6 +522,11 @@ class Handler(BaseHTTPRequestHandler):
                 if path.startswith("/internal/") and self.client_address[0] not in LOCAL_ADDRESSES:
                     raise ApiError(403, "internal API is only available from 127.0.0.1")
                 if method == "HEAD" and name == "h_stream":
+                    uuid = match.group(1)
+                    ok = any(str(c.get("uuid")) == uuid and c.get("enabled", True)
+                             for c in self.app.store.get().get("channels") or [])
+                    if not ok:
+                        raise ApiError(503, "channel unavailable")
                     return self._send_bytes(200, b"", "video/mp2t", head_only=True)
                 result = getattr(self, name)(*match.groups())
                 if result is not None:
@@ -634,6 +640,11 @@ class Handler(BaseHTTPRequestHandler):
     def h_output_m3u(self, lineup_id):
         cfg = self.app.store.get()
         find_lineup(cfg, lineup_id)
+        if not (cfg["server"].get("base_url") or "").strip():
+            host = (self.headers.get("Host") or "").strip()
+            if host:
+                cfg = copy.deepcopy(cfg)
+                cfg["server"]["base_url"] = "http://" + host
         text = lazy("app.guide.output").m3u(cfg, lineup_id)
         self._send_bytes(200, text.encode("utf-8"), "audio/x-mpegurl; charset=utf-8", {"Cache-Control": "no-cache"})
 
@@ -668,6 +679,15 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(503, "channel unavailable: unknown, disabled, or no free provider line")
         self.close_connection = True
         sent = 0
+        try:
+            # A DVR that vanishes without closing the socket must not hold the line forever.
+            self.connection.settimeout(STREAM_CHUNK_TIMEOUT)
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            for opt, val in (("TCP_KEEPIDLE", 30), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 3)):
+                if hasattr(socket, opt):
+                    self.connection.setsockopt(socket.IPPROTO_TCP, getattr(socket, opt), val)
+        except OSError:
+            pass
         try:
             self.send_response(200)
             self.send_header("Content-Type", "video/mp2t")
@@ -715,18 +735,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_config_put(self):
         body = self._body_object()
-        current = self.app.store.snapshot()
-        merged = current
-        for key, value in body.items():
-            if key in ("server", "channels_dvr") and isinstance(value, dict):
-                if not isinstance(merged.get(key), dict):
-                    merged[key] = {}
-                merged[key].update(value)
-            elif key in ("version",):
-                continue
-            else:
-                merged[key] = value
-        self.app.store.replace(merged)
+
+        def mutate(merged):
+            configmod.unmask(body, merged)
+            for key, value in body.items():
+                if key in ("server", "channels_dvr") and isinstance(value, dict):
+                    if not isinstance(merged.get(key), dict):
+                        merged[key] = {}
+                    merged[key].update(value)
+                elif key in ("version", "next_channel_id"):
+                    continue
+                else:
+                    merged[key] = value
+        self.app.store.update(mutate)
         log.info("settings saved")
         return self.app.store.masked()
 

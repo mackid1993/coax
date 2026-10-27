@@ -190,7 +190,7 @@ def validate(cfg):
         _url(provider.get("xmltv_url", ""), label + ": XMLTV URL")
         _str(provider.get("user_agent"), label + ": user agent")
         _int_in(provider.get("max_streams", 0), 0, 1000, label + ": max streams")
-        _num_in(provider.get("refresh_hours"), 1, 24 * 30, label + ": refresh hours")
+        _num_in(provider.get("refresh_hours"), 0, 24 * 30, label + ": refresh hours (0 = manual only)")
         _require(isinstance(provider.get("auto_add"), bool), label + ": auto_add must be true or false")
         groups = provider.get("groups")
         _require(isinstance(groups, list) and all(isinstance(g, str) for g in groups),
@@ -391,7 +391,12 @@ class ConfigStore:
                 try:
                     cfg = json.loads(raw.decode("utf-8-sig"))
                 except ValueError as exc:
-                    raise ConfigError("%s is not valid JSON: %s" % (self.path, exc))
+                    try:
+                        with open(self.path + ".bak", "rb") as handle:
+                            cfg = json.loads(handle.read().decode("utf-8-sig"))
+                        log.error("%s is not valid JSON (%s); using %s.bak", self.path, exc, self.path)
+                    except (OSError, ValueError):
+                        raise ConfigError("%s is not valid JSON: %s" % (self.path, exc))
                 created = False
             else:
                 cfg = default_config()

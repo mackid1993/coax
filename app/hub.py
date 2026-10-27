@@ -269,7 +269,11 @@ class Hub:
             return None
         providers = self._providers(cfg)
         for stream, provider in self._candidates(channel_cfg, providers):
+            if not provider.get("enabled", True):
+                continue
             for line in provider.get("lines") or []:
+                if not line.get("enabled", True):
+                    continue
                 with self._lock:
                     if not self._free_locked(provider, line):
                         continue
@@ -286,7 +290,12 @@ class Hub:
                                 stream.get("stream_id"), provider.get("id"), line.get("id"), exc)
                 if not session.url:
                     self._release(session)
-                    break  # this stream is unusable on any line of its provider; try the next stream
+                    continue  # this line can't serve the stream (pattern, missing stream); try the next
+                try:
+                    from app.providers import stream_format
+                    session.fmt = stream_format(provider, stream) or session.fmt
+                except Exception:  # noqa: BLE001
+                    pass
                 log.info("[%s] %s tuned stream %s on %s / %s", session.name, client_ip, session.stream_id,
                          session.provider_name, session.line_name)
                 return session
