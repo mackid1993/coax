@@ -1,0 +1,177 @@
+# coax: specification
+
+coax is a small, frozen IPTV appliance for a Channels DVR server. Playlists come in (Xtream Codes or M3U), and out go
+a steady tuner stream per channel, an M3U with Gracenote station IDs, and an optional XMLTV guide. It replaces
+Dispatcharr for this one job, reusing the stream engine already proven in production
+(`app/engine/hlsloop.py`, `app/engine/tsloop.py`, copied from mackid1993/channels-dvr-stationid-matcher).
+
+## Non-negotiables
+- **Appliance.** Fixed scope, built once, frozen. No auto-update, no code downloaded at runtime, no telemetry.
+- **Pinned everything.** Base image by digest, Debian packages from a fixed snapshot.debian.org date, Python
+  dependencies by exact version and hash (`--require-hashes`), GitHub Actions by commit SHA, Gluetun by digest.
+  Published image tags are versions (`1.0.0`), never `latest` in docs or compose.
+- **No database.** All state is JSON under `/data`. Config writes are atomic (write temp file, fsync, rename).
+  Keep one rolling backup `config.json.bak`.
+- **No environment variables for configuration.** Everything is set in the web UI and stored in `/data/config.json`.
+- **One bind mount:** `./data:/data`.
+- **LAN only, no authentication.** Document clearly that it must not be exposed to the internet.
+- **Stdlib first.** Server is stdlib `http.server.ThreadingHTTPServer`. The only third-party Python dependency is
+  `requests` (the engine already uses it) and its pinned dependencies. No web framework, no JS framework, no CDN:
+  UI is plain HTML, CSS and vanilla JS served from the image.
+- **Python 3.13 in the image.** Code must also run on 3.11+ for local tests.
+- **Reliability over features.** Every background job catches and logs its own errors and never takes the server
+  down. A provider outage during refresh keeps serving the last good catalog. Streaming never waits on refresh.
+- **Code style:** readable names, short comments where logic is not obvious, American English, no em dashes.
+  No single-quote restrictions apply anymore (the engine is no longer pasted into a text box).
+
+## Layout
+```
+app/
+  main.py              entry point: load config, start server, start scheduler (owner: web)
+  config.py            load/save/validate config.json (owner: web)
+  server.py            HTTP routes (owner: web)
+  web/                 index.html, app.css, app.js (owner: web)
+  engine/              hlsloop.py, tsloop.py (adapted, owner: engine)
+  hub.py               sessions, line slots, fan-out, engine processes (owner: hub)
+  providers/           xtream.py, m3u.py, catalog.py, scheduler hook (owner: providers)
+  guide/               gracenote.py, xmltv.py, output.py (owner: guide)
+tests/                 unittest only (python -m unittest discover tests)
+Dockerfile, docker-compose.yml, docker-compose.vpn.yml, requirements.txt (+hashes), .github/workflows/ (owner: packaging)
+README.md (owner: packaging, with sections contributed by others)
+```
+Each owner writes only inside their paths plus `tests/test_<owner>_*.py`. Shared contracts below are fixed; if one
+must change, say so in your final report instead of changing it silently.
+
+## Config schema (`/data/config.json`)
+```json
+{
+  "version": 1,
+  "server": {"port": 7780, "base_url": "http://192.168.1.50:7780", "new_client_behind_seconds": 30,
+             "channel_shutdown_delay": 10},
+  "channels_dvr": {"url": "http://192.168.1.50:8089"},
+  "transcode": "off",
+  "providers": [{
+    "id": "p1", "name": "My provider", "type": "xtream",
+    "server": "http://host:80", "m3u_url": "", "xmltv_url": "",
+    "user_agent": "", "format": "hls", "refresh_hours": 24,
+    "lines": [{"id": "l1", "name": "Line 1", "username": "...", "password": "...", "max_streams": 1}],
+    "groups": ["US| NEWS"]
+  }],
+  "channels": [{
+    "id": 1, "uuid": "8c2b0d0e-...", "number": "101", "name": "Comedy Central", "group": "Entertainment",
+    "logo": "", "enabled": true,
+    "streams": [{"provider": "p1", "stream_id": "2151800"}, {"provider": "p1", "stream_id": "99"}],
+    "guide": {"mode": "gracenote", "station_id": "10149", "xmltv_id": "", "xmltv_provider": "p1"}
+  }],
+  "lineups": [{"id": "main", "name": "Main", "channels": [1]}]
+}
+```
+- `type`: `xtream` or `m3u`. For `m3u`, `lines` has one entry with empty credentials; `max_streams` 0 means unlimited.
+- `format`: `hls` (default, engine `hlsloop.py`) or `ts` (engine `tsloop.py`).
+- `transcode`: same values as the engine settings block (`off`, `1080p60`, `1080p30`, `720p60`, `720p30`, `1080p50`,
+  `1080p25`, `720p50`, `720p25`).
+- Channel `id`: positive integer, never reused. `uuid`: generated once at creation, never changes.
+- `guide.mode`: `gracenote`, `xmltv`, `both` or `none`.
+- Passwords are stored in config.json (file mode 0600) and never logged or returned by the API in full
+  (return `"********"`; saving `"********"` keeps the old value).
+- `config.py` fills defaults for missing keys and migrates by `version`.
+
+## Contracts between modules
+
+### providers (`app/providers/`)
+- `catalog.refresh(provider: dict) -> dict` downloads and caches to `/data/cache/catalog-<provider_id>.json`:
+  `{"fetched_at": iso, "groups": ["..."], "streams": [{"stream_id": "...", "name": "...", "group": "...",
+  "logo": "...", "tvg_id": "...", "url": "..."(m3u only)}]}`. On failure, raises, and the old cache stays.
+- `catalog.load(provider_id) -> dict | None` reads the cache.
+- `stream_url(provider: dict, line: dict, stream_id: str) -> str`.
+  Xtream: `{server}/live/{username}/{password}/{stream_id}.ts` (the engine itself converts to `.m3u8` for HLS).
+  M3U: the stored `url`.
+- `xmltv_url(provider) -> str`: `xmltv_url` if set, else for Xtream `{server}/xmltv.php?username=..&password=..`
+  using the first line.
+- `scheduler.start(get_config)` runs a daemon thread that refreshes each provider every `refresh_hours`
+  (and at startup if the cache is missing or stale), and the guide refresh (see guide). Never raises.
+- Xtream: `player_api.php?username&password` (account info, used by "test connection"),
+  `&action=get_live_categories`, `&action=get_live_streams`. Use the first line's credentials. Timeouts, retries
+  with backoff, the provider `user_agent` when set. Only live streams; ignore VOD and series.
+- M3U: parse `#EXTINF` attributes (`tvg-id`, `tvg-name`, `tvg-logo`, `group-title`), handle `#EXTM3U` header
+  attributes, BOM, CRLF, missing attributes, commas in names. `stream_id` for M3U = stable hash of the URL.
+
+### guide (`app/guide/`)
+- `gracenote.search(cdvr_url, query) -> list` via Channels DVR `GET {cdvr}/tms/stations/{query}`; and
+  `gracenote.suggest(channel_name, ...)` ranking candidates. Port the matching rules from
+  `reference/m3u_editor_stationid_matcher.py` and `reference/dispatcharr_stationid_matcher.py` (call sign, name
+  cleaning, lineup/country restriction, HD/feed suffixes). Keep their strictness.
+- `xmltv.refresh(config)` downloads each needed XMLTV source (gzip or plain, streaming parse with
+  `xml.etree.ElementTree.iterparse`, bounded memory), keeps only channels referenced by enabled channels with
+  mode `xmltv` or `both`, rewrites `<channel id>` and `programme channel` to `coax-<channel id>`, writes
+  `/data/cache/xmltv-<lineup_id>.xml` atomically. Keeps the old file on failure. Also caches the list of
+  available XMLTV channel ids and display names per provider for the UI picker (`/data/cache/xmltv-ids-<pid>.json`).
+- `output.m3u(config, lineup_id) -> str`. One entry per enabled channel in the lineup:
+  `#EXTINF:-1 channel-id="coax-<id>" tvg-id="coax-<id>" tvg-name=".." tvg-logo=".." group-title=".."
+  channel-number=".." tvc-guide-stationid="<station_id>",<name>` (station id only for `gracenote`/`both`),
+  next line `{base_url}/stream/{uuid}.ts`.
+- `output.xmltv_path(lineup_id)` for the server to stream the cached file.
+
+### hub (`app/hub.py`)
+- `Hub(get_config)`; `hub.open(uuid, client_ip, user_agent) -> Session | None`; `session.iter_bytes()` yields
+  MPEG-TS chunks (188-byte aligned) to one client; `session.close()`. Returns None (server answers 503) when the
+  channel is unknown/disabled or no line has a free slot.
+- One engine process per active channel, shared by every client of that channel (tuner sharing). A new client
+  starts `new_client_behind_seconds` back in a ring buffer (estimate seconds from bitrate; never mid-packet; start
+  at a packet boundary). Slow clients are dropped rather than slowing others.
+- Line slots: a channel session takes one slot on one line of the provider of its first stream, choosing the
+  first line with a free slot (`max_streams`, 0 = unlimited). Slot released when the engine exits. Thread-safe.
+- Engine command: `[sys.executable, "-u", "app/engine/hlsloop.py" | "tsloop.py", url, user_agent, str(channel_id)]`
+  with `url` built by `providers.stream_url` for the allocated line. stderr lines go to the coax log with the
+  channel name prefix.
+- If the engine exits while clients are still attached, restart it (up to 5 times per 10 minutes) without
+  dropping the clients. When the last client leaves, keep the engine for `channel_shutdown_delay` seconds.
+- `hub.backup_urls(channel_id) -> [str]`: every stream of the channel, in order, built with the session's
+  allocated line. `hub.status() -> list` for the UI (channel, clients with IPs, line, uptime, bytes).
+- Study Dispatcharr's open-source proxy (github.com/Dispatcharr/Dispatcharr, `apps/proxy/live_proxy/`) for the
+  fan-out and join-behind behavior and match it; that is what the engine was tuned against.
+
+### engine (`app/engine/`)
+Minimal adaptation of the two proven profiles. Change only what is required:
+- Remove the settings block. Read `channels_dvr.url`, `transcode` and `server.port` from `/data/config.json`
+  (path overridable by `COAX_CONFIG` for tests only).
+- Replace `dapi()` with calls to the internal API: `GET http://127.0.0.1:{port}/internal/channels/{id}/streams`
+  returns `[{"url": "..."}]` (same shape as Dispatcharr's), and `GET /internal/channels/{id}` returns
+  `{"uuid": "..."}`. No API key.
+- The viewer buffer finds the stream in Channels DVR sources whose URL contains `/output/m3u`; coax serves its
+  M3U at `/output/m3u/<lineup>.m3u` so this keeps working. Verify the matching still holds against
+  `output.m3u` (stream URLs contain the uuid).
+- Update log wording that names Dispatcharr. Keep all stream logic byte-for-byte otherwise. Keep the readable
+  structure; it no longer needs to be minifiable.
+
+### server (`app/server.py`) routes
+- `GET /` UI. `GET /healthz` -> `ok`.
+- `GET /output/m3u/<lineup>.m3u`, `GET /output/xmltv/<lineup>.xml`.
+- `GET /stream/<uuid>.ts` -> hub session, `Content-Type: video/mp2t`, chunked or close-delimited, no buffering.
+- `GET /internal/channels/<id>/streams`, `GET /internal/channels/<id>` (only from 127.0.0.1).
+- JSON API under `/api/`: config get/put (passwords masked), providers CRUD, test connection, refresh now,
+  catalog groups and streams (paged/filterable), channels CRUD and bulk add from selected streams, auto-number,
+  gracenote search/suggest/bulk-suggest, xmltv ids, lineups CRUD, status, log tail.
+
+## UI
+Single page, tabs: **Providers** (add Xtream or M3U, lines with max streams, test, refresh), **Channels**
+(pick groups, browse/filter streams, add selected as channels, reorder, number, attach backup streams from any
+provider, enable/disable), **Guide** (per channel mode, Gracenote search and one-click suggestions with
+confidence, XMLTV id picker), **Lineups**, **Settings** (base URL, Channels DVR URL, transcode with the engine's
+help text, join-behind and shutdown delay), **Status** (live sessions, line usage, last refresh results, log
+tail). Clean, dark-friendly, responsive, no external assets.
+
+## Packaging
+- `Dockerfile`: `python:3.13-slim-trixie` pinned by digest; apt from `snapshot.debian.org` at a fixed date with
+  `ffmpeg`, `intel-media-va-driver-non-free` and `mesa-va-drivers` (amd64), `vainfo`; non-root user with
+  `video`/`render` group access documented; `HEALTHCHECK` on `/healthz`; `EXPOSE 7780`.
+- `requirements.txt` with exact versions and hashes.
+- `docker-compose.yml`: coax only, `./data:/data`, optional commented `/dev/dri`, restart unless-stopped.
+- `docker-compose.vpn.yml`: same plus Gluetun pinned by digest, `VPN_SERVICE_PROVIDER=custom`, WireGuard config
+  read from `./data/wireguard/wg0.conf`, coax with `network_mode: service:gluetun`, port published on gluetun,
+  `FIREWALL_OUTBOUND_SUBNETS` note for reaching the LAN. Gluetun is MIT-licensed; reference it, do not vendor it.
+- GitHub Actions: tests on push, build amd64+arm64 image on push to main, publish to
+  `ghcr.io/mackid1993/coax` with version tags from git tags (`v1.0.0` -> `1.0.0`) and `main` for testing.
+  All actions pinned by SHA. Workflow `permissions:` minimal.
+- README: what it is, nominative reference to Channels DVR plus a not-affiliated disclaimer, quick start for both
+  compose files, GPU, settings walkthrough, guide modes, troubleshooting, LAN-only warning, MIT.
