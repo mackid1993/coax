@@ -8,7 +8,7 @@
 
 > **Not affiliated with Fancy Bits.** coax is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or supported by Fancy Bits, LLC or Channels DVR. Fancy Bits and Channels DVR will not provide support for coax; please do not contact them about it. Channels DVR is a trademark of Fancy Bits, LLC. All other trademarks and product names are the property of their respective owners and are used here only to describe compatibility.
 
-coax is designed specifically for [Channels DVR](https://getchannels.com/dvr-server/). It is a small,
+coax is designed specifically for [Channels DVR](https://getchannels.com/). It is a small,
 self-hosted IPTV appliance: you give it your IPTV playlists (Xtream Codes logins or M3U URLs), and it gives
 your DVR a steady tuner stream for each channel, an M3U with Gracenote station IDs, and an optional XMLTV
 guide.
