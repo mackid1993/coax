@@ -371,19 +371,24 @@ about 45 seconds behind the broadcast, add a little end padding for those channe
 
 ## GPU transcoding
 
-Transcoding is off by default to maintain broad compatibility. When on, coax uses the first encoder that works:
-Intel or AMD graphics through VAAPI, then NVIDIA NVENC, then the CPU. The image build fails if its `ffmpeg`
-lacks `h264_vaapi` or `h264_nvenc`, so both are always present. It is highly recommended to turn transcoding on to ensure stream stability. 
+**Turn transcoding on.** It is off by default only so coax works on any machine out of the box. Unless coax
+runs on very weak hardware, set a preset on the *Settings* page. With a GPU the extra load is small (see
+[How the GPU is used](#how-the-gpu-is-used)).
 
-**Why turn it on.** Transcoding is the only way coax can keep one steady format across backup feeds and
-refill the reserve after a long outage:
+Transcoding is what makes coax fully stable, because it is the only way coax can:
 
-- **One format for every feed.** A failover to a backup with a different frame rate or resolution does not
-  make Channels DVR (Apple TV in particular) drop frames or drift the audio.
-- **The reserve refills itself** after a long outage (see below).
+- **Keep one format for every feed.** A failover to a backup with a different frame rate or resolution does
+  not make Channels DVR (Apple TV in particular) drop frames or drift the audio.
+- **Refill the reserve on its own** after a long outage (see [Refilling the reserve](#refilling-the-reserve-3-slower)).
 
-The costs: GPU (or CPU) time, a little picture quality, and a few seconds more delay behind live. If your
-hardware allows it, ideally with a GPU, it is worth turning on.
+Without it, a backup with a different frame rate can upset the player, and a drained reserve only comes back
+on a retune (on MPEG-TS, also through a fresh connection's burst when the provider drifts behind).
+
+The costs are GPU time (or CPU time without a GPU), a little picture quality, and a few seconds more delay
+behind live.
+
+coax uses the first encoder that works: Intel or AMD graphics through VAAPI, then NVIDIA NVENC, then the CPU.
+The image build fails if its `ffmpeg` lacks `h264_vaapi` or `h264_nvenc`, so both are always present.
 
 ### Presets
 
@@ -422,27 +427,54 @@ VAAPI and CUDA filters.
 
 ### Refilling the reserve (3% slower)
 
-With transcoding on, playback runs 3% slower for a while after a provider problem. If the reserve stays below
-half for 75 seconds on HLS or 60 seconds on MPEG-TS (about 30 s and 10 s), video and audio play 3% slower
-together, with the audio pitch unchanged, until the reserve is back to about 45 s on HLS or 16 s on MPEG-TS.
-This does not start in the first 90 seconds after a tune, nor within a minute of the last speed change. The
-rest of the time video plays at its real speed.
+> [!IMPORTANT]
+> **With transcoding on, playback runs 3% slower for a while after a provider problem.** If the reserve stays
+> below half for 75 seconds on HLS or 60 seconds on MPEG-TS (about 30 s and 10 s; not in the first 90 seconds
+> after tuning or switching feeds, and at least a minute after the last change), video and audio play 3%
+> slower together, with the audio pitch unchanged, until the reserve is back to three quarters (about 45 s on
+> HLS, 16 s on MPEG-TS). The rest of the time video plays at its real speed.
 
-- **Two clean switches per refill.** The encoder restarts once when the slowdown starts and once when it
-  ends, with the speed set from the first frame, so audio and video cannot drift apart. Each restart waits
-  for a keyframe and keeps the output timeline continuous, so the picture does not pause.
-- **Refill rate:** about 1.8 s of reserve per minute.
-- **What you might see:** on a 60 fps source, one repeated frame about twice a second, which a smooth, fast
-  camera pan can show as a tiny hitch. A second screen showing the same channel in real time drifts away by
-  about 1.8 s a minute.
-- **Transcoding only:** without transcoding the audio is copied as is, and slowing it would mean stretching
-  its timestamps, which causes crackle or drift.
-- **Why 3%:** people comparing two moving patterns side by side can just tell speeds apart at roughly 5 to
-  10%, and listeners notice a change in speaking tempo at about 5%. 3% stays under both. Music is less
-  forgiving, and trained listeners can notice it there.
+- **Two clean switches per refill.** The encoder is restarted once when the slowdown starts and once when it
+  ends, with the speed set from the first frame. Nothing is changed in a running encoder, so audio and video
+  cannot drift apart. Each restart waits up to 10 seconds for the next keyframe (then restarts anyway), keeps
+  the output timeline continuous and corrects for where the audio sits in the stream, so the picture does not
+  pause. On HLS the restarted encoder's start is worked out from the timestamps already fed in, so this works
+  whether or not the provider's segments start on keyframes.
+- **Refill rate:** about 1.8 s of reserve per minute, so a refill takes about 8 to 17 minutes on HLS (up to
+  about 26 minutes from empty) and 3 to 5 minutes on MPEG-TS.
+- **What you might see:** while it runs, a 60 fps source repeats one frame about twice a second. On a smooth,
+  fast camera pan that can show as a tiny hitch.
+- **Transcoding only:** without transcoding the audio is copied as is, and slowing it would mean stretching its
+  timestamps, which causes crackle or drift.
 
-The log shows `playing 3 percent slower, pitch unchanged` when a refill starts and `back to real speed`
-when it ends, and the Status page shows the same.
+<details>
+<summary><b>Why 3%</b></summary>
+
+The rate is a trade-off between refilling quickly and staying below what people can notice.
+
+- **Motion.** In lab experiments, people comparing two moving patterns side by side can just tell speeds apart
+  when they differ by roughly 5 to 10% (McKee, 1981; De Bruyn and Orban, 1988). That is the best case: ideal
+  conditions and direct comparison. Judging one speed on its own, as a TV viewer does, is harder. 3% sits below
+  the best-case threshold.
+- **Speech.** Listeners notice a change in speaking tempo at about 5%, and slowdowns are harder to notice than
+  speedups (Quene, 2007). Pitch is corrected, so voices do not drop in pitch.
+- **Broadcast precedent.** For decades, 50 Hz countries played 24 fps films at 25 fps, which is 4.2% faster, to
+  hundreds of millions of viewers. The faster motion went largely unnoticed; the raised pitch was what people
+  noticed, and pitch-corrected versions drew few complaints. Broadcast profanity-delay units such as Eventide's
+  BD600 rebuild their delay the same way, at a rate their maker describes as subtle and transparent.
+- **Where it can show.** Music is less forgiving: tempo changes of around 3% can be noticed, and trained
+  musicians notice smaller changes than other listeners. A second screen showing the same channel in real time
+  drifts away by about 1.8 s a minute. And someone who knows the slowdown is on and is watching for it may
+  believe they see it; the fair test is a blind comparison.
+
+3% stays under the motion and speech thresholds and under both broadcast precedents, and it refills quickly
+enough that a refill is usually over in under 20 minutes. The figures come from the cited studies and are
+approximate.
+
+</details>
+
+The log shows `playing 3 percent slower, pitch unchanged` when a refill starts and `back to real speed` when it
+ends, and the Status page shows the same.
 
 **Which encoder is in use.** When a transcoding stream starts, the log (Status page, or
 `docker logs coax`) shows one of:
