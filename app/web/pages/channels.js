@@ -155,6 +155,15 @@ function pendingCheckedCount() {
 // ---------- Frame ----------
 function renderFrame() {
   if (!S) return;
+  // Rebuilding the page resets scroll; keep the table and window where they were (e.g. after a save).
+  const tw = $(".table-wrap", root);
+  const keep = { table: tw ? tw.scrollTop : 0, win: window.scrollY };
+  renderFrameInner();
+  const tw2 = $(".table-wrap", root);
+  if (tw2) tw2.scrollTop = keep.table;
+  window.scrollTo(0, keep.win);
+}
+function renderFrameInner() {
   const k = counters();
   const lineupOpts = S.lineups.map((l) => `<option value="${esc(l.id)}" ${S.lineup === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   root.innerHTML = `
