@@ -257,6 +257,18 @@ function renderRows() {
   const empty = $("#chEmpty", root);
   if (!body) return;
   const rows = visibleChannels();
+  // Before any Auto-match results are loaded, "Needs attention" would just list every channel without a
+  // guide. Ask for an Auto-match run first so the list only holds what really needs a person.
+  if (S.channels.length && S.filter === "attention" && !S.pending.size && !S.amSeen && rows.length) {
+    body.innerHTML = "";
+    empty.innerHTML = emptyState({
+      art: "tv",
+      title: "Run Auto-match first",
+      text: `${rows.length} channel${rows.length === 1 ? " has" : "s have"} no guide yet. Auto-match fills in the sure matches; this list then shows only the ones that need you.`,
+      actions: `<button class="btn btn-primary" data-act="automatch">${icon("wand")}Auto-match</button> <button class="btn" data-act="show-all-attention">Show them anyway</button>`,
+    });
+    return;
+  }
   if (!S.channels.length) {
     body.innerHTML = "";
     empty.innerHTML = emptyState({
@@ -384,6 +396,7 @@ async function onClick(e) {
     case "clear-filters": S.filter = "all"; S.q = ""; S.lineup = ""; S.group = ""; renderFrame(); break;
     case "autonumber": autoNumberModal(); break;
     case "automatch": autoMatch(); break;
+    case "show-all-attention": S.amSeen = "manual"; renderRows(); break;
     case "accept": busy(a, acceptChecked); break;
     case "check-high": checkHigh(); break;
     case "discard": S.pending.clear(); if (S.filter === "pending") S.filter = "all"; renderFrame(); break;
