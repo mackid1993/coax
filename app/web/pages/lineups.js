@@ -134,6 +134,11 @@ function editModal(l) {
     body: `<div class="stack">
       <div class="field"><label for="lName">Name</label><input class="input" id="lName" value="${esc(l?.name || "")}" placeholder="Cable, Sports, NFL…" autofocus></div>
       <div class="field"><span class="label">Guide source</span><div class="preset-grid" style="grid-template-columns:repeat(2,1fr)">${GUIDES.map(([v, n, d]) => `<label class="preset"><input type="radio" name="lg" value="${v}" ${guide === v ? "checked" : ""}><span class="p-name">${n}</span><span class="p-desc">${d}</span></label>`).join("")}</div></div>
+      <div class="field"><label for="lSort">Channel order in Channels DVR</label><select class="input" id="lSort">
+        <option value="manual" ${(l?.sort || "manual") === "manual" ? "selected" : ""}>Coax order (as arranged on the Channels page)</option>
+        <option value="provider" ${l?.sort === "provider" ? "selected" : ""}>Provider channel number</option>
+        <option value="alpha" ${l?.sort === "alpha" ? "selected" : ""}>Alphabetical</option></select>
+        <span class="hint">Matters when Channels DVR numbers the source itself; auto-number for this lineup follows it too.</span></div>
       ${l ? "" : `<label class="switch"><input type="checkbox" id="lAll"><span class="track"></span><span>Start with every channel</span></label>`}
       <p class="faint small">Add channels to lineups from the Channels page (the Lineups column or a bulk selection).</p></div>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>${l ? "Save" : "Create lineup"}</button>`,
@@ -143,8 +148,9 @@ function editModal(l) {
     const name = $("#lName", m.el).value.trim();
     if (!name) { toast("Name is required", "", "warn"); return; }
     try {
-      if (l) await api.updateLineup(l.id, { name, guide });
-      else await api.createLineup({ name, guide, all_channels: $("#lAll", m.el).checked });
+      const sort = $("#lSort", m.el).value;
+      if (l) await api.updateLineup(l.id, { name, guide, sort });
+      else await api.createLineup({ name, guide, sort, all_channels: $("#lAll", m.el).checked });
       invalidate("lineups");
       m.close();
       toast(l ? "Lineup saved" : "Lineup created", name, "ok");

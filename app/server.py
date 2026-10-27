@@ -668,6 +668,8 @@ class Handler(BaseHTTPRequestHandler):
         find_lineup(cfg, lineup_id)
         if not (cfg["server"].get("base_url") or "").strip():
             raise ApiError(409, "Set the Base URL in coax Settings first")
+        if find_lineup(cfg, lineup_id).get("sort") == "provider":
+            cfg = self._with_provider_numbers(cfg)
         text = lazy("app.guide.output").m3u(cfg, lineup_id)
         self._send_bytes(200, text.encode("utf-8"), "audio/x-mpegurl; charset=utf-8", {"Cache-Control": "no-cache"})
 
@@ -999,8 +1001,26 @@ class Handler(BaseHTTPRequestHandler):
             ref["name"] = stream.get("name", "") if stream else ""
             ref["group"] = stream.get("group", "") if stream else ""
         view["missing_streams"] = sum(1 for r in view["streams"] if r["missing"])
+        view["provider_num"] = self._provider_num(channel)
         view["lineups"] = lineup_map.get(channel["id"], [])
         return view
+
+    def _provider_num(self, channel):
+        ref = (channel.get("streams") or [None])[0]
+        if not ref:
+            return ""
+        try:
+            entry = self.app.catalogs.get(ref["provider"])
+        except ApiError:
+            return ""
+        stream = entry["by_id"].get(ref["stream_id"]) if entry else None
+        return str((stream or {}).get("num") or "")
+
+    def _with_provider_numbers(self, cfg):
+        cfg = copy.deepcopy(cfg)
+        for ch in cfg["channels"]:
+            ch["_pnum"] = self._provider_num(ch)
+        return cfg
 
     def _lineup_map(self, cfg):
         lineup_map = collections.defaultdict(list)
@@ -1538,6 +1558,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 members = body.get("channels", [])
             lineup = {"id": final, "name": name.strip(), "guide": body.get("guide") or "per-channel",
+                      "sort": body.get("sort") if body.get("sort") in configmod.LINEUP_SORTS else "manual",
                       "channels": members}
             cfg["lineups"].append(lineup)
             return lineup
@@ -1556,6 +1577,10 @@ class Handler(BaseHTTPRequestHandler):
                 lineup["channels"] = body["channels"]
             if "guide" in body:
                 lineup["guide"] = body["guide"]
+            if "sort" in body:
+                if body["sort"] not in configmod.LINEUP_SORTS:
+                    raise bad_request("sort must be one of " + ", ".join(configmod.LINEUP_SORTS))
+                lineup["sort"] = body["sort"]
             return lineup
         return self.app.store.update(mutate)
 

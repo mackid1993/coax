@@ -35,7 +35,7 @@ class XtreamTests(unittest.TestCase):
         # Movie, duplicate, missing id and non-dict entries are dropped.
         self.assertEqual(sorted(by_id), ["101", "102", "103", "104", "105"])
         self.assertEqual(by_id["101"], {"stream_id": "101", "name": "CNN HD", "group": "US| NEWS",
-                                        "logo": "http://logo/cnn.png", "tvg_id": "cnn.us"})
+                                        "logo": "http://logo/cnn.png", "tvg_id": "cnn.us", "num": "1"})
         self.assertEqual(by_id["102"]["group"], "US| SPORTS")  # numeric category_id
         self.assertEqual(by_id["102"]["logo"], "")             # null icon
         self.assertEqual(by_id["103"]["group"], "Category 3")  # null category name

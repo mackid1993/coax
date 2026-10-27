@@ -173,6 +173,7 @@ def get_live_streams(provider):
             "stream_icon": text(item.get("stream_icon")),
             "epg_channel_id": text(item.get("epg_channel_id")),
             "category_id": cid,
+            "num": text(item.get("num")),
         })
     return out
 
@@ -203,6 +204,7 @@ def fetch_catalog(provider):
             "group": group,
             "logo": item["stream_icon"],
             "tvg_id": item["epg_channel_id"],
+            "num": item.get("num") or "",
         })
     return {"groups": groups, "streams": result}
 

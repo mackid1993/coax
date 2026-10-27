@@ -4,6 +4,7 @@ export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+export const flag = (cc) => /^[A-Za-z]{2}$/.test(cc || "") ? String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 0x1F1A5 + c.charCodeAt(0))) : "";
 export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
 
 export function debounce(fn, ms = 200) {

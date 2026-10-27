@@ -174,6 +174,7 @@ def parse_lines(lines):
             "name": info["name"] or tvg_name or url,
             "url": url,
             "tvg_id": attrs.get("tvg-id", ""),
+            "num": attrs.get("tvg-chno", "") or attrs.get("channel-number", ""),
             "tvg_name": tvg_name,
             "logo": attrs.get("tvg-logo", "") or attrs.get("logo", ""),
             "group": attrs.get("group-title", "") or extgrp or UNCATEGORIZED,
@@ -295,6 +296,7 @@ def fetch_catalog(provider):
             "group": entry["group"],
             "logo": entry["logo"],
             "tvg_id": entry["tvg_id"],
+            "num": entry.get("num") or str(len(streams) + 1),
             "url": entry["url"],
             "format": stream_format_for_url(entry["url"]),
         })

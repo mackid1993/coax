@@ -1,7 +1,7 @@
 import { initPopovers } from "./popover.js";
 // coax web UI entry: router, theme, server health. Pages live in pages/*.js.
 import { api } from "./api.js";
-import { $, icon, esc } from "./ui.js";
+import { $, icon, esc, flag } from "./ui.js";
 
 const PAGES = [
   { id: "channels", label: "Channels", icon: "channels", load: () => import("./pages/channels.js") },
@@ -87,7 +87,7 @@ export async function refreshNetwork(fresh = false) {
     const n = await api.network(fresh);
     pill.classList.toggle("bad", !!n?.error || !n?.ip);
     pill.querySelector(".np-ip").textContent = n?.ip || "unknown";
-    pill.querySelector(".np-cc").textContent = n?.country || "";
+    pill.querySelector(".np-cc").textContent = n?.country ? `${flag(n.country)} ${n.country}` : "";
     pill.title = `Public IP of this container${n?.checked_at ? `, checked ${new Date(n.checked_at).toLocaleTimeString()}` : ""}${n?.error ? `. ${n.error}` : ""}. Click to check again.`;
     window.dispatchEvent(new CustomEvent("coax:network", { detail: n }));
     return n;

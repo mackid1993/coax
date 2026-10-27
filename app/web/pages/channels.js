@@ -20,6 +20,7 @@ function freshState() {
     filter: "all",
     lineup: "",
     group: "",
+    sort: "manual",
     q: "",
     cat: { open: true, provider: "", group: "", q: "", offset: 0, total: 0, items: [], selected: new Map(), loading: false, groups: [] },
     loading: true,
@@ -98,7 +99,14 @@ function visibleChannels() {
       if (!words.every((w) => hay.includes(w))) return false;
     }
     return true;
-  });
+  }).sort(sorter(S.sort));
+}
+function sorter(mode) {
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : Infinity; };
+  const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base", numeric: true });
+  if (mode === "alpha") return byName;
+  if (mode === "provider") return (a, b) => (num(a.provider_num) - num(b.provider_num)) || byName(a, b);
+  return () => 0;
 }
 function counters() {
   const all = S.lineup ? S.channels.filter((c) => lineupsOf(c).includes(S.lineup)) : S.channels;
@@ -157,6 +165,11 @@ function renderFrame() {
         <span class="spacer"></span>
         <label class="sr-only" for="lineupFilter">Lineup</label>
         <select class="input input-sm" id="lineupFilter" style="width:auto;min-width:130px">${`<option value="">All lineups</option>${lineupOpts}`}</select>
+        <label class="sr-only" for="sortSel">Order</label>
+        <select class="input input-sm" id="sortSel" style="width:auto" title="Display order">
+          <option value="manual" ${S.sort === "manual" ? "selected" : ""}>Coax order</option>
+          <option value="provider" ${S.sort === "provider" ? "selected" : ""}>Provider number</option>
+          <option value="alpha" ${S.sort === "alpha" ? "selected" : ""}>A to Z</option></select>
         <label class="sr-only" for="groupFilter">Group</label>
         <select class="input input-sm" id="groupFilter" style="width:auto;min-width:130px;max-width:220px">${groupOpts()}</select>
       </div>
@@ -322,6 +335,8 @@ function wireFrame() {
   if (q) q.oninput = debounce(() => { S.q = q.value; renderRows(); }, 120);
   const lf = $("#lineupFilter", root);
   if (lf) lf.onchange = () => { S.lineup = lf.value; renderFrame(); };
+  const so = $("#sortSel", root);
+  if (so) so.onchange = () => { S.sort = so.value; renderRows(); };
   const gf = $("#groupFilter", root);
   if (gf) gf.onchange = () => { S.group = gf.value; S.selected.clear(); renderFrame(); };
   wireDrag();
@@ -517,7 +532,7 @@ function autoNumberModal() {
     if (!lid) return visibleChannels().map((c) => c.id);
     const lineup = S.lineups.find((l) => l.id === lid);
     const order = new Map((lineup?.channels || []).map((id, i) => [id, i]));
-    return S.channels.filter((c) => order.has(c.id)).map((c) => c.id);
+    return S.channels.filter((c) => order.has(c.id)).sort(sorter(lineup?.sort || "manual")).map((c) => c.id);
   };
   const note = () => {
     const ids = new Set(pickIds());

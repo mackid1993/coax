@@ -24,6 +24,26 @@ def _title(value):
     return text.replace('"', "'").strip()
 
 
+def _num_key(value):
+    try:
+        return (0, float(str(value).strip()))
+    except (TypeError, ValueError):
+        return (1, 0.0)
+
+
+def ordered_ids(lineup, channels):
+    """Channel ids of a lineup in its chosen order: manual (as arranged in coax),
+    provider (the provider's own channel number, from _pnum), or alpha (by name)."""
+    ids = list(lineup.get("channels") or [])
+    mode = lineup.get("sort") or "manual"
+    if mode == "alpha":
+        ids.sort(key=lambda cid: str((channels.get(str(cid)) or {}).get("name") or "").casefold())
+    elif mode == "provider":
+        ids.sort(key=lambda cid: (_num_key((channels.get(str(cid)) or {}).get("_pnum")),
+                                  str((channels.get(str(cid)) or {}).get("name") or "").casefold()))
+    return ids
+
+
 def find_lineup(config, lineup_id):
     for lineup in config.get("lineups") or []:
         if str(lineup.get("id")) == str(lineup_id):
@@ -52,7 +72,7 @@ def m3u(config, lineup_id):
     lineup_guide = lineup.get("guide") or "per-channel"
     lines = ["#EXTM3U"]
     seen = set()
-    for cid in lineup.get("channels") or []:
+    for cid in ordered_ids(lineup, channels):
         ch = channels.get(str(cid))
         if ch is None or str(cid) in seen or not ch.get("enabled", True) or not ch.get("uuid"):
             continue

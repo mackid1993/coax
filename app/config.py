@@ -30,6 +30,7 @@ PROVIDER_TYPES = ("xtream", "m3u")
 STREAM_FORMATS = ("hls", "ts")
 GUIDE_MODES = ("gracenote", "xmltv", "both", "none")
 LINEUP_GUIDES = ("gracenote", "xmltv", "both", "per-channel")
+LINEUP_SORTS = ("manual", "provider", "alpha")  # channel order in the lineup's M3U
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -105,6 +106,8 @@ def fill_defaults(cfg):
             lineup.setdefault("channels", [])
             if not lineup.get("guide"):
                 lineup["guide"] = "per-channel"
+            if lineup.get("sort") not in LINEUP_SORTS:
+                lineup["sort"] = "manual"
     for source in cfg.get("xmltv_sources") or []:
         if isinstance(source, dict):
             _fill(source, default_xmltv_source())

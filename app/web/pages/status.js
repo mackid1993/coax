@@ -1,6 +1,6 @@
 // Status: live sessions with sparklines, line usage, refresh results, network, and the log tail. Polls every 3 s.
 import { api } from "../api.js";
-import { $, esc, icon, logo, emptyState, fmtBytes, fmtRate, fmtDuration, fmtAgo, fmtInt, toastError } from "../ui.js";
+import { $, esc, flag, icon, logo, emptyState, fmtBytes, fmtRate, fmtDuration, fmtAgo, fmtInt, toastError } from "../ui.js";
 import { refreshNetwork } from "../app.js";
 
 const POLL_MS = 3000;
@@ -43,7 +43,7 @@ function drawNet() {
   if (!el || !net) return;
   el.innerHTML = `<div class="row" style="align-items:flex-start;gap:14px"><div class="kpi-icon" style="position:static;flex:none">${icon("signal")}</div>
     <div style="min-width:0"><div class="stat-label">Public IP</div><div class="stat-value" style="font-size:18px">${esc(net.ip || "unknown")}</div>
-    <div class="faint small">${net.country ? esc(net.country) + " · " : ""}checked ${net.checked_at ? fmtAgo(net.checked_at) : "never"}</div>
+    <div class="faint small">${net.country ? `${flag(net.country)} ${esc(net.country)} · ` : ""}checked ${net.checked_at ? fmtAgo(net.checked_at) : "never"}</div>
     ${net.error ? `<div class="small" style="color:var(--bad);margin-top:4px">${esc(net.error)}</div>` : ""}</div></div>
     <p class="faint small" style="margin-top:10px">Behind a VPN this should be the VPN's address, not your home connection.</p>`;
 }
