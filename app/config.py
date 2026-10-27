@@ -49,6 +49,7 @@ def default_config():
         "lineups": [{"id": "main", "name": "Main", "guide": "per-channel", "channels": []}],
         "xmltv_sources": [],
         "gracenote": {"regions": []},
+        "timezone": "",
         "backups": {"enabled": True, "time": "03:30", "keep": 14},
         "next_channel_id": 1,
     }
@@ -111,6 +112,8 @@ def fill_defaults(cfg):
             if lineup.get("sort") not in LINEUP_SORTS:
                 lineup["sort"] = "manual"
             lineup.setdefault("start_number", None)
+    if not isinstance(cfg.get("timezone"), str):
+        cfg["timezone"] = ""
     if not isinstance(cfg.get("gracenote"), dict):
         cfg["gracenote"] = {}
     cfg["gracenote"].setdefault("regions", [])

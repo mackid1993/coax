@@ -84,6 +84,12 @@ def main(argv=None):
     except (configmod.ConfigError, OSError) as exc:
         log.error("cannot load %s: %s", path, exc)
         return 2
+    try:
+        tzmod = importlib.import_module("app.tz")
+        tzmod.apply(cfg)
+        store.listeners.append(tzmod.on_change)
+    except Exception:  # noqa: BLE001 - never block startup on the time zone
+        log.exception("could not set the time zone")
     port = int(cfg["server"].get("port") or 7780)
     hub = start_hub(store)
     if hub is not None:

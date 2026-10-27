@@ -115,3 +115,14 @@ document.addEventListener("keydown", (e) => {
 initPopovers();
 window.addEventListener("hashchange", route);
 route();
+
+// First run: adopt the browser's time zone if coax has none of its own (user can change it in Settings).
+(async () => {
+  try {
+    const cfg = await api.getConfig();
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!cfg.timezone && cfg.timezone_effective?.source === "default" && zone && zone !== "UTC") {
+      await api.putConfig({ timezone: zone });
+    }
+  } catch {}
+})();

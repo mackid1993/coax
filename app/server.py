@@ -765,7 +765,13 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------ config
     def h_config_get(self):
-        return self.app.store.masked()
+        cfg = self.app.store.masked()
+        try:
+            name, source = lazy("app.tz").effective(self.app.store.get())
+            cfg["timezone_effective"] = {"name": name, "source": source, "now": time.strftime("%Y-%m-%d %H:%M %Z")}
+        except ApiError:
+            pass
+        return cfg
 
     def h_config_put(self):
         body = self._body_object()
@@ -778,6 +784,12 @@ class Handler(BaseHTTPRequestHandler):
             if not server["base_url"]:
                 raise bad_request("Base URL is required: how Channels DVR reaches coax, e.g. http://192.168.1.50:7780")
             check_base_url(server["base_url"])
+        if "timezone" in body:
+            tzname = str(body.get("timezone") or "").strip()
+            if tzname and not lazy("app.tz").valid(tzname):
+                raise bad_request("unknown time zone %s (use a name like America/New_York)" % tzname)
+            body["timezone"] = tzname
+        body.pop("timezone_effective", None)
         for src in body.get("xmltv_sources") or []:
             if isinstance(src, dict) and "url" in src:
                 src["url"] = fix_url(src["url"])

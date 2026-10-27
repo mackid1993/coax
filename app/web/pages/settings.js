@@ -29,6 +29,7 @@ export async function mount(el) {
     transcode: cfg.transcode || "off",
     xmltv_sources: JSON.parse(JSON.stringify(cfg.xmltv_sources || [])),
     regions: JSON.parse(JSON.stringify(cfg.gracenote?.regions || [])),
+    timezone: cfg.timezone || "",
     backups: { enabled: cfg.backups?.enabled !== false, time: cfg.backups?.time || "03:30", keep: cfg.backups?.keep ?? 14 },
   };
   dirty = false;
@@ -43,6 +44,7 @@ function render() {
     <section class="card"><div class="card-head"><h2>Addresses</h2></div><div class="card-body form-grid">
       <div class="field"><label for="sBase">Base URL</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="sBase" data-k="base_url" value="${esc(d.base_url)}" placeholder="http://192.168.1.50:7780"><span class="hint">How your DVR reaches coax. Used in the playlist stream URLs.</span></div>
       <div class="field"><label for="sDvr">DVR server URL</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="sDvr" data-k="dvr" value="${esc(d.dvr)}" placeholder="http://192.168.1.50:8089"><span class="hint">Needed for Gracenote search, shared viewers and recordings. Port is usually 8089.</span></div>
+      <div class="field"><label for="sTz">Time zone</label><input class="input mono" autocomplete="off" spellcheck="false" id="sTz" data-k="timezone" list="tzList" value="${esc(d.timezone)}" placeholder="${esc(cfg.timezone_effective?.name || "UTC")} (automatic)"><datalist id="tzList">${(Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : []).map((z) => `<option value="${esc(z)}">`).join("")}</datalist><span class="hint">Used for the backup schedule and log times. Now ${esc(cfg.timezone_effective?.now || "")}, from ${esc(cfg.timezone_effective?.source || "default")}. Leave empty for automatic.</span></div>
       <div class="field"><label for="sPort">Port</label><input class="input mono" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" id="sPort" data-k="port" type="number" min="1" max="65535" value="${esc(d.port)}"><span class="hint">Takes effect after a restart.</span></div>
     </div></section>
 
@@ -134,6 +136,7 @@ async function save() {
       channels_dvr: { url: d.dvr.replace(/\/+$/, "") },
       transcode: d.transcode,
       xmltv_sources: sources,
+      timezone: (d.timezone || "").trim(),
       gracenote: { regions: d.regions.filter((r) => r.country && String(r.postal || "").trim()) },
       backups: { enabled: !!d.backups.enabled, time: d.backups.time || "03:30", keep: Number(d.backups.keep) || 14 },
     });
