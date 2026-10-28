@@ -313,3 +313,45 @@ class DropChangedTest(unittest.TestCase):
             self.assertEqual(src.count('"-drop_changed:a", "1"'), 1, name)
             self.assertNotIn("first_pts", src, name)
 
+
+
+def _pes_packet(stream_id):
+    """One 188-byte TS packet starting a PES of the given stream id (0xC0 audio, 0xE0 video)."""
+    head = b"\x47\x41\x00\x10" + b"\x00\x00\x01" + bytes([stream_id]) + b"\x00\x00\x80\x00\x00"
+    return head + b"\xff" * (188 - len(head))
+
+class SilentAudioGuardTest(unittest.TestCase):
+    """The guard restarts an encoder that lost its sound, but never every 15 s and never for a feed with no sound."""
+
+    def run_guard(self, name, chunks):
+        clock = [0.0]
+        ns = {"mono": lambda: clock[0]}
+        extract(name, ("AQ", "SK", "silent"), ns)
+        pid, kills = 100, []
+        for t, chunk in chunks:
+            clock[0] = t
+            if ns["silent"](pid, chunk):
+                kills.append(t)
+                pid += 1   # the writer starts a new encoder
+        return kills, ns["SK"]
+
+    def test_video_only_feed_is_never_restarted(self):
+        video = _pes_packet(0xE0) * 10
+        for name in ENGINES:
+            kills, _ = self.run_guard(name, [(i * 0.5, video) for i in range(600)])
+            self.assertEqual(kills, [], name)
+
+    def test_lost_sound_restarts_with_backoff_not_every_15s(self):
+        video, both = _pes_packet(0xE0) * 10, _pes_packet(0xE0) + _pes_packet(0xC0)
+        for name in ENGINES:
+            chunks = [(i * 0.5, both) for i in range(40)] + [(20 + i * 0.5, video) for i in range(600)]
+            kills, sk = self.run_guard(name, chunks)
+            self.assertEqual(len(kills), 3, (name, kills))   # ~30 s, then 60 s and 120 s later within 5 minutes
+            self.assertGreaterEqual(kills[1] - kills[0], 60, name)
+            self.assertGreaterEqual(kills[2] - kills[1], 120, name)
+            self.assertEqual(len(sk), 3, name)   # coax's own kills are not GPU decoding failures
+
+    def test_own_kill_is_not_a_gpu_failure(self):
+        for name in ENGINES:
+            src = engine_source(name)
+            self.assertIn("old.pid not in SK", src[src.index("def remux("):], name)

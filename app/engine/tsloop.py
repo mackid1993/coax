@@ -287,7 +287,7 @@ def remux(why=None):
     if why:
         log("restarting remuxer: " + why)
     old = ff
-    if old is not None and TRANSCODE and GPUDEC[0] and old.poll() is not None and old.returncode != 0 and mono() - FST[0] < 20:
+    if old is not None and TRANSCODE and GPUDEC[0] and old.poll() is not None and old.returncode != 0 and old.pid not in SK and mono() - FST[0] < 20:
         GPUDEC[0] = False
         log("transcode: GPU decoding failed on this stream, decoding on the CPU instead (encoding stays on the GPU)")
     SPA = SPD
@@ -305,11 +305,13 @@ def remux(why=None):
             pass
 NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
 
-AQ = {"pid": None, "t0": 0.0, "a": None, "told": False}
+AQ = {"pid": None, "t0": 0.0, "a": None, "told": False, "ever": False, "n": 0, "next": 0.0}
+SK = set()   # encoders coax itself killed (not a GPU decoding failure)
 
 def silent(pid, b):
     # -drop_changed drops audio frames whose format changes. If the provider's audio changes for good, the
-    # encoder would send video without sound, so it is restarted once to pick up the new format.
+    # encoder would send video without sound, so it is restarted to pick up the new format. If sound is still
+    # missing, it tries again after 1, 2, 4 ... 10 minutes (not every 15 s); a feed that never had sound is left alone.
     now = mono()
     if AQ["pid"] != pid:
         AQ.update(pid=pid, t0=now, a=None, told=False)
@@ -318,11 +320,12 @@ def silent(pid, b):
             af = b[j + 3] >> 4 & 3
             o = j + (5 + b[j + 4] if af == 3 else 4)
             if af & 1 and o + 4 <= j + 188 and b[o:o + 3] == b"\x00\x00\x01" and 192 <= b[o + 3] <= 223:
-                AQ["a"] = now
+                AQ.update(a=now, ever=True, n=0, next=0.0)
                 return False
-    if AQ["told"] or now - AQ["t0"] < 15 or now - (AQ["a"] or AQ["t0"]) < 10:
+    if AQ["told"] or not AQ["ever"] or now < AQ["next"] or now - AQ["t0"] < 15 or now - (AQ["a"] or AQ["t0"]) < 10:
         return False
-    AQ["told"] = True
+    AQ.update(told=True, next=now + min(60 * 2 ** AQ["n"], 600), n=AQ["n"] + 1)
+    SK.add(pid)
     return True
 
 def pump():
