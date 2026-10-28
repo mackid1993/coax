@@ -228,6 +228,22 @@ class FeedHealth:
         self._note("promoted" if order[0] != keys[0] else "reordered", ch, done["name"], new, text,
                    {"order": [list(k) for k in keys]}, now)
 
+    RANK_W = {"desync": 100.0, "placeholder": 20.0, "dead": 10.0, "novideo": 8.0, "frozen": 5.0,
+              "avsplit": 1.0, "stall": 0.5, "keepalive": 0.5}
+
+    def rank(self, ch, key, now=None):
+        """How bad a stream has been: blocked first, then weighted problems of the last day (fading by half
+        every 6 hours; sound off its picture outweighs everything), minus clean playback. Lower is better."""
+        now = now or time.time()
+        with self.lock:
+            rec = self.feeds.get(self._k(ch, key)) or {}
+            bad = 0.0
+            for t, k in rec.get("ev", []):
+                if now - t < DAY:
+                    bad += self.RANK_W.get(k, 1.0) * 0.5 ** ((now - t) / (6 * HOUR))
+            good = min(self._clean(ch, key, now), 600) / 60.0
+            return (1 if self.is_blocked(ch, key, now) else 0, round(bad - good, 3))
+
     def _proven(self, ch, key, now):
         rec = self.feeds.get(self._k(ch, key)) or {}
         ok = rec.get("ok")

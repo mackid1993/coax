@@ -866,7 +866,7 @@ def handoff(why, depth=None, fl=None):
     pt = mono()
     if not stalled:
         log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
-    cand = [fl[(i0 + j) % len(fl)] for j in range(1, len(fl))]
+    cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
     pref = [u for u in cand if u in TRUST] + [u for u in cand if u not in TRUST and u not in SCANBAD]
     cand = pref if pref else (cand if stalled and mono() - ost > 120 else [])

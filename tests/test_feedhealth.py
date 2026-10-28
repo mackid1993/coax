@@ -204,3 +204,23 @@ class TroublePromoteTest(unittest.TestCase):
         h.switched(5, K("main"), K("b2"), now=1010)
         h.good(5, K("b2"), 10, now=1010 + 2 * H)
         self.assertEqual(ids(st), ["main", "b2"])
+
+
+class RankTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_rank_orders_least_bad_first_and_desync_last(self):
+        st = Store({"channels": [{"id": 5, "name": "B", "streams": [{"provider": "p1", "stream_id": s} for s in ("a", "b", "c", "d")]}]})
+        h = fh.FeedHealth(st, self.tmp.name)
+        now = 100000
+        h.problem(5, K("a"), "frozen", now=now - 100)
+        h.good(5, K("b"), 60, now=now - 100)
+        h.feeds.setdefault("5|p1|c", {"ev": [[now - 100, "desync"]], "good": [], "blocks": []})
+        order = sorted("abcd", key=lambda x: h.rank(5, K(x), now=now))
+        self.assertEqual(order[0], "b")          # proven clean
+        self.assertEqual(order[-1], "c")         # sound off its picture is the worst
+        self.assertLess(order.index("d"), order.index("a"))   # untested above a frozen one

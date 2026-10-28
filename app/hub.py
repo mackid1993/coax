@@ -586,6 +586,13 @@ class Hub:
         except Exception:  # noqa: BLE001
             return False
 
+    def _rank(self, channel_id, stream_provider):
+        stream, provider = stream_provider
+        try:
+            return self.health.rank(channel_id, (str(provider.get("id")), str(stream.get("stream_id"))))
+        except Exception:  # noqa: BLE001
+            return (0, 0.0)
+
     def _health(self, kind, channel_id, key, *args):
         health = self.health
         if health is None:
@@ -753,6 +760,12 @@ class Hub:
                                            self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
             if any(not self._blocked(channel_id, sp) for sp in cands):
                 cands = [sp for sp in cands if not self._blocked(channel_id, sp)]
+            # Failover order is by score: the stream that has been least bad comes first. The playing stream
+            # stays first in the list so the engine knows where it is; the engine tries the rest in this order.
+            if self.health is not None:
+                playing = own.cur_key
+                cands.sort(key=lambda sp: (0 if (str(sp[1].get("id")), str(sp[0].get("stream_id"))) == playing else 1,
+                                           self._rank(channel_id, sp), self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
             for stream, provider in cands:
                 if not provider.get("enabled", True):
                     continue

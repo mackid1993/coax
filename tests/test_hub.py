@@ -392,3 +392,20 @@ class BlockedBackupTest(unittest.TestCase):
         s = h.open("uuid-1", "ip", "ua")
         self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p1/l1/b"])
         s.close()
+
+
+class RankedFailoverTest(unittest.TestCase):
+    def test_failover_list_in_score_order_playing_first(self):
+        cfg = config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b"), ("p1", "c")])])
+        hub, _ = make(cfg)
+
+        class Health:
+            def is_blocked(self, ch, key):
+                return False
+
+            def rank(self, ch, key):
+                return {"a": (0, 5.0), "b": (0, 9.0), "c": (0, -1.0)}[key[1]]
+        hub.health = Health()
+        s = hub.open("uuid-1", "ip", "ua")
+        self.assertEqual(hub.backup_urls(1), ["fake://p1/l1/a", "fake://p1/l1/c", "fake://p1/l1/b"])
+        s.close()

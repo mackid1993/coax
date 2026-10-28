@@ -549,6 +549,79 @@ def probe(u):
         r.close()
     return None
 
+# Sync check after a switch. An MPEG-TS stream cannot be looked at without playing it, so coax switches,
+# then compares the new stream's first SYNCD seconds with the last SYNCD seconds of the stream it left. A stream
+# whose sound is off its picture is left at once for the next one (coax ranks them) and blocked.
+SL = threading.Lock()
+SYNCD = 25.0
+REFD = 45.0
+SYNC = {"ref": collections.deque(), "refd": 0.0, "refu": None, "old": None, "new": [], "newd": 0.0, "newu": None}
+TRUST = {src}
+SYNCBAD = [None]
+
+def synckeep(u, d, dur):
+    with SL:
+        if SYNC["old"] is not None and SYNC["newu"] == u:
+            SYNC["new"].append(d)
+            SYNC["newd"] += dur
+            if SYNC["newd"] >= SYNCD:
+                a_ = (b"".join(SYNC["old"]), b"".join(SYNC["new"]), u)
+                SYNC["old"] = None
+                SYNC["new"] = []
+                threading.Thread(target=synccheck, args=a_, daemon=True).start()
+        if SYNC["refu"] != u:
+            SYNC["ref"].clear()
+            SYNC["refd"] = 0.0
+            SYNC["refu"] = u
+        SYNC["ref"].append((d, dur))
+        SYNC["refd"] += dur
+        while SYNC["ref"] and SYNC["refd"] - SYNC["ref"][0][1] >= REFD:
+            SYNC["refd"] -= SYNC["ref"].popleft()[1]
+
+def syncswitch(u):
+    with SL:
+        if SYNC["refu"] in TRUST and SYNC["refd"] >= 10 and u not in TRUST:
+            SYNC["old"] = [x[0] for x in SYNC["ref"]]
+            SYNC["new"] = []
+            SYNC["newd"] = 0.0
+            SYNC["newu"] = u
+        else:
+            SYNC["old"] = None
+
+def synccheck(old, new, u):
+    a_ = "/tmp/tsloop-sync-%d-a.ts" % os.getpid()
+    b_ = "/tmp/tsloop-sync-%d-b.ts" % os.getpid()
+    r_ = {}
+    try:
+        with open(a_, "wb") as f:
+            f.write(old)
+        with open(b_, "wb") as f:
+            f.write(new)
+        c_ = sp.run(["nice", "-n", "10", sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "avcheck.py"), a_, b_, FF], capture_output=True, text=True, timeout=240)
+        r_ = json.loads(c_.stdout or "{}")
+    except Exception as x:
+        log("sync check: could not compare (%s)" % x)
+        return
+    finally:
+        for p_ in (a_, b_):
+            try:
+                os.remove(p_)
+            except Exception:
+                pass
+    o_ = r_.get("offset")
+    fl_ = feeds(True)
+    i_ = fl_.index(u) + 1 if u in fl_ else 0
+    if o_ is None:
+        log("sync check: no clear verdict for stream %d (%s); it stays unchecked [ref %s]" % (i_, r_.get("why") or "no result", ref(u)))
+        return
+    if abs(o_) < 2.0:
+        TRUST.add(u)
+        log("sync check: stream %d is in step with the previous stream [ref %s]" % (i_, ref(u)))
+        return
+    log("sync check: stream %d of %d has its sound %.1fs %s its picture; leaving it for good [ref %s]" % (i_, len(fl_), abs(o_), "ahead of" if o_ < 0 else "behind", ref(u)))
+    fbad[u] = [mono() + 86400, 9]
+    SYNCBAD[0] = u
+
 def handoff(why):
     global stalled, got, cur, pend, sticky, gap, dlv, lpr, prr, fst, ost
     fl = feeds()
@@ -568,7 +641,7 @@ def handoff(why):
     pt = mono()
     if not stalled:
         log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
-    cand = [fl[(i0 + j) % len(fl)] for j in range(1, len(fl))]
+    cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
     for u in cand:
         if mono() - pt > 6:
@@ -588,6 +661,7 @@ def handoff(why):
     log(why + "; switching to stream %d of %d [ref %s]" % (fl.index(nxt) + 1, len(fl), ref(nxt)))
     gap = mono() - ost if stalled else (gap or 0.0) + mono() - got if gap is not None or dlv else None
     cur = nxt
+    syncswitch(nxt)
     prr = [nxt, pr]
     pend = True
     stalled = False
@@ -1117,6 +1191,7 @@ def conn(r):
                 fbad.pop(cur, None)
         if out:
             enq(["seg", bytes(out), adv, dict(last), cur, ix, 0, 0, 0.0])
+            synckeep(cur, bytes(out), adv)
         if jump is not None and jump < 0:
             raise ValueError("timeline jumped %.0fs inside the stream" % jump)
 
@@ -1349,6 +1424,14 @@ if rstk:
     handoff("the previous process got stuck reading this feed")
 while not gone():
     rb = mono()
+    if SYNCBAD[0] is not None and SYNCBAD[0] != cur:
+        SYNCBAD[0] = None
+    if SYNCBAD[0] is not None and mono() - lpr >= 15:
+        u_ = cur
+        handoff("sound is off its picture on this stream")
+        fbad[u_] = [mono() + 86400, 9]
+        if cur != u_:
+            SYNCBAD[0] = None
     try:
         url = sticky if usest and sticky else cur
         usest = False
