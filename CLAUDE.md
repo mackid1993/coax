@@ -1,7 +1,7 @@
 # CLAUDE.md: the full history of coax, and every lesson learned
 
 This is the project's memory. Read it before changing anything. It covers everything from the first Gracenote
-matcher (2026-10-19) through the Dispatcharr stream profiles to coax 1.0.3-1 (2026-10-27): what was built, what
+matcher (2026-10-19) through the Dispatcharr stream profiles to coax 1.0.4 (2026-10-28): what was built, what
 failed, why it failed, how it was fixed, and the rules the owner set along the way. Most of these rules exist
 because a mistake was made once. Do not make it twice.
 
@@ -447,6 +447,12 @@ Repo `mackid1993/coax` (public, MIT), all built on 2026-10-27 (EDT).
   correction). It did not fix Bravo; the cause was elsewhere.
 - **1.0.2 to 1.0.2-9:** Smart Standby (4.4).
 - **1.0.3:** bug-fix round (4.5). **1.0.3-1:** full backups and sync temp-file fixes.
+- **1.0.3-3:** ffmpeg keeps the provider's timestamps through jumps (`-dts_delta_threshold 86400`, one clock for
+  audio and video), so an audio dropout no longer leaves the sound 10 s off; feed problems are blamed on the
+  stream that had them (4.6).
+- **1.0.4:** the HE-AAC lip-sync fix (ffmpeg probes 5 s and adds no mux delay), transcode audio only corrects
+  real gaps, an ended playlist blocks a stream only after a full minute, and the sync check aligns sound by
+  audio fingerprint so noisy readings give no verdict (4.6).
 
 ### 4.4 The Bravo case and Smart Standby
 Bravo has three streams: main `45446`, backup `174571`, backup `2151823`. During an outage coax landed on `2151823`
@@ -456,7 +462,9 @@ and the audio was about 10 s ahead. The owner needed it fixed fast.
   different source (two audio languages, DVB subtitles).
 - Single-feed detection (scene cuts vs silence) was noise. The owner insisted desync is detectable; the working
   method compares with another feed of the same channel: `avcheck.py` cross-correlates picture-change and
-  sound-onset signals. Measured 0.0 s for backup 2 and 10.4 to 12.0 s for backup 3, repeatedly.
+  sound-onset signals. Measured 0.0 s for backup 2 and 10.4 to 12.0 s for backup 3, repeatedly. (That
+  envelope cross-correlation later produced noise readings that blocked good streams; 1.0.4 replaced the sound
+  side with an audio fingerprint. See 4.6.)
 - The owner's rules, settled over many rounds:
   - The owner picks the streams; coax decides their order.
   - Act only on real trouble. What the reserve absorbs is normal and ignored.
@@ -505,6 +513,136 @@ Two adversarial reviewers (backend, UI); every UI finding was reproduced in Node
 - After 1.0.3-1 the compose files were rebuilt in ah4c's style (variables with defaults, GPU by variables, no
   editing needed), the README shows them in collapsed blocks instead of `curl` commands, and the build
   scaffolding files were removed.
+
+### 4.6 1.0.3-3 and 1.0.4: the HE-AAC desync, ffmpeg probing, and two false blocks
+The night of 2026-10-27 to 10-28 (EDT). The longest single bug hunt so far, and the clearest case of the owner's
+eyes being right while every measurement said otherwise. Read all of it before touching the ffmpeg command line
+in either engine.
+
+#### 4.6.1 Audio dropouts (1.0.3-3, already in code)
+- **Symptom:** after a short audio dropout in a feed, the output sound sat several seconds off the picture until
+  the next encoder restart.
+- **Cause:** ffmpeg handled gaps differently for audio and video. In transcode, audio went through `aresample`
+  (its own sample clock) while video went through the `fps` filter (its own frame clock), so a gap was filled on
+  one and skipped on the other. On top of that, ffmpeg's `-dts_delta_threshold` (default 10 s) rewrote
+  timestamps after a jump of that size, so a 10 s dropout was "corrected" into a permanent offset.
+- **Fix:** `-dts_delta_threshold 86400` (never rewrite; the engine already continues the timeline itself with
+  `-output_ts_offset`), and audio and video follow one clock (the input timestamps). Verified on a debug build
+  with forced 10 s and 30 s dropouts: sound and picture stayed together after each.
+- Feed problems are now attributed to the stream that had them (the `[ref]` of the line), not to whichever
+  stream is playing when the hub reads the line.
+
+#### 4.6.2 The HE-AAC desync (1.0.4)
+- **Symptom (owner, on the TV):** a backup feed of one channel (1080p 59.94 fps video, HE-AAC audio) was visibly
+  out of lip sync at once in passthrough. In transcode it looked right at first, then drifted out after about
+  two minutes. The main feed of the same channel (720p 29.97 fps, AAC-LC) was fine in both modes.
+- **Why it took hours:** every timestamp measurement said "in sync". ffprobe `start_time` of audio and video,
+  the PTS spans of both streams, an A/V timestamp monitor added to the engines for this hunt (input and output
+  audio-video gaps, logged each minute; commit `95b80b5`, reverted in `7c4279c`, removed for good in 1.0.4), and
+  a content comparison of coax's output against the provider's feed. All agreed with each other and all were
+  wrong about what the TV showed. **For this class of bug, timestamps lie.** The stamps are consistent; what the
+  decoder produces from the audio is not what the stamps describe. The only reliable instrument was the owner
+  watching the TV, so the hunt only moved once it switched to live candidates he watched, one change at a time.
+- **Cause:** both engines started ffmpeg with `-probesize 1000000 -analyzeduration 1000000` (about 1 s of
+  input; set in the Dispatcharr profile days, A.3, to shorten the pause at a switch). HE-AAC carries SBR (and
+  sometimes parametric stereo) that only reveals the real output format (sample rate doubles, channel layout)
+  after some audio has been decoded. With a 1 s probe, ffmpeg started muxing before it understood the audio.
+  The mpegts muxer's default start delay (`-muxdelay` / `-muxpreload`, 0.7 s and 0.5 s) also applied on top.
+  AAC-LC reveals everything in its first frame, which is why the main feed was never affected.
+- **Fix (both engines, `app/engine/hlsloop.py` and `app/engine/tsloop.py`, `ffcmd()`, passthrough and
+  transcode):**
+  - input side: `-probesize 5000000 -analyzeduration 5000000` immediately before `-i pipe:0` (the later
+    option wins, so the generic 1 MB values earlier in the base list no longer apply to the input);
+  - output side: `-muxdelay 0 -muxpreload 0` immediately before `-f mpegts pipe:1`.
+  - The owner confirmed on the TV: in sync in passthrough and in transcode, including after the two-minute
+    mark that used to drift.
+  - Which of the two settings did the work was not isolated. Keep both. Do not "simplify" either away.
+  - `FfmpegArgsTest` in `tests/test_engine_adapt.py` pins them: at least two `-probesize 5000000` in each
+    engine's `ffcmd()`, exactly two `-muxpreload 0`, `min_hard_comp=0.1` present, `async=1000` absent.
+- **Cost:** ffmpeg needs up to about 5 s more input before its first output at a tune or restart. The engine's
+  reserve is meant to cover it; the effect on tune time was not measured.
+- **Failed candidates, each a lesson:**
+  - (a) Re-encoding passthrough audio to AAC-LC. It did nothing for the sync, and the owner rejected it as a
+    fix anyway: "convert" papers over the problem. The job is to bring the stream in correctly.
+  - (b) Mapping exactly one audio track (`-map 0:a:0`) together with the short probe. ffmpeg failed every 2 s
+    with "sample rate not set" / "Could not write header" and the live stream crash-looped on the owner's TV.
+    **Always run a candidate ffmpeg command for a few seconds offline on real data of that very feed before it
+    goes on the live server.** A short recording of the feed piped into the candidate command is enough.
+  - (c) A keyframe-start filter for passthrough (drop until the first keyframe). The feed already starts on a
+    keyframe (0 frames dropped); not the cause. Removed.
+  - While hot-swapping engine code on the live server, a leftover reference to a removed helper (`TEE`, from
+    the debug monitor) raised a `NameError` and crashed the stream. **After any live patch, scan for undefined
+    names** (`python -m pyflakes` or a quick `compile` plus a grep for removed helpers) before the owner tunes.
+- **Naming:** passthrough stays named **passthrough**. The owner explicitly said not to rename it to "remux".
+  It is already an ffmpeg remux (`-c copy -copyts`), with no GPU and minimal CPU; ffmpeg is always in the chain,
+  in both modes.
+
+#### 4.6.3 Transcode audio filter
+- The old transcode audio filter was `aresample=async=1000`. That setting constantly stretches and squeezes the
+  audio to fit the timestamps. Offline, on the main feed (the healthy one), it moved the sound 5.0 s off the
+  picture, while the same command with no audio filter gave 0.0 s.
+- Now: `aresample=async=1:min_hard_comp=0.1:first_pts=0`. It corrects only real gaps above 0.1 s (inserting
+  silence or trimming) and starts the audio at the first timestamp, and otherwise leaves the samples alone.
+  `atempo` is still appended during a refill.
+- **Not yet proven over a 10+ minute watch.** The offline result and the first minutes on the TV are good; a
+  long live watch has not been done. If sound drifts slowly in transcode only, this filter is the first suspect.
+
+#### 4.6.4 False "offline placeholder" block
+- **What happened:** the provider returned a burst of HTTP 407 Proxy Authentication Required on playlist
+  requests, then served a playlist ending in `#EXT-X-ENDLIST`. The HLS engine treated that ended playlist as the
+  provider's offline slate and handed off.
+- **Worse:** the hub's `PROBLEMS` list (`app/hub.py`, `r"offline placeholder"`) matches **any** engine log line
+  containing that phrase. An interim build logged an informational "retrying" line that contained the phrase, and that alone blocked the stream for 24 h through feed health, because `placeholder` is in
+  `INSTANT` (`app/feedhealth.py`) and blocks on the first report.
+- **Lesson: engine log wording is an API to the hub.** Informational lines must never contain a trigger phrase
+  (`offline placeholder`, the sync-check verdict wording, the dead/frozen phrases). When adding a log line,
+  grep `PROBLEMS` and the timeline patterns in `hub.py` first.
+- **Fix (hlsloop, the fetch loop):** an ended playlist starts a timer (`PHG = [first_seen, logged]`).
+  - While the reserve (`Qs[0] + wlead`) is above 15 s and the loop is not stalled, the engine stays on this
+    stream, polls every 2 s, and logs once: "provider sent an ended playlist; staying on this stream while the
+    reserve lasts". This line contains no trigger phrase.
+  - When the reserve runs low or the loop stalls: if the ended playlist has persisted a full 60 s, it hands off
+    as "provider is serving an offline placeholder" (this blocks the stream, as before); if shorter, it hands
+    off as "provider sent an ended playlist and the reserve ran low" (moves playback, blocks nothing).
+  - A normal playlist clears `PHG`.
+- The 1.0.4 first commit (`20890c6`) retried the offline screen up to 15 s; `68be2ef` replaced that with the
+  reserve-based wait and the 60 s rule above.
+- tsloop is unchanged: there a placeholder is detected by the redirect to a `black.*` file, which is
+  unambiguous.
+
+#### 4.6.5 False sync block
+- **What happened:** the content sync check (`app/engine/avcheck.py`) cross-correlated a sound-energy envelope
+  with a picture-change signal over +/-90 s. On real feeds it produced noise readings such as 65.9 s, -50 s and
+  +63 s. A single such reading blocked a good stream for 24 h and caused feed hopping.
+- Tried and dropped: ffmpeg's MPEG-7 `signature` video filter to align pictures. It never matched across feeds
+  of different resolution or frame rate, which is exactly the case that matters.
+- **Fix:** the sound is aligned first, with ffmpeg's chromaprint muxer (`-f chromaprint -fp_format raw`, 32-bit
+  items, one item every `HOP = 4096 / 3 / 11025` s). The best lag must have a bit error of at most 0.30 and beat
+  the runner-up (more than 1 s away) by at least 0.08. Otherwise: "sound does not match clearly", no verdict.
+  Then the picture-change signal is searched only within `PICWIN = 40` s of where the sound says the program
+  is, and must correlate at least 0.45 and beat the runner-up by 0.15. The offset is (sound lag) minus
+  (picture lag), as before.
+- **Verified on real feeds:** the HE-AAC backup read -0.1 s (in sync) in 3.7 s, picture correlation 0.93 vs
+  0.37 runner-up, sound bit error 0.09. Feeds without a clear audio match give no verdict and nothing happens.
+- Both ffmpeg pieces (`signature` filter, `chromaprint` muxer) are present in the image's Jellyfin ffmpeg.
+- A verdict still blocks at once (`desync` is in `INSTANT`), but a verdict now requires a clear match on both
+  sound and picture, so noise yields "no verdict" instead of a block.
+
+#### 4.6.6 How the owner wants this kind of work done
+- Believe the symptom. "Timestamps say in sync" is not proof; the TV is the ground truth.
+- Live candidates on his server that he watches, one change at a time, each verified offline for a few seconds
+  on real data of the feed first.
+- No long measurement runs. A proposed 9-minute test was rejected: checks must decide in seconds, at tune time.
+- No unrequested renames or changes (passthrough stays passthrough).
+- Never block the stream he is watching for a test. Forced tests use reorder plus retune, and the channel order
+  and blocks are restored afterwards. Back up `config.json` before editing it.
+- Discussed and deferred, not built: a health check at tune time, every ~30 minutes and on failover.
+
+#### 4.6.7 Still open from this night
+- The transcode audio filter needs a 10+ minute live watch (4.6.3).
+- An audit of every engine switch trigger is being done separately: playlist errors after 5 retries (about
+  18 s) mark a stream failed, and the stall triggers, all measured against the rule "no switch while the
+  reserve is healthy and the feed is still delivering".
 
 ---
 
@@ -571,6 +709,26 @@ Two adversarial reviewers (backend, UI); every UI finding was reproduced in Node
 48. Keep the README accurate and complete; review it against the code after changes. The compose and `.env` files
     shown in the README must match the files in the repo.
 
+### Sync and ffmpeg (1.0.4)
+49. Timestamps can be consistent while the decoded sound is not where they say. When the owner sees lip-sync
+    trouble and every timestamp check says "in sync", believe the owner and iterate with live candidates.
+50. Give ffmpeg enough input to understand the audio before it muxes: HE-AAC (SBR) needs real decoding.
+    Probe 5 s (`-probesize 5000000 -analyzeduration 5000000`) and add no mux delay (`-muxdelay 0
+    -muxpreload 0`). A short probe is not "fine".
+51. Never let `aresample` stretch audio to fit timestamps (`async=1000`); correct only real gaps
+    (`async=1:min_hard_comp=0.1:first_pts=0`).
+52. Keep the provider's timestamps through jumps (`-dts_delta_threshold 86400`) and give audio and video one
+    clock, or a dropout becomes a permanent offset.
+53. Run every candidate ffmpeg command offline for a few seconds on real data of that feed before the live
+    server sees it.
+54. After a live code patch, check for undefined names (a removed helper crashed a live stream).
+55. Engine log wording is an API to the hub. Informational lines must not contain trigger phrases.
+56. An ended playlist after proxy errors is usually a hiccup; wait on the reserve, and only a full minute of
+    it counts as an offline placeholder.
+57. A content check must say "no verdict" when the match is not clear. One noisy reading must never block.
+    Align sound by fingerprint first, then search the picture only near it.
+58. Checks decide in seconds at tune time; no multi-minute measurement runs.
+
 ---
 
 ## 6. Facts and numbers worth keeping
@@ -594,6 +752,19 @@ Two adversarial reviewers (backend, UI); every UI finding was reproduced in Node
   5 s; refill 3% below half reserve for 75 s (HLS) / 60 s (TS), until three quarters; A/V timestamp hold 3 s;
   content sync verdict at 2 s; Smart Standby blocks 12 h / 24 h / 3 days (desync 24 h / 3 days); proven after a
   passed check or 10 clean minutes; recording extension delay + 45 s, max 3 min.
+- **coax ffmpeg (1.0.4):** input `-dts_delta_threshold 86400 -fflags +discardcorrupt`, then `-probesize
+  5000000 -analyzeduration 5000000 -i pipe:0`; passthrough `-map 0:v? -map 0:a? -c copy -copyts`; transcode
+  `-map 0:v:0? -map 0:a:0?`, audio `aresample=async=1:min_hard_comp=0.1:first_pts=0` (plus `atempo` in a
+  refill), AAC 192k stereo 48 kHz; output `-output_ts_offset ... -muxdelay 0 -muxpreload 0 -f mpegts pipe:1`.
+- **Ended playlist (HLS):** wait while reserve above 15 s and not stalled; offline placeholder (blocks) only
+  after 60 s.
+- **Sync check (1.0.4):** chromaprint raw, `HOP = 4096/3/11025` s, sound bit error <= 0.30 with runner-up
+  margin >= 0.08; picture within `PICWIN = 40` s, correlation >= 0.45 with margin >= 0.15; `MAXLAG` 90 s,
+  `MIN_OVERLAP` 12 s, out of sync at 2 s. HE-AAC backup: -0.1 s in 3.7 s (picture 0.93 vs 0.37, sound bit
+  error 0.09). Old envelope method: noise readings 65.9 s, -50 s, +63 s.
+- **HE-AAC case:** main 720p 29.97 AAC-LC (fine); backup 1080p 59.94 HE-AAC (out of sync at once in
+  passthrough, after ~2 min in transcode, before 1.0.4). `aresample=async=1000` on the main feed offline:
+  5.0 s off; no filter: 0.0 s.
 - **Measurements:** Dispatcharr baseline (25.5 h): 388 catch-ups, 57 playlist retries, 11 switches, 61 s keepalive.
   CPU after the full GPU chain: container ~10% of one core for a 1080p60 VAAPI transcode. Engine memory 78 MB.
   Overnight runs at 0% buffering on both the profile and coax.
@@ -611,6 +782,13 @@ Two adversarial reviewers (backend, UI); every UI finding was reproduced in Node
   locals such as KSHB): name cleanup strips it.
 - The MPEG-TS content sync check only has a verdict when the old and new clips overlap.
 - Two Channels DVR clients on the same coax channel use two provider slots (ah4c model).
+- The 1.0.4 transcode audio filter (`aresample=async=1:min_hard_comp=0.1:first_pts=0`) has not had a 10+
+  minute live watch yet.
+- Audit of every engine switch trigger (playlist errors after 5 retries, about 18 s, marking a stream failed;
+  stall triggers) against the rule "no switch while the reserve is healthy and the feed is still
+  delivering". Being done separately.
+- A health check at tune time, every ~30 minutes and on failover was discussed and deferred (not built).
+- Which of the two HE-AAC settings (5 s probe, no mux delay) did the work is not isolated; both stay.
 
 ---
 
@@ -1021,7 +1199,7 @@ Scope: repo mackid1993/channels-dvr-stationid-matcher (renamed by owner to macki
 
 ##### 10-23 20:00 to 10-24 02:48: RC1 to RC5
 - 20:35: Owner's reviewer: switch rewinds up to ~30 to 36 s (handoff set `last=None` -> full join on backup); too-eager 5 s error switch; stale check unreachable; retune within 10 s reuses old lead; writer lacked exception guard. RC1 (`hlsloop-RC1-parameters.txt` + review notes on Desktop, Gemini `~/hermes-scratch/iptv-speed/rc1/`): rejoin depth = outage `gap`, `cushlim()` (renamed from reviewer's `L`), stale at `0.6*lim`, resume window back to 4 s (verified Dispatcharr kills with `proc.kill()`), writer try/except. Live version measured replaying ~40 s (4 segments) on switch.
-- 20:56: Reviewer found multi-hop gap loss; fix `gap=(gap or 0)+mono()-got`. Reviewer suggested `-probesize 1000000 -analyzeduration 1000000`; applied, switch pause 10.0 -> 6.0 s, audio intact (12,164 audio packets). RC2.
+- 20:56: Reviewer found multi-hop gap loss; fix `gap=(gap or 0)+mono()-got`. Reviewer suggested `-probesize 1000000 -analyzeduration 1000000`; applied, switch pause 10.0 -> 6.0 s, audio intact (12,164 audio packets). RC2. (Correction, 1.0.4: this 1 s probe was the cause of the HE-AAC lip-sync bug; "audio intact" counted packets, not sync. coax now probes 5 s; see 4.6.2.)
 - 22:27: Live dead-URL check inside real Dispatcharr container (CNN channel ID, fake main URL, idle line 3): switched "stream 2 of 5" after 19 s, real H.264/AAC out. No test channel created (DB untouched).
 - 23:05: RC2 deployed, commit `ca1c5e6`, 13/13 + 5/5 switch tests. Backup `profile7-backup-20261023-230308.json`. Live CNN 90 s 52 MB.
 - 23:22: commit `e176a9d` README "Removing provider prefixes from channel names" (group Name Transforms via M3U account > Groups & Auto Sync Settings > gear; or Channels > Edit > Channel Name > Find (Regex)). 23:25 commit `d5b727c` "Renaming every channel at once (bulk edit)" (Page Size 500, header checkbox, or shift-click across pages with jump-to-last-page; check "Selection: N channels").
@@ -1452,7 +1630,7 @@ All timestamps are UTC unless marked EDT (local, UTC-4). Scope: channels-dvr-ipt
 - 07:44 to 07:50 Remaining burst: `-analyzeduration 300000` made no difference (1.82x). A send-ahead ramp of 0.1 s/s gave 1.17x; 0.02 s/s gave 1.15x. So it was the profile's pacing, not ffmpeg.
 - 07:45 Edge-case audit subagent started (8 min cap). 07:49 A TS port subagent started (TS RC11 from TS RC10, 45 min target).
 - 07:53 The owner's reviewer found: after an all-feeds-down outage, `got` resets on every stalled call, so the rejoin is too shallow and the reserve never rebuilds (fix: remember outage start `ost`). Also: write `og` to disk before the PUT.
-- 07:56 Edge-case audit results, top 5: (1) cross-provider credential rewrite gives backup hosts the main provider's login; (2) `#EXT-X-DISCONTINUITY` ignored; (3) watcher self-exits; (5) probesize too small for 4K/HEVC; (4) resume overrides a manual stream change.
+- 07:56 Edge-case audit results, top 5: (1) cross-provider credential rewrite gives backup hosts the main provider's login; (2) `#EXT-X-DISCONTINUITY` ignored; (3) watcher self-exits; (5) probesize too small for 4K/HEVC; (4) resume overrides a manual stream change. (Item 5 turned out to be a real class of bug: in 1.0.4 the 1 s probe broke HE-AAC sync; see 4.6.2.)
 - 07:59 South Park (3:00 AM EDT airing) was extended twice: 1920 to 2042 s (first process, plus 122) to 2132 s (after the 3 AM restart wiped `/tmp`, plus 90). Ended at 3:34:32 EDT. The padding was kept. Fix: store originals in `/data`.
 - 08:01 The owner accepted that the padding issue was the earlier build.
 - 08:08 Final files for review: HLS RC16t (ramp 0.02 s/s, `ost` outage rejoin, `og` written before the PUT and stored in `/data`, same-host credential rewrite only, watcher never exits, stalled re-probe every 10 s) and TS RC12 (the agent's port of the late fixes on the subagent's RC11). Sim: total outage 4.88x with 15 s gap on RC16s, versus 1.18x with 1 s gap on RC16t.
@@ -1512,7 +1690,7 @@ All timestamps are UTC unless marked EDT (local, UTC-4). Scope: channels-dvr-ipt
 - Recording fix: extend the Channels job via `PUT /dvr/jobs/{id}`, never flush the stream (flush made live viewers jump). Extension = measured profile delay (capped at designed depth) plus a 45 s provider margin, cap 180 s, added on top of the user's padding, only for jobs this device is recording, applied once (original stored in `/data`, written before the PUT), with the check in its own thread.
 - 45 s fixed margin because the provider provides no program-date-time or broadcast clock.
 - No transcoding of video (owner). Later also no audio re-encode (owner).
-- Pacing: remove the 3 s lead subtraction at a switch; ramp the send-ahead target up at most 0.02 s/s. probesize/analyzeduration not changed (no effect).
+- Pacing: remove the 3 s lead subtraction at a switch; ramp the send-ahead target up at most 0.02 s/s. probesize/analyzeduration not changed (no effect on the burst). (Later finding, 1.0.4: the 1 s probe did matter for HE-AAC lip sync; coax probes 5 s now. See 4.6.2.)
 - Stop chasing hypothetical review findings; act on observed evidence (agreed with the owner at 08:23). Channels-lengthens-recording and other operator-error cases were dropped.
 - Switching as a last resort (RC17): stay on a slow or briefly stalled feed to keep the viewer's place; switch on the placeholder, a dead feed (before the reserve runs out, at most 60 s), a stuck download, about 5 min far below real time, or A/V more than 3 s apart (instant reject). Content matching rejected.
 - Stalled backup re-probe every 30 s (reverted from 10 s) to reduce 407 risk.
@@ -2288,7 +2466,7 @@ Times are UTC as logged (EDT = UTC-4). Hosts: Gemini (dev box, repo at `~/src/co
 - Tests: 152, 172, 182, 192, 194, 211, 217, 219, 222, 223, 224, 227, 228-241, 244, 246, 253, 257, 260, 261, 266, 269, 273, 275.
 - Image `coax:test` `6e2178664081` 634 MB; later `9562801a5a41`.
 - Dispatcharr settings: `new_client_behind_seconds: 30` (default 5); 10 s shutdown delay; `TRANSCODE="1080p60"`.
-- Audio: `-af aresample=async=1000 -c:a aac -b:a 192k -ac 2 -ar 48000`.
+- Audio (at that time): `-af aresample=async=1000 -c:a aac -b:a 192k -ac 2 -ar 48000`. Superseded in 1.0.4: `async=1000` stretched audio to fit timestamps (5.0 s off offline on a healthy feed); now `aresample=async=1:min_hard_comp=0.1:first_pts=0`. See 4.6.3.
 - CPU before GPU change: ffmpeg 124% of a core (Apollo 20 threads, 12700K iGPU), container ~77%; Win11 VM 216%, tailscaled 46%, engine 3%. Test clip: 49% to 6% of a core. After: container ~10% of a core (~0.5% of machine), ffmpeg ~7.5%, memory ~507 MB.
 - Dispatcharr baseline 25.5 h: 388 catch-ups, 57 playlist retries, 11 backup switches, 61 s keepalive, 80% of windows corrected. coax 1.2 h (test-skewed): ~4 catch-ups/h vs ~15, switches ~2.5/h vs ~0.4.
 - Hub constants: `STREAM_CHUNK_TIMEOUT` 60 s, `STOP_TIMEOUT` 3 s, `RESTART_DELAY` 1 s, old `RESTART_LIMIT` 5 per 600 s; engine `RBT` 45 s, `DEADT` 60 s; frozen 25 s, no video 90 s, backoff to 15 s, cooldown 5 s; keepalive 2 s HLS, 3 s TS; head start 5 s per joining device; recording extension delay plus 45 s, max 3 min; refill 75 s wait HLS, 60 s TS; refill 8-17 min HLS (26 from empty), 3-5 min TS; engine A/V timestamp threshold 3 s; Smart Standby sync threshold 2 s.
@@ -2299,3 +2477,102 @@ Times are UTC as logged (EDT = UTC-4). Hosts: Gemini (dev box, repo at `~/src/co
 - GHCR digests: 1.0.0 `sha256:f34bb4ce…`, 1.0.1-1 `sha256:74fa3875…`, 1.0.1-2 `sha256:7de4fa40…`.
 - Backup scores: same name 1.0, call sign 0.97, guide ID 0.95, guide ID different number 0.6, similar name up to 0.85; quality tie order FHD/1080p, HD, 4K/UHD, none, RAW, SD; East/West never mixed.
 - Delegations: deleg_0ab1841b (bug+gap), deleg_f6e4d719 (DVR), deleg_a0139eb0 (3 fixers), deleg_6023021c (narrow review), deleg_e67b7a00 (design review), deleg_d8d82f02 (README port), deleg_2340c5b9 (interrupted), deleg_89532e49 (1.0.3 reviews).
+
+### A.9 Oct 27 to 28: 1.0.3-3 and 1.0.4 (HE-AAC sync, ffmpeg probe and mux, false blocks)
+
+Times are EDT, evening of 10-27 into the morning of 10-28. Summary in section 4.6; this is the record.
+
+#### 1) Timeline of work
+- Audio dropouts left the output sound seconds off the picture. Found two ffmpeg behaviors: audio (`aresample`)
+  and video (`fps` filter) filled gaps on different clocks, and `-dts_delta_threshold` (10 s default) rewrote
+  timestamps after a jump. Fixed with `-dts_delta_threshold 86400` and one clock; verified on a debug build with
+  forced 10 s and 30 s dropouts. Feed problems attributed to the stream that had them. Released as **1.0.3-3**
+  (`7239151`).
+- The owner reported a backup feed of one channel (1080p 59.94, HE-AAC) out of lip sync on the TV: at once in
+  passthrough, after about two minutes in transcode. Main feed (720p 29.97, AAC-LC) fine.
+- Timestamp checks: ffprobe `start_time`, PTS spans, a content comparison of coax output vs the provider. All
+  "in sync". An A/V timestamp monitor was added to both engines (`95b80b5`) to log input and output audio-video
+  gaps each minute; it also said "in sync" and was reverted (`7c4279c`).
+- Candidates tried live, one at a time, the owner watching:
+  - passthrough audio re-encoded to AAC-LC: no change; rejected by the owner as "convert", not a fix;
+  - one audio track (`-map 0:a:0`) with the 1 s probe: ffmpeg failed every 2 s ("sample rate not set",
+    "Could not write header"), the live stream crash-looped; reverted;
+  - keyframe-start filter in passthrough: feed already starts on a keyframe (0 frames dropped); removed;
+  - a hot-swap left a reference to the removed `TEE` helper: `NameError`, stream crashed; fixed.
+- Found: 1 s probe (`-probesize 1000000 -analyzeduration 1000000`) too short for HE-AAC (SBR), plus the
+  mpegts muxer's default `muxdelay`/`muxpreload`. Candidate with a 5 s probe and no mux delay, put live: the owner confirmed sync in passthrough and in
+  transcode.
+- Offline on the main feed: `aresample=async=1000` put the sound 5.0 s off; no audio filter gave 0.0 s. Changed
+  to `aresample=async=1:min_hard_comp=0.1:first_pts=0`.
+- **1.0.4** first commit `20890c6`: HE-AAC fix in both engines, both modes; transcode audio filter; offline
+  screen retried up to 15 s while the reserve is healthy; A/V debug monitor removed.
+- A stream was blocked 24 h as an "offline placeholder" after a burst of 407s and an ended playlist. Then found
+  that the hub's `PROBLEMS` regex matched an informational engine line containing "offline placeholder", which
+  blocked on its own. Reworked: wait on the reserve, log a neutral line, block only after 60 s.
+- A good stream was blocked 24 h by a sync reading of 65.9 s; others read -50 s and +63 s; feed hopping
+  followed. The MPEG-7 `signature` filter was tried to align pictures and never matched across different
+  resolutions and frame rates. Rebuilt the sound side on chromaprint with a picture search window of 40 s.
+  Verified on real feeds: HE-AAC backup -0.1 s in 3.7 s.
+- **1.0.4** second commit `68be2ef` (278 tests). Published.
+
+#### 2) Decisions and why
+- Fix the input, do not convert the audio: the owner wants the stream brought in correctly.
+- Keep both the 5 s probe and the zero mux delay: the fix was confirmed with both, and which one did the work is
+  not isolated. The extra probe time is covered by the reserve.
+- Passthrough keeps its name; it was always an ffmpeg remux (`-c copy -copyts`) with no GPU.
+- `aresample` only corrects real gaps above 0.1 s; constant stretching moves sound off the picture.
+- An ended playlist is not an offline placeholder until it has lasted 60 s; while the reserve is above 15 s the
+  engine stays on the stream.
+- The sync check must give no verdict on unclear matches; a verdict needs a clear sound fingerprint match and a
+  clear picture match near it.
+- No long measurement runs: checks decide in seconds at tune time.
+- A periodic health check (tune time, every ~30 min, on failover) was discussed and deferred.
+
+#### 3) Failures, bugs and wrong turns
+- Hours spent trusting timestamp measurements (ffprobe, PTS spans, the A/V monitor, output vs provider
+  comparison) while the TV showed the desync.
+- Re-encoding passthrough audio to AAC-LC (no effect; rejected).
+- `-map 0:a:0` with the short probe on the live server: crash loop every 2 s on the owner's stream. Not tested
+  offline first.
+- Keyframe-start filter: not the cause.
+- `NameError` on `TEE` after a live hot-swap.
+- `aresample=async=1000` in transcode since the profile days: stretched audio to fit timestamps.
+- 1 s probe from the Dispatcharr profile era (A.3), kept for its shorter switch pause, broke HE-AAC.
+- Informational engine log line containing "offline placeholder" blocked a stream through the hub's regex.
+- Envelope cross-correlation sync check produced noise readings (65.9 s, -50 s, +63 s) and one reading blocked a
+  good stream for 24 h.
+- `signature` filter never matched across different resolutions and frame rates.
+- A 9-minute measurement test was proposed and rejected.
+
+#### 4) Owner rules and preferences
+- Believe what he sees on the TV; "timestamps say in sync" is not an answer.
+- Live candidates he watches, one change at a time, each run offline on real data first.
+- Do not convert to fix; bring the stream in correctly.
+- Do not rename passthrough to remux.
+- Checks decide in seconds, at tune time; no long measurement runs.
+- Never block the stream he is watching for a test; forced tests use reorder plus retune; restore order and
+  blocks afterwards; back up the config before edits.
+- No unrequested changes.
+
+#### 5) Lessons learned / never repeat
+- Timestamps can be consistent and still not describe the decoded audio. Trust the eyes.
+- Give ffmpeg 5 s of probe and no mux delay; a 1 s probe is not fine for HE-AAC.
+- Never run an untested ffmpeg command on the live server; a few seconds offline on real data catches crash
+  loops.
+- Scan for undefined names after live patches.
+- Engine log wording is an API to the hub; informational lines must not contain trigger phrases.
+- One sync reading must never block on noise; unclear matches give no verdict.
+- An ended playlist after proxy errors is usually a passing hiccup.
+
+#### 6) Measurements and facts
+- Main feed 720p 29.97 AAC-LC; backup 1080p 59.94 HE-AAC.
+- `aresample=async=1000` offline on the main feed: 5.0 s off; no filter: 0.0 s.
+- Forced dropouts on 1.0.3-3 debug build: 10 s and 30 s, in sync after each.
+- Old sync check noise: 65.9 s, -50 s, +63 s. New: HE-AAC backup -0.1 s in 3.7 s, picture 0.93 vs 0.37,
+  sound bit error 0.09.
+- Chromaprint: raw 32-bit items, `HOP = 4096/3/11025` s; thresholds bit error <= 0.30, margin >= 0.08;
+  `PICWIN` 40 s; picture >= 0.45, margin >= 0.15.
+- Ended playlist: wait while reserve above 15 s; block only after 60 s; poll every 2 s.
+- Playlist errors after 5 retries (about 18 s) mark a stream failed (under audit).
+- Tests: 278. Commits: `7239151` (1.0.3-3), `95b80b5` / `7c4279c` (monitor added and reverted), `20890c6`,
+  `68be2ef` (1.0.4).

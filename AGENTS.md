@@ -93,6 +93,10 @@ own while the DVR is connected:
   stream) to follow switches (`_follow`: holds another provider's line in `extra_slots`), mark failures
   (`_note_bad`), and report sync verdicts (`_desync`).
 - Status for the UI: `Hub.status()` (live reserve read from the engine state file), `line_status()`.
+- **Engine log wording is an API.** `PROBLEMS` in `hub.py` (for example `r"offline placeholder"` ->
+  `placeholder`, an instant block) matches any engine line containing the phrase, informational or not, and
+  so do the Status timeline patterns. Grep them before adding or rewording an engine log line; an
+  informational line once blocked a good stream for 24 h.
 
 ## The engines (app/engine/)
 
@@ -101,11 +105,25 @@ threads). `hlsloop.py` is the recommended path.
 
 - **Reserve:** HLS joins about 60 s behind live and sends about 4 s ahead to the DVR; MPEG-TS has about 20 s from
   the provider's connect burst. Output is paced by video timestamps.
-- **Remuxer / transcoder:** one ffmpeg reads the engine's queue on stdin and writes MPEG-TS to stdout.
-  `remux()` restarts it with `-output_ts_offset` so the output timeline is continuous across switches, provider
-  restarts and jumps. Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
+- **Remuxer / transcoder:** one ffmpeg reads the engine's queue on stdin and writes MPEG-TS to stdout, in both
+  modes (ffmpeg is always in the chain). `remux()` restarts it with `-output_ts_offset` so the output timeline
+  is continuous across switches, provider restarts and jumps. The command is built in `ffcmd()` (same shape in
+  both engines). **Passthrough** (that is its name; do not rename it to "remux") is `-c copy -copyts`, no GPU.
+  Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
   `scale_vaapi`, `h264_vaapi`; NVIDIA CUDA decode, `bwdif_cuda`, `scale_cuda`, `h264_nvenc`), falling back to CPU
   decode (`GPUDEC`) if GPU decode fails; audio always AAC 48 kHz stereo 192k.
+- **ffmpeg flags that must stay** (pinned by `FfmpegArgsTest` in `tests/test_engine_adapt.py`):
+  - `-probesize 5000000 -analyzeduration 5000000` right before `-i pipe:0`, both modes. HE-AAC (SBR) only
+    shows its real format after decoding; a 1 s probe made ffmpeg mux before it understood the audio and the
+    sound was visibly out of lip sync on the TV while every timestamp check said in sync.
+  - `-muxdelay 0 -muxpreload 0` right before `-f mpegts pipe:1`, both modes (part of the same fix; which of
+    the two did the work is not isolated, keep both).
+  - `-dts_delta_threshold 86400`: never let ffmpeg rewrite timestamps after a jump (a 10 s audio dropout
+    became a permanent offset); the engine continues the timeline itself.
+  - Transcode audio `aresample=async=1:min_hard_comp=0.1:first_pts=0` (plus `atempo` in a refill): corrects
+    only real gaps above 0.1 s. Never `async=1000`, which stretches audio to fit timestamps (5 s off offline).
+  - Any change here: run the candidate command for a few seconds offline on real data of the affected feed
+    before it reaches a live server (`-map 0:a:0` with a short probe crash-looped a live stream).
 - **Encoder restarts** (refill edges and stream switches with transcoding on) wait for the next keyframe
   (`kfo`, `iskey` reads H.264/HEVC NAL units itself; providers often do not mark keyframes) and correct the
   audio lead (`avlead`, `eofs`), so audio and video start together.
@@ -115,7 +133,15 @@ threads). `hlsloop.py` is the recommended path.
   stuck so the hub restarts the engine.
 - **Failover:** `handoff(why)` takes `feeds()` (coax's order), skips streams marked bad (`fbad`, 60 s doubling to
   10 min, 24 h for out-of-sync), probes candidates and switches, joining the backup at the outage depth.
-- **A/V hold:** a feed whose own audio/video timestamps are more than 3 s apart is held back (`PSK`).
+- **A/V hold:** a feed whose own audio/video timestamps are more than 3 s apart is held back (`PSK`). There is
+  no A/V timestamp monitor in the engines (one was tried in 1.0.4 debugging and removed: timestamps were
+  consistent while the picture and sound on the TV were not).
+- **Ended playlist (HLS, `PHG = [first_seen, logged]`):** a playlist with `#EXT-X-ENDLIST` (often right after
+  407 proxy errors) does not switch while the reserve (`Qs[0] + wlead`) is above 15 s and the loop is not
+  stalled; the engine polls every 2 s and logs "provider sent an ended playlist; staying on this stream while
+  the reserve lasts". When the reserve runs low it hands off: "provider is serving an offline placeholder"
+  (blocks the stream) only if the ended playlist persisted 60 s, else "provider sent an ended playlist and the
+  reserve ran low" (moves playback, blocks nothing). TS detects the placeholder by a redirect to `black.*`.
 - **Viewer buffer:** polls Channels DVR `/dvr/activity`; a joining device gets a 5 s head start.
 - **Recordings:** extends coax recordings in Channels DVR by the delay plus 45 s (max 3 min); job files in
   `cache/*-jobs-<channel>.json`.
@@ -124,10 +150,21 @@ threads). `hlsloop.py` is the recommended path.
 
 ### Sync check (content, not timestamps)
 
-`avcheck.py offset(ref, cand)` turns each clip into a 20 Hz picture-change signal and a sound-onset signal,
-cross-correlates each pair within 90 s, and returns `offset` = (sound lag) minus (picture lag), or None with a
-reason when the match is not clear. 2 s or more off means the feed's sound is off its picture. It needs two feeds
-of the same channel covering the same moments; one feed alone cannot be judged.
+`avcheck.py offset(ref, cand)` returns `offset` = (sound lag) minus (picture lag), or None with a reason when the
+match is not clear. 2 s or more off means the feed's sound is off its picture. It needs two feeds of the same
+channel covering the same moments; one feed alone cannot be judged.
+
+1. **Sound first, by audio fingerprint:** ffmpeg's chromaprint muxer (`-f chromaprint -fp_format raw`, 32-bit
+   items every `HOP = 4096/3/11025` s) on each clip; the best lag within `MAXLAG` (90 s) needs a bit error of at
+   most 0.30 and a margin of at least 0.08 over the runner-up more than 1 s away, else "sound does not match
+   clearly" (no verdict).
+2. **Then the picture,** a 20 Hz picture-change signal, searched only within `PICWIN` (40 s) of where the sound
+   placed the program; correlation at least 0.45 and 0.15 above the runner-up, else no verdict.
+
+No verdict means no action. The old method (sound-energy envelope vs picture change over +/-90 s) gave noise
+readings (65.9 s, -50 s, +63 s) that blocked good streams; the MPEG-7 `signature` filter never matches across
+different resolutions or frame rates. Both ffmpeg pieces exist in the image's Jellyfin ffmpeg. Verified: an
+HE-AAC backup read -0.1 s in 3.7 s (picture 0.93 vs 0.37, sound bit error 0.09).
 
 - **HLS, before a switch** (`scan` / `scanrun`): at the first real trouble (2+ playlist errors, a stalled
   playlist, reserve empty), in a background thread, fetch each other stream's last 60 s (`grabwin`, not played,
@@ -145,7 +182,8 @@ of the same channel covering the same moments; one feed alone cannot be judged.
 
 Keeps each channel's saved stream order stable and good, acting only on real trouble.
 
-- `problem(ch, key, kind)`: `desync` and `placeholder` block at once; `frozen`/`novideo` block on the 3rd within
+- `problem(ch, key, kind)`: `desync` and `placeholder` block at once (`INSTANT`; so the engines only emit them
+  on a clear sync verdict or a 60 s ended playlist); `frozen`/`novideo` block on the 3rd within
   an hour; `dead` (a stream failed and another took over, confirmed by `switched()`) blocks on the 3rd within
   6 hours. Absorbed problems (stalls, keepalive) are never blocking.
 - Blocks: 12 h, 24 h, 3 days within a week (desync 24 h, 3 days). Never deleted. `is_blocked()` is used by the
@@ -180,7 +218,7 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 
 ## Build, test, release
 
-- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (about 275, 30 s).
+- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (278, about 30 s).
 - UI checks: Gemini has no Node. Copy `app/web` to the Hermes container and drive the real page modules with
   jsdom against a fake `fetch` (set `"type": "module"` in a package.json next to them; stub `scrollTo`,
   `location`, `CSS.escape`).
@@ -197,7 +235,11 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
   compose.override.yaml pull coax && ... up -d --no-deps coax`.
 - Testing a failover live: block one stream inside the coax network namespace with an iptables string match on
   `/<stream_id>` (REJECT tcp-reset), always remove it afterwards, and never test on a channel the owner is
-  watching without asking.
+  watching without asking. Prefer reorder plus retune for forced tests; never block the stream the owner is
+  watching; restore channel order and blocks afterwards; back up `config.json` first.
+- A/V sync work: the owner's eyes on the TV are the ground truth, not timestamps. Iterate with live candidates
+  he watches, one change at a time, each run offline for a few seconds on real feed data first. After a live
+  hot-swap of engine code, check for undefined names before he tunes.
 
 ## Invariants
 
@@ -208,3 +250,6 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 - Never delete a user's stream; block it.
 - Config changes only through `ConfigStore.update`.
 - Every exception in background threads is caught; coax never crashes from feed health, history, cleanup or sync.
+- One noisy reading never blocks: unclear checks return no verdict.
+- Informational engine log lines never contain hub trigger phrases.
+- ffmpeg always probes 5 s and adds no mux delay; passthrough is called passthrough.
