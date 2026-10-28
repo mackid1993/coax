@@ -92,57 +92,178 @@ hard-coded and the same for every provider; it is not a setting.
 
 You need Docker with Docker Compose on a machine on the same network as your Channels DVR server.
 
-```sh
-mkdir coax && cd coax
-curl -fLO https://raw.githubusercontent.com/mackid1993/coax/main/docker-compose.yml
-curl -fL https://raw.githubusercontent.com/mackid1993/coax/main/.env.example -o .env
-# optional: edit .env (port, timezone)
-docker compose up -d
+Make a folder named `coax`, save `docker-compose.yml` and `.env` in it, and run `docker compose up -d` there.
+The compose file needs no editing; every setting is a variable with a default, so it runs with an empty
+`.env`. Portainer users: paste the compose file into a stack and put the variables in its Environment
+variables section.
+
+<details>
+<summary><code>docker-compose.yml</code></summary>
+
+```yaml
+services:
+  # GitHub home for this project with setup instructions: https://github.com/mackid1993/coax
+  coax: # This compose file needs no editing. Put your values in .env (or the Environment variables section of Portainer).
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version number (for example 1.0.3) to freeze one
+    container_name: ${CONTAINER_NAME:-coax}
+    runtime: ${DOCKER_RUNTIME:-runc} # GPU transcoding on NVIDIA only. Set DOCKER_RUNTIME=nvidia. Requires the NVIDIA driver and NVIDIA Container Toolkit on the host
+    devices:
+      - ${GPU_DEVICE:-/dev/null} # GPU transcoding on Intel or AMD only. Set GPU_DEVICE=/dev/dri. The default /dev/null always exists and does nothing
+    ports:
+      - ${HOST_PORT:-7780}:7780 # Port for the web UI and the streams. Base URL in coax Settings must use this port
+    environment:
+      - TZ=${TZ:-Etc/UTC} # Your timezone, for log timestamps and the daily backup, for example America/New_York
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all} # NVIDIA only. all, or one GPU's UUID. Does nothing unless DOCKER_RUNTIME=nvidia
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
+    volumes:
+      - ${DATA_DIR:-./data}:/data # Everything coax keeps: settings, backups, caches. Created on first start; coax fixes its ownership itself
+    restart: unless-stopped
 ```
+
+</details>
+
+<details>
+<summary><code>.env</code></summary>
+
+```sh
+TAG=latest
+CONTAINER_NAME=coax
+HOST_PORT=7780
+DATA_DIR=./data
+TZ=America/New_York
+GPU_DEVICE=/dev/null
+DOCKER_RUNTIME=runc
+```
+
+</details>
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TAG` | `latest` | Image version. `latest` is the newest release; set a version number (for example `1.0.3`) to freeze one. |
+| `CONTAINER_NAME` | `coax` | Container name. |
+| `HOST_PORT` | `7780` | Port for the web UI and the streams. Base URL in coax Settings must use it. |
+| `DATA_DIR` | `./data` | Where coax keeps everything on the host. |
+| `TZ` | `Etc/UTC` | Your timezone, for log timestamps and the daily backup. |
+| `GPU_DEVICE`, `DOCKER_RUNTIME` | `/dev/null`, `runc` | GPU transcoding. See [GPU transcoding](#gpu-transcoding). |
 
 Open `http://<this-host>:7780` and continue with [First run](#first-run).
 
-Docker creates `./data` on first start. If it ends up owned by root, coax fixes that itself: the container
-starts as root only long enough to `chown` `/data` to uid 1000, then runs coax as uid 1000.
+Docker creates the data folder on first start. If it ends up owned by root, coax fixes that itself: the
+container starts as root only long enough to `chown` `/data` to uid 1000, then runs coax as uid 1000.
 
-The compose file uses `ghcr.io/mackid1993/coax:latest`, the newest release. Every release is also tagged
-with its version number (for example `:1.0.0`) if you want to freeze one. Images are only built and published when the maintainer runs the release workflow by hand.
+Images are only built and published when the maintainer runs the release workflow by hand.
 
 ## Run it with a VPN (Gluetun)
 
-`docker-compose.vpn.yml` runs [Gluetun](https://github.com/qdm12/gluetun) (MIT license, by qdm12) on its `latest` tag, and puts coax in Gluetun's network, so all of coax's traffic (provider logins, playlists, guides,
-streams) goes through your VPN. If the tunnel drops, Gluetun blocks traffic rather than leaking it, and
-streams stop until it reconnects.
+`docker-compose.vpn.yml` runs [Gluetun](https://github.com/qdm12/gluetun) (MIT license, by qdm12) on its
+`latest` tag and puts coax in Gluetun's network, so all of coax's traffic (provider logins, playlists,
+guides, streams) goes through your VPN. If the tunnel drops, Gluetun blocks traffic rather than leaking it,
+and streams stop until it reconnects.
 
-```sh
-mkdir -p coax && cd coax
-curl -fLO https://raw.githubusercontent.com/mackid1993/coax/main/docker-compose.vpn.yml
-curl -fL https://raw.githubusercontent.com/mackid1993/coax/main/.env.vpn.example -o .env
-chmod 600 .env
-# edit .env: your VPN values and LAN_SUBNETS
-docker compose -f docker-compose.vpn.yml up -d
+Make a folder named `coax`, save `docker-compose.vpn.yml` and `.env` in it, fill in `.env`, keep it private
+(`chmod 600 .env`), and run `docker compose -f docker-compose.vpn.yml up -d` there. The compose file needs no
+editing.
+
+<details>
+<summary><code>docker-compose.vpn.yml</code></summary>
+
+```yaml
+services:
+  # GitHub home for this project with setup instructions: https://github.com/mackid1993/coax
+  # Gluetun (https://github.com/qdm12/gluetun, MIT) carries all of coax's traffic through your VPN. Its setup guide: https://github.com/qdm12/gluetun-wiki
+  # This compose file needs no editing. Put your values in .env (or the Environment variables section of Portainer).
+  gluetun:
+    image: qmcgaw/gluetun:latest # Not pinned on purpose: Gluetun is your VPN and firewall, so take its security fixes
+    container_name: ${VPN_CONTAINER_NAME:-coax-gluetun}
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - ${HOST_PORT:-7780}:7780 # coax shares Gluetun's network, so coax's port is published here. Base URL in coax Settings must use this port
+    environment:
+      # ── Your LAN ────────────────────────────────────────────────────────────
+      - FIREWALL_OUTBOUND_SUBNETS=${LAN_SUBNETS:?set LAN_SUBNETS in .env} # Your LAN, for example 192.168.1.0/24, so coax can reach Channels DVR. Required
+      # ── VPN ─────────────────────────────────────────────────────────────────
+      # WireGuard from any VPN (the default): fill in the WIREGUARD_ values from your provider's WireGuard config.
+      # A built-in Gluetun provider: set VPN_SERVICE_PROVIDER and VPN_TYPE, and that provider's values from its page in
+      # https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers. Values left empty are ignored by Gluetun.
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-custom} # custom = any WireGuard VPN. Or a built-in provider such as mullvad, protonvpn, windscribe
+      - VPN_TYPE=${VPN_TYPE:-wireguard} # wireguard or openvpn
+      - WIREGUARD_ENDPOINT_IP=${WIREGUARD_ENDPOINT_IP} # [Peer] Endpoint, IP part. Must be an IP address, not a hostname
+      - WIREGUARD_ENDPOINT_PORT=${WIREGUARD_ENDPOINT_PORT} # [Peer] Endpoint, port part, for example 51820
+      - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY} # [Peer] PublicKey
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY} # [Interface] PrivateKey
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY} # [Peer] PresharedKey. Leave empty if your provider has none
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES} # [Interface] Address, for example 10.64.12.34/32 (IPv4 only)
+      - OPENVPN_USER=${OPENVPN_USER} # OpenVPN with a built-in provider only
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD} # OpenVPN with a built-in provider only
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES} # Built-in providers only, for example Netherlands
+      - TZ=${TZ:-Etc/UTC}
+    restart: unless-stopped
+
+  coax:
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version number (for example 1.0.3) to freeze one
+    container_name: ${CONTAINER_NAME:-coax}
+    network_mode: service:gluetun # All of coax's traffic goes through Gluetun. No ports here; they are on the gluetun service
+    depends_on:
+      - gluetun
+    runtime: ${DOCKER_RUNTIME:-runc} # GPU transcoding on NVIDIA only. Set DOCKER_RUNTIME=nvidia. Requires the NVIDIA driver and NVIDIA Container Toolkit on the host
+    devices:
+      - ${GPU_DEVICE:-/dev/null} # GPU transcoding on Intel or AMD only. Set GPU_DEVICE=/dev/dri. The default /dev/null always exists and does nothing
+    environment:
+      - TZ=${TZ:-Etc/UTC} # Your timezone, for log timestamps and the daily backup, for example America/New_York
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all} # NVIDIA only. all, or one GPU's UUID. Does nothing unless DOCKER_RUNTIME=nvidia
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
+    volumes:
+      - ${DATA_DIR:-./data}:/data # Everything coax keeps: settings, backups, caches. Created on first start; coax fixes its ownership itself
+    restart: unless-stopped
 ```
 
-What to set:
+</details>
 
-1. **VPN settings.** Gluetun is set up entirely with environment variables and builds the tunnel itself;
-   there are no config files to mount. The compose file has two examples; use one:
-   - **WireGuard** (active by default): Gluetun's custom provider, which works with any WireGuard VPN. Put
-     `WG_ENDPOINT_IP`, `WG_ENDPOINT_PORT`, `WG_PUBLIC_KEY`, `WG_PRIVATE_KEY`, `WG_ADDRESSES`, and
-     `WG_PRESHARED_KEY` if your provider uses one, in a `.env` file next to the compose file. See Gluetun's
-     [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
-   - **OpenVPN** (commented out): a built-in provider with your VPN login. Comment out the WireGuard block,
-     uncomment the OpenVPN one, and put `VPN_PROVIDER`, `OPENVPN_USER`, `OPENVPN_PASSWORD` and
-     `SERVER_COUNTRIES` in `.env`.
-   Keep `.env` private (`chmod 600 .env`). `.env.vpn.example` lists every value with where to find it.
-2. **`LAN_SUBNETS`** in `.env`: your LAN, for example `192.168.1.0/24`, passed to Gluetun as
+<details>
+<summary><code>.env</code></summary>
+
+```sh
+TAG=latest
+CONTAINER_NAME=coax
+VPN_CONTAINER_NAME=coax-gluetun
+HOST_PORT=7780
+DATA_DIR=./data
+TZ=America/New_York
+GPU_DEVICE=/dev/null
+DOCKER_RUNTIME=runc
+LAN_SUBNETS=192.168.1.0/24
+VPN_SERVICE_PROVIDER=custom
+VPN_TYPE=wireguard
+WIREGUARD_ENDPOINT_IP=
+WIREGUARD_ENDPOINT_PORT=
+WIREGUARD_PUBLIC_KEY=
+WIREGUARD_PRIVATE_KEY=
+WIREGUARD_PRESHARED_KEY=
+WIREGUARD_ADDRESSES=
+OPENVPN_USER=
+OPENVPN_PASSWORD=
+SERVER_COUNTRIES=
+```
+
+</details>
+
+Everything from the table above applies, plus:
+
+1. **`LAN_SUBNETS`** (required): your LAN, for example `192.168.1.0/24`, passed to Gluetun as
    `FIREWALL_OUTBOUND_SUBNETS`. Without it Gluetun's firewall blocks the LAN and coax cannot reach Channels
-   DVR. It must not overlap the VPN's own address range.
-   To use one of Gluetun's built-in providers instead (Mullvad, ProtonVPN, and many more), replace the
-   `gluetun` environment with the settings from your provider's page in the
-   [provider setup list](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers).
-3. **Ports.** coax shares Gluetun's network, so port 7780 is published on the `gluetun` service, not on
-   `coax`.
+   DVR, so the compose file refuses to start without it. It must not overlap the VPN's own address range.
+2. **VPN.** Gluetun builds the tunnel from these variables; there are no config files to mount.
+   - **Any WireGuard VPN** (the default, `VPN_SERVICE_PROVIDER=custom`): copy the `WIREGUARD_` values from
+     your provider's WireGuard config. `WIREGUARD_ENDPOINT_IP` must be an IP address, not a hostname. See
+     Gluetun's [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
+   - **A built-in Gluetun provider** (Mullvad, ProtonVPN, Windscribe and many more): set
+     `VPN_SERVICE_PROVIDER` and `VPN_TYPE`, then that provider's values from its page in the
+     [provider setup list](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers). For OpenVPN that
+     is usually `OPENVPN_USER`, `OPENVPN_PASSWORD` and `SERVER_COUNTRIES`. Leave the rest empty.
+3. **Ports.** coax shares Gluetun's network, so `HOST_PORT` is published on the `gluetun` service.
 
 Everything else about Gluetun (options, health checks, troubleshooting) is in the
 [Gluetun wiki](https://github.com/qdm12/gluetun-wiki).
@@ -576,16 +697,17 @@ transcoding with the CPU (no hardware encoder found)
 ### Intel
 
 The image includes `intel-media-va-driver-non-free` (Broadwell and newer) and `i965-va-driver` (older
-chips), both amd64 only. Uncomment `devices` in your compose file:
+chips). Set `GPU_DEVICE=/dev/dri` in `.env`:
 
-```yaml
-    devices:
-      - /dev/dri:/dev/dri
-```
+| Variable | Default | Intel or AMD | NVIDIA |
+| --- | --- | --- | --- |
+| `GPU_DEVICE` | `/dev/null` | `/dev/dri` | leave at the default |
+| `DOCKER_RUNTIME` | `runc` | leave at the default | `nvidia` |
+| `NVIDIA_VISIBLE_DEVICES` | `all` | leave at the default | `all`, or one GPU's UUID |
+| `NVIDIA_DRIVER_CAPABILITIES` | `compute,video,utility` | leave at the default | leave at the default |
 
-coax runs as uid 1000 and adds the group that owns `/dev/dri/renderD128` by itself at start. If it still
-falls back to the CPU, add that group explicitly with `group_add`; get the number on the host with
-`stat -c %g /dev/dri/renderD128`. Check the GPU from inside the container:
+coax runs as uid 1000 and adds the group that owns `/dev/dri/renderD128` by itself at start. Check the GPU
+from inside the container:
 
 ```sh
 docker exec coax vainfo --display drm --device /dev/dri/renderD128
@@ -593,34 +715,24 @@ docker exec coax vainfo --display drm --device /dev/dri/renderD128
 
 ### AMD
 
-Same as Intel: pass `/dev/dri` (and `group_add` if needed). The image includes `mesa-va-drivers` (radeonsi)
-on every architecture. `vainfo` should list `VAProfileH264*` entries with `VAEntrypointEncSlice`.
+Same as Intel: `GPU_DEVICE=/dev/dri`. The image includes `mesa-va-drivers` (radeonsi). `vainfo` should list
+`VAProfileH264*` entries with `VAEntrypointEncSlice`.
 
 ### NVIDIA
 
 Install the NVIDIA driver and the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-on the host, then uncomment the `deploy` block in your compose file:
-
-```yaml
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu, video, compute, utility]
-```
-
-The image already sets `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility`.
-Check with `docker exec coax nvidia-smi`.
+on the host, then set `DOCKER_RUNTIME=nvidia` in `.env`. `NVIDIA_VISIBLE_DEVICES` and
+`NVIDIA_DRIVER_CAPABILITIES` already default to every GPU and the capabilities NVENC needs. Check with
+`docker exec coax nvidia-smi`.
 
 ### Unraid
 
 - **Intel or AMD:** the iGPU driver must be loaded on the host (Intel GPU TOP plugin, or `modprobe i915` /
   `amdgpu` in the go file). In the container template add a *Device* with value `/dev/dri`. If transcoding
   still uses the CPU, add `--group-add=<GID>` to *Extra Parameters*, using the GID from
-  `stat -c %g /dev/dri/renderD128` in the Unraid terminal.
+  `stat -c %g /dev/dri/renderD128` in the Unraid terminal. (Compose Manager users: just use the compose
+  file and `.env` above.)
 - **NVIDIA:** install the *Nvidia Driver* plugin, then in the template add `--runtime=nvidia` to *Extra
   Parameters*. The image's `NVIDIA_VISIBLE_DEVICES=all` exposes every GPU; to pick one, add the variable
   `NVIDIA_VISIBLE_DEVICES` with the GPU UUID shown in the plugin.
@@ -633,8 +745,8 @@ coax is meant to be frozen. Updating is a deliberate step:
 1. Read the release notes for the new version on the
    [releases page](https://github.com/mackid1993/coax/releases).
 2. Back up `./data` (it is small).
-3. On `:latest`, just pull. If you froze a version, change it in your compose file, for example
-   `:1.0.0` to `:1.1.0`.
+3. On `TAG=latest`, just pull. If you froze a version, change `TAG` in `.env`, for example
+   `1.0.3` to `1.1.0`.
 4. `docker compose pull && docker compose up -d` (add `-f docker-compose.vpn.yml` for the VPN setup).
 
 Gluetun is deliberately not pinned: it is your VPN and firewall, so `docker compose pull` keeps its security fixes current.
@@ -694,7 +806,7 @@ it.
   the DVR source and a guide refresh in coax.
 - **Permission denied on `/data`.** See [Data folder](#data-folder).
 - **GPU not used.** Look for the `transcoding with ...` line in the log, run `vainfo` or `nvidia-smi` as
-  shown under [GPU transcoding](#gpu-transcoding), and check `/dev/dri`, `group_add`, or the NVIDIA runtime.
+  shown under [GPU transcoding](#gpu-transcoding), and check `GPU_DEVICE` or `DOCKER_RUNTIME` in `.env`.
 - **VPN: coax cannot reach the DVR.** Check `FIREWALL_OUTBOUND_SUBNETS`.
 - **Every tune fails with `response is not an m3u8 playlist`.** The provider sends MPEG-TS; set its *Stream
   format* to MPEG-TS. See [HLS or MPEG-TS](#hls-or-mpeg-ts).

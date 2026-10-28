@@ -3,7 +3,7 @@
 Stdlib only (http.server.ThreadingHTTPServer). Other coax modules are imported lazily so the server keeps running,
 with a clear error on the affected routes, if one of them fails to import.
 
-See API.md for the full list of routes with request and response shapes.
+See AGENTS.md for an overview of the routes.
 """
 
 import collections

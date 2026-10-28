@@ -1,35 +1,17 @@
-# coax, standalone.
-# Settings: cp .env.example .env (port, timezone). Everything else is in the web UI.
-# Start: docker compose up -d   then open http://<this-host>:7780
-# ./data is created on first start; coax fixes its ownership itself.
 services:
-  coax:
-    # :latest is the newest release. To freeze a version, use its number instead (e.g. :1.0.0).
-    image: ghcr.io/mackid1993/coax:latest
-    container_name: coax
-    restart: unless-stopped
+  # GitHub home for this project with setup instructions: https://github.com/mackid1993/coax
+  coax: # This compose file needs no editing. Put your values in .env (or the Environment variables section of Portainer).
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version number (for example 1.0.3) to freeze one
+    container_name: ${CONTAINER_NAME:-coax}
+    runtime: ${DOCKER_RUNTIME:-runc} # GPU transcoding on NVIDIA only. Set DOCKER_RUNTIME=nvidia. Requires the NVIDIA driver and NVIDIA Container Toolkit on the host
+    devices:
+      - ${GPU_DEVICE:-/dev/null} # GPU transcoding on Intel or AMD only. Set GPU_DEVICE=/dev/dri. The default /dev/null always exists and does nothing
     ports:
-      - "${COAX_PORT:-7780}:7780"
+      - ${HOST_PORT:-7780}:7780 # Port for the web UI and the streams. Base URL in coax Settings must use this port
     environment:
-      - TZ=${TZ:-Etc/UTC}
+      - TZ=${TZ:-Etc/UTC} # Your timezone, for log timestamps and the daily backup, for example America/New_York
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all} # NVIDIA only. all, or one GPU's UUID. Does nothing unless DOCKER_RUNTIME=nvidia
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
-      - ./data:/data
-
-    # ---- Optional: hardware transcoding (only needed if you turn on Transcode in Settings) ----
-    #
-    # Intel or AMD graphics (VAAPI). Uncomment devices. coax adds the group that owns /dev/dri/renderD128
-    # on its own; group_add is only needed if transcoding still falls back to the CPU. Find the GID on the
-    # host with:  stat -c %g /dev/dri/renderD128
-    # devices:
-    #   - /dev/dri:/dev/dri
-    # group_add:
-    #   - "105"   # GID from the stat command above (example)
-    #
-    # NVIDIA (NVENC). Needs the NVIDIA driver and NVIDIA Container Toolkit on the host. Uncomment:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu, video, compute, utility]
+      - ${DATA_DIR:-./data}:/data # Everything coax keeps: settings, backups, caches. Created on first start; coax fixes its ownership itself
+    restart: unless-stopped

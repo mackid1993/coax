@@ -1,6 +1,6 @@
 """Providers: Xtream Codes and M3U catalogs, the on-disk cache, and the refresh scheduler.
 
-Public surface (see SPEC.md "providers"):
+Public surface:
   catalog.refresh(provider) / catalog.load(provider_id)
   stream_url(provider, line, stream_id)
   xmltv_url(provider)
