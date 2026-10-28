@@ -185,20 +185,26 @@ services:
       # ── Your LAN ────────────────────────────────────────────────────────────
       - FIREWALL_OUTBOUND_SUBNETS=${LAN_SUBNETS:?set LAN_SUBNETS in .env} # Your LAN, for example 192.168.1.0/24, so coax can reach Channels DVR. Required
       # ── VPN ─────────────────────────────────────────────────────────────────
-      # WireGuard from any VPN (the default): fill in the WIREGUARD_ values from your provider's WireGuard config.
-      # A built-in Gluetun provider: set VPN_SERVICE_PROVIDER and VPN_TYPE, and that provider's values from its page in
-      # https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers. Values left empty are ignored by Gluetun.
-      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:-custom} # custom = any WireGuard VPN. Or a built-in provider such as mullvad, protonvpn, windscribe
-      - VPN_TYPE=${VPN_TYPE:-wireguard} # wireguard or openvpn
-      - WIREGUARD_ENDPOINT_IP=${WIREGUARD_ENDPOINT_IP} # [Peer] Endpoint, IP part. Must be an IP address, not a hostname
-      - WIREGUARD_ENDPOINT_PORT=${WIREGUARD_ENDPOINT_PORT} # [Peer] Endpoint, port part, for example 51820
-      - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY} # [Peer] PublicKey
-      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY} # [Interface] PrivateKey
-      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY} # [Peer] PresharedKey. Leave empty if your provider has none
-      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES} # [Interface] Address, for example 10.64.12.34/32 (IPv4 only)
-      - OPENVPN_USER=${OPENVPN_USER} # OpenVPN with a built-in provider only
-      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD} # OpenVPN with a built-in provider only
-      - SERVER_COUNTRIES=${SERVER_COUNTRIES} # Built-in providers only, for example Netherlands
+      # Set VPN_SERVICE_PROVIDER and VPN_TYPE, then the values your provider's page lists:
+      # https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers. Leave the rest empty; Gluetun ignores empty values.
+      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER:?set VPN_SERVICE_PROVIDER in .env} # Your VPN, as named on its Gluetun page: mullvad, protonvpn, nordvpn, surfshark, private internet access, windscribe, ... Required
+      - VPN_TYPE=${VPN_TYPE} # openvpn or wireguard. Empty means openvpn. Not every provider supports wireguard
+      # OpenVPN
+      - OPENVPN_USER=${OPENVPN_USER} # Your provider's OpenVPN or service username (often not your account login; see its Gluetun page)
+      - OPENVPN_PASSWORD=${OPENVPN_PASSWORD} # Your provider's OpenVPN or service password
+      - OPENVPN_PROTOCOL=${OPENVPN_PROTOCOL} # udp or tcp. Empty means udp
+      # WireGuard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY} # [Interface] PrivateKey from your provider's WireGuard config
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES} # [Interface] Address, for example 10.64.12.34/32. Needed by most providers
+      - WIREGUARD_PRESHARED_KEY=${WIREGUARD_PRESHARED_KEY} # [Peer] PresharedKey. Only if your provider uses one
+      - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY} # [Peer] PublicKey. Only for VPN_SERVICE_PROVIDER=custom (a VPN Gluetun has no page for)
+      - WIREGUARD_ENDPOINT_IP=${WIREGUARD_ENDPOINT_IP} # [Peer] Endpoint IP. Only for custom. Must be an IP address, not a hostname
+      - WIREGUARD_ENDPOINT_PORT=${WIREGUARD_ENDPOINT_PORT} # [Peer] Endpoint port. Only for custom, or if your provider's page asks for it
+      # Server choice (optional). Comma separated; the names are on your provider's Gluetun page
+      - SERVER_COUNTRIES=${SERVER_COUNTRIES} # For example Netherlands
+      - SERVER_REGIONS=${SERVER_REGIONS} # For example Europe
+      - SERVER_CITIES=${SERVER_CITIES} # For example Amsterdam
+      - SERVER_HOSTNAMES=${SERVER_HOSTNAMES} # One exact server, for example nl-ams-wg-001
       - TZ=${TZ:-Etc/UTC}
     restart: unless-stopped
 
@@ -235,17 +241,21 @@ TZ=America/New_York
 GPU_DEVICE=/dev/null
 DOCKER_RUNTIME=runc
 LAN_SUBNETS=192.168.1.0/24
-VPN_SERVICE_PROVIDER=custom
-VPN_TYPE=wireguard
-WIREGUARD_ENDPOINT_IP=
-WIREGUARD_ENDPOINT_PORT=
-WIREGUARD_PUBLIC_KEY=
-WIREGUARD_PRIVATE_KEY=
-WIREGUARD_PRESHARED_KEY=
-WIREGUARD_ADDRESSES=
+VPN_SERVICE_PROVIDER=
+VPN_TYPE=
 OPENVPN_USER=
 OPENVPN_PASSWORD=
+OPENVPN_PROTOCOL=
+WIREGUARD_PRIVATE_KEY=
+WIREGUARD_ADDRESSES=
+WIREGUARD_PRESHARED_KEY=
+WIREGUARD_PUBLIC_KEY=
+WIREGUARD_ENDPOINT_IP=
+WIREGUARD_ENDPOINT_PORT=
 SERVER_COUNTRIES=
+SERVER_REGIONS=
+SERVER_CITIES=
+SERVER_HOSTNAMES=
 ```
 
 </details>
@@ -255,14 +265,19 @@ Everything from the table above applies, plus:
 1. **`LAN_SUBNETS`** (required): your LAN, for example `192.168.1.0/24`, passed to Gluetun as
    `FIREWALL_OUTBOUND_SUBNETS`. Without it Gluetun's firewall blocks the LAN and coax cannot reach Channels
    DVR, so the compose file refuses to start without it. It must not overlap the VPN's own address range.
-2. **VPN.** Gluetun builds the tunnel from these variables; there are no config files to mount.
-   - **Any WireGuard VPN** (the default, `VPN_SERVICE_PROVIDER=custom`): copy the `WIREGUARD_` values from
-     your provider's WireGuard config. `WIREGUARD_ENDPOINT_IP` must be an IP address, not a hostname. See
+2. **VPN.** Gluetun builds the tunnel from these variables; there are no config files to mount. Set
+   `VPN_SERVICE_PROVIDER` (required) and `VPN_TYPE`, then fill in what your provider's page in the
+   [provider setup list](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers) asks for, and leave
+   the rest empty:
+   - **OpenVPN:** usually `OPENVPN_USER` and `OPENVPN_PASSWORD`. Many providers use a separate service login
+     for this, not your account login; the provider's page says where to find it.
+   - **WireGuard:** usually `WIREGUARD_PRIVATE_KEY` and `WIREGUARD_ADDRESSES` from a WireGuard config you
+     generate on the provider's website.
+   - **Server choice** (optional): `SERVER_COUNTRIES`, `SERVER_REGIONS`, `SERVER_CITIES` or
+     `SERVER_HOSTNAMES`, using the names on the provider's page.
+   - **A VPN Gluetun has no page for:** `VPN_SERVICE_PROVIDER=custom`, `VPN_TYPE=wireguard`, and all six
+     `WIREGUARD_` values from its WireGuard config (`WIREGUARD_ENDPOINT_IP` must be an IP address). See
      Gluetun's [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
-   - **A built-in Gluetun provider** (Mullvad, ProtonVPN, Windscribe and many more): set
-     `VPN_SERVICE_PROVIDER` and `VPN_TYPE`, then that provider's values from its page in the
-     [provider setup list](https://github.com/qdm12/gluetun-wiki/tree/main/setup/providers). For OpenVPN that
-     is usually `OPENVPN_USER`, `OPENVPN_PASSWORD` and `SERVER_COUNTRIES`. Leave the rest empty.
 3. **Ports.** coax shares Gluetun's network, so `HOST_PORT` is published on the `gluetun` service.
 
 Everything else about Gluetun (options, health checks, troubleshooting) is in the

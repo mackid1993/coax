@@ -109,7 +109,9 @@ mistake.
 - Compose files follow ah4c's style (he is a primary ah4c contributor): the compose file needs no editing; every
   setting is a `${VAR:-default}` with a comment on the same line; it runs with an empty `.env`; GPU access is
   switched by variables (`GPU_DEVICE=/dev/dri`, `DOCKER_RUNTIME=nvidia`), never by commented-out blocks; the
-  `.env` example is a plain `NAME=value` list. Required values use `${VAR:?message}` (only `LAN_SUBNETS`).
+  `.env` example is a plain `NAME=value` list. Required values use `${VAR:?message}` (`LAN_SUBNETS`, `VPN_SERVICE_PROVIDER`). The VPN `.env` lists the
+  common Gluetun variables blank and defaults to no provider; never ship the owner's own setup (custom WireGuard)
+  as the default.
 - Word choice in the README HLS box: "source", not "provider" (final decision after going back and forth).
 - Screenshots use made-up channels (Raccoon Network HD, Cat Courtroom...), never real channel names or logos.
 - No Unraid-specific labels in repo compose files (his own override keeps them).
