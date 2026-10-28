@@ -62,7 +62,7 @@ HISTORY_MAX = 1024 * 1024  # per-channel history file is trimmed past this size
 # One MPEG-TS null packet (PID 0x1FFF), the same one the engine sends as keepalive.
 NUL_PKT = b"G\x1f\xff\x10" + b"\xff" * 184
 REF = re.compile(r"\[ref ([0-9a-f]{8})\]")
-_HSX = re.compile(r"(/live/[^/?]+/[^/?]+/[0-9]+)\.ts(?=$|\?)")
+_HSX = re.compile(r"(/live/[^/?]+/[^/?]+/[0-9]+)(?:\.ts)?(?=$|\?)")
 
 
 def _has_video(chunk, pos):

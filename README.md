@@ -854,8 +854,10 @@ coax reads from the provider differs.
   `http://provider/live/<user>/<pass>/<id>.ts`. With *Stream format* on HLS, the engine reads the same
   channel as `<id>.m3u8` and logs `input: provider stream URL is MPEG-TS; using its HLS form`. That is
   normal.
-- **M3U providers.** A stream whose URL ends in `.m3u8` is read as HLS and one ending in `.ts` (or an Xtream
-  `/live/` address) as MPEG-TS, whatever the provider's setting. Other URLs follow the provider's *Stream
+- **M3U providers.** HLS comes first; MPEG-TS is used only when HLS is not possible. A stream whose URL ends
+  in `.m3u8` is always read as HLS. An Xtream-style `/live/` address ending in `.ts` (or with no extension) is
+  read through its HLS form while the provider is set to HLS, and as MPEG-TS only when it is set to MPEG-TS.
+  Any other `.ts` URL has no HLS form and is read as MPEG-TS. Other URLs follow the provider's *Stream
   format*.
 - **Wrong format.** If the HLS engine gets something other than a playlist, the log shows
   `response is not an m3u8 playlist`; set the provider to MPEG-TS. If the MPEG-TS engine gets a playlist, it

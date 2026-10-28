@@ -104,7 +104,7 @@ def iapi(path):
     r = requests.get(IAPI + path, headers={"Accept": "application/json"}, timeout=5)
     r.raise_for_status()
     return r.json()
-HSX = re.compile("(/live/[^/?]+/[^/?]+/[0-9]+)\\.ts(?=$|\\?)")
+HSX = re.compile("(/live/[^/?]+/[^/?]+/[0-9]+)(?:\\.ts)?(?=$|\\?)")
 
 def hsu(u):
     return HSX.sub("\\1.m3u8", u or "", count=1)

@@ -352,3 +352,20 @@ class StabilityTests(unittest.TestCase):
         streams = catalog.refresh(provider)["streams"]
         ref = {"provider": "m1", "stream_id": streams[0]["stream_id"]}
         self.assertEqual(providers.stream_format(provider, ref), "hls")
+
+
+class HlsFirstTests(unittest.TestCase):
+    """HLS comes first: MPEG-TS only when nothing else can play the stream."""
+
+    def test_format_choice(self):
+        hls, ts = {"format": "hls"}, {"format": "ts"}
+        live = {"url": "http://h/live/u/p/123.ts", "format": "ts"}
+        bare = {"url": "http://h/live/u/p/123", "format": "ts"}
+        plain = {"url": "http://h/channel/abc.ts", "format": "ts"}
+        playlist = {"url": "http://h/x/index.m3u8", "format": "hls"}
+        self.assertEqual(providers.stream_format(hls, live), "hls")      # the HLS engine asks for 123.m3u8
+        self.assertEqual(providers.stream_format(hls, bare), "hls")
+        self.assertEqual(providers.stream_format(ts, live), "ts")        # the provider was set to MPEG-TS
+        self.assertEqual(providers.stream_format(hls, plain), "ts")      # no HLS form: only TS can play it
+        self.assertEqual(providers.stream_format(ts, playlist), "hls")   # a playlist is always HLS
+        self.assertEqual(providers.stream_format({}, {"url": "http://h/x.mp4"}), "")

@@ -96,6 +96,16 @@ def candidate_ids(entry):
     return out
 
 
+# An Xtream /live/<user>/<pass>/<id> address, with ".ts" or no extension: the panel also serves it as HLS at
+# <id>.m3u8, which the HLS engine asks for (same rule as hlsloop's HSX and hub._HSX).
+_HLS_FORM = re.compile(r"(/live/[^/?]+/[^/?]+/[0-9]+)(?:\.ts)?(?=$|\?)")
+
+
+def has_hls_form(url):
+    """True when an MPEG-TS address can be played through its HLS form (Xtream /live/ addresses)."""
+    return bool(_HLS_FORM.search(urlsplit((url or "").strip()).path or ""))
+
+
 def stream_format_for_url(url):
     """"hls" for a .m3u8 path, "ts" for a .ts path or an Xtream live path, else ""."""
     path = (urlsplit(url.strip()).path or "").lower().rstrip("/")

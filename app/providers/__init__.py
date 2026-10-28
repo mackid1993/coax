@@ -30,25 +30,34 @@ def usable_lines(provider):
 
 
 def stream_format(provider, stream):
-    """Engine format for one stream: the stream's own "format" ("hls"/"ts") when the catalog
-    detected one, else the provider's "format".
+    """Engine format for one stream. HLS comes first: MPEG-TS is used only when HLS is not possible.
 
-    `stream` may be a catalog stream dict or a stream id (looked up in the cache).
+    - a stream whose address is a playlist (.m3u8) is HLS, whatever the provider's setting;
+    - an MPEG-TS address with an HLS form (Xtream /live/ addresses) is HLS unless the provider is set to
+      MPEG-TS (the HLS engine asks for its .m3u8 form);
+    - any other MPEG-TS address is MPEG-TS (nothing else can play it);
+    - anything else follows the provider's setting.
+
+    `stream` may be a catalog stream dict, a channel's stream ref or a stream id (looked up in the cache).
     """
     provider = provider or {}
-    fmt = ""
+    fmt, url = "", ""
     if isinstance(stream, dict) and not stream.get("format") and not stream.get("url") \
             and stream.get("stream_id") not in (None, ""):
         stream = str(stream["stream_id"])   # a channel's stream ref: look the stream up in the catalog
     if isinstance(stream, dict):
-        fmt = stream.get("format") or ""
-        if not fmt and stream.get("url"):
-            fmt = m3u.stream_format_for_url(stream["url"])
+        fmt, url = stream.get("format") or "", stream.get("url") or ""
     elif stream is not None:
-        cached = catalog.find_stream(provider.get("id"), str(stream))
-        if cached:
-            fmt = cached.get("format") or (m3u.stream_format_for_url(cached["url"]) if cached.get("url") else "")
-    return fmt or (provider.get("format") or "")
+        cached = catalog.find_stream(provider.get("id"), str(stream)) or {}
+        fmt, url = cached.get("format") or "", cached.get("url") or ""
+    if not fmt and url:
+        fmt = m3u.stream_format_for_url(url)
+    chosen = provider.get("format") or "hls"
+    if fmt == "ts" and (chosen == "ts" or not m3u.has_hls_form(url)):
+        return "ts"
+    if fmt == "hls" or fmt == "ts":
+        return "hls"
+    return provider.get("format") or ""
 
 
 def stream_url(provider, line, stream_id):
