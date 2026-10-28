@@ -30,6 +30,9 @@ services:
       - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY} # [Peer] PublicKey. Only for VPN_SERVICE_PROVIDER=custom (a VPN Gluetun has no page for)
       - WIREGUARD_ENDPOINT_IP=${WIREGUARD_ENDPOINT_IP} # [Peer] Endpoint IP. Only for custom. Must be an IP address, not a hostname
       - WIREGUARD_ENDPOINT_PORT=${WIREGUARD_ENDPOINT_PORT} # [Peer] Endpoint port. Only for custom, or if your provider's page asks for it
+      # DNS through the VPN (OpenVPN and WireGuard). Set both to use your VPN provider's DNS server, so lookups stay in the tunnel
+      - DNS_UPSTREAM_RESOLVER_TYPE=${DNS_UPSTREAM_RESOLVER_TYPE} # plain to use DNS_UPSTREAM_PLAIN_ADDRESSES. Empty means Gluetun's encrypted DNS (DNS over TLS to Cloudflare)
+      - DNS_UPSTREAM_PLAIN_ADDRESSES=${DNS_UPSTREAM_PLAIN_ADDRESSES} # Your VPN provider's DNS server as ip:port, for example 10.255.255.1:53 (from the DNS line of its WireGuard config or its help pages). Never a LAN address: that leaks DNS outside the tunnel
       # Server choice (optional). Comma separated; the names are on your provider's Gluetun page
       - SERVER_COUNTRIES=${SERVER_COUNTRIES} # For example Netherlands
       - SERVER_REGIONS=${SERVER_REGIONS} # For example Europe

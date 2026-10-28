@@ -112,6 +112,9 @@ mistake.
   `.env` example is a plain `NAME=value` list. Required values use `${VAR:?message}` (`LAN_SUBNETS`, `VPN_SERVICE_PROVIDER`). The VPN `.env` lists the
   common Gluetun variables blank and defaults to no provider; never ship the owner's own setup (custom WireGuard)
   as the default.
+- The VPN compose must offer VPN DNS (`DNS_UPSTREAM_RESOLVER_TYPE=plain` plus `DNS_UPSTREAM_PLAIN_ADDRESSES`,
+  for OpenVPN and WireGuard) so users can point DNS at the provider's resolver and avoid DNS leaks. It was missed
+  once and the owner called it very important.
 - Word choice in the README HLS box: "source", not "provider" (final decision after going back and forth).
 - Screenshots use made-up channels (Raccoon Network HD, Cat Courtroom...), never real channel names or logos.
 - No Unraid-specific labels in repo compose files (his own override keeps them).

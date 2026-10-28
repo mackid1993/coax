@@ -200,6 +200,9 @@ services:
       - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY} # [Peer] PublicKey. Only for VPN_SERVICE_PROVIDER=custom (a VPN Gluetun has no page for)
       - WIREGUARD_ENDPOINT_IP=${WIREGUARD_ENDPOINT_IP} # [Peer] Endpoint IP. Only for custom. Must be an IP address, not a hostname
       - WIREGUARD_ENDPOINT_PORT=${WIREGUARD_ENDPOINT_PORT} # [Peer] Endpoint port. Only for custom, or if your provider's page asks for it
+      # DNS through the VPN (OpenVPN and WireGuard). Set both to use your VPN provider's DNS server, so lookups stay in the tunnel
+      - DNS_UPSTREAM_RESOLVER_TYPE=${DNS_UPSTREAM_RESOLVER_TYPE} # plain to use DNS_UPSTREAM_PLAIN_ADDRESSES. Empty means Gluetun's encrypted DNS (DNS over TLS to Cloudflare)
+      - DNS_UPSTREAM_PLAIN_ADDRESSES=${DNS_UPSTREAM_PLAIN_ADDRESSES} # Your VPN provider's DNS server as ip:port, for example 10.255.255.1:53 (from the DNS line of its WireGuard config or its help pages). Never a LAN address: that leaks DNS outside the tunnel
       # Server choice (optional). Comma separated; the names are on your provider's Gluetun page
       - SERVER_COUNTRIES=${SERVER_COUNTRIES} # For example Netherlands
       - SERVER_REGIONS=${SERVER_REGIONS} # For example Europe
@@ -252,6 +255,8 @@ WIREGUARD_PRESHARED_KEY=
 WIREGUARD_PUBLIC_KEY=
 WIREGUARD_ENDPOINT_IP=
 WIREGUARD_ENDPOINT_PORT=
+DNS_UPSTREAM_RESOLVER_TYPE=
+DNS_UPSTREAM_PLAIN_ADDRESSES=
 SERVER_COUNTRIES=
 SERVER_REGIONS=
 SERVER_CITIES=
@@ -275,6 +280,12 @@ Everything from the table above applies, plus:
      generate on the provider's website.
    - **Server choice** (optional): `SERVER_COUNTRIES`, `SERVER_REGIONS`, `SERVER_CITIES` or
      `SERVER_HOSTNAMES`, using the names on the provider's page.
+   - **DNS** (OpenVPN and WireGuard): to send DNS to your VPN provider's own DNS server, set
+     `DNS_UPSTREAM_RESOLVER_TYPE=plain` and `DNS_UPSTREAM_PLAIN_ADDRESSES` to that server as `ip:port` (for
+     example `10.255.255.1:53`; it is the `DNS` line of a WireGuard config, or in the provider's help pages).
+     Lookups then go through the tunnel to the provider, so nothing leaks to your ISP. Never use a LAN or
+     router address here; that sends DNS outside the tunnel. Left empty, Gluetun uses its built-in encrypted
+     DNS (DNS over TLS to Cloudflare), which also stays inside the tunnel.
    - **A VPN Gluetun has no page for:** `VPN_SERVICE_PROVIDER=custom`, `VPN_TYPE=wireguard`, and all six
      `WIREGUARD_` values from its WireGuard config (`WIREGUARD_ENDPOINT_IP` must be an IP address). See
      Gluetun's [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
