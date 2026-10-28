@@ -1100,6 +1100,7 @@ def writer():
     cpt = mono()
     cbv = None
     cbt = mono()
+    sv = 0.0
     while run:
         try:
             now = mono()
@@ -1202,7 +1203,9 @@ def writer():
                 wpart = None
                 if it[4] is not None:
                     oend = it[4] + off + it[2]
-            save()
+            if wpart is None or now - sv > 0.2:   # at each segment end, else at most 5 times a second
+                save()
+                sv = now
         except Exception as e:
             log("writer error (%s)" % e)
             time.sleep(1)
