@@ -300,40 +300,37 @@ switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries 
 `data/cache/history/`.
 
 
-### Streams stay in their most stable order
+### Bad streams are blocked, the best one plays first
 
-coax keeps a day of history for every stream of every channel and uses it to keep each channel's streams in
-their most stable order, all the time. Each change appears under the **bell** in the sidebar (with an **Undo**)
-and as a note on the channel in the *Channels* page; hover the note for the channel's recent changes. A channel
-with only one stream is never changed, and a channel always keeps at least one stream.
+coax is meant to be left alone, so it fixes a channel's stream order itself, but only when a stream causes real
+trouble. Each fix appears under the **bell** in the sidebar, with an **Undo**. A channel with one stream is never
+changed, and nothing is ever deleted from a channel.
 
-**What counts as a problem.** Every problem coax sees on the stream it is playing is a strike against that stream:
+**Absorbed problems are ignored.** Stalls the reserve covers, catch-ups, refills and A/V holds are normal for
+IPTV. coax rides them out and changes nothing.
 
-| Problem | How coax sees it | Weight |
-| --- | --- | --- |
-| Sound off its picture | After every switch, the first 35 seconds of the new stream are compared with the last 35 seconds of the old one by picture and sound (HLS) | 10 |
-| Stream stopped working | The engine gave up on it, or it did not answer when coax tried it | 3 |
-| Offline slate | The provider served an "unavailable" placeholder instead of the channel | 3 |
-| No video | coax had to retune because no video came for 90 seconds | 3 |
-| Frozen | The engine sent nothing for 25 seconds | 2 |
-| Audio and video apart | The feed's own audio and video timestamps came apart | 2 |
-| Stall | The playlist stalled long enough to need the reserve | 1 |
-| Dropped video | Video stopped long enough that coax held the connection with keepalive | 1 |
+**Real trouble blocks the stream:**
 
-The same problem on the same stream within 2 minutes counts once. A stream's score is its strikes over the last
-day, each fading by half every 6 hours, minus a little for every 10 clean minutes. Lower is better.
+| Trouble | When it blocks |
+| --- | --- |
+| Sound off its picture (content check after every switch, HLS) | At once |
+| Offline slate from the provider instead of the channel | At once |
+| The stream stopped working and another stream of the channel took over | At once |
+| coax had to restart or retune it (frozen, or no video for 90 seconds) | 3 times within an hour |
 
-**What coax does with it, right away:**
+A stream that stops working while no other stream of the channel works is not blocked, since that is the
+provider or the network.
 
-- **The first three problems in the table move the stream out of the way at once:** it goes below every stream
-  that has not had one of them in the last hour. If it was the main stream, the best of the others becomes the
-  main stream, so the next tune starts on a working one. If the stream is already below the working ones, coax
-  still notes what it saw.
-- **Otherwise the streams are kept in score order.** The main stream keeps its place unless another stream scores
-  clearly better (by 3), so a single hiccup does not reshuffle a channel.
-- **A stream that recovers earns its place back** as its strikes fade.
-- **A stream is removed** only when its sound was off its picture twice in a day, or when a backup stayed bad
-  for a long time: a score of 12 or more, strikes in 6 separate hours of the last day, and under 20 clean minutes.
+**How long:** 12 hours, then 24 hours, then 3 days if the stream keeps causing trouble within a week. Sound off
+its picture: 24 hours, then 3 days. A blocked stream is not tuned and is tried last on failover. If every stream
+of a channel is blocked, coax still plays the least bad one.
+
+**The fix, once:** when a stream is blocked, it moves to the bottom of the channel's saved order. If it was the
+main stream, the working stream that has played cleanly the longest becomes the main stream (a stream that has
+never played ranks below one that has). Everything else keeps its place.
+
+**No trouble, no change.** When a block ends the stream stays where it is; coax does not move things back. The
+order changes again only at the next real problem.
 
 History is kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
 

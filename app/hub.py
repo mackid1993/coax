@@ -78,9 +78,6 @@ def _has_video(chunk, pos):
 # Engine log lines that are a problem with the stream playing now (stream switch lines carry their own ref).
 PROBLEMS = [
     (re.compile(r"offline placeholder", re.I), "placeholder"),
-    (re.compile(r"audio and video are [\d.]+s apart", re.I), "avsplit"),
-    (re.compile(r"playlist stale \d+s", re.I), "stall"),
-    (re.compile(r"sending keepalive packets", re.I), "keepalive"),
 ]
 
 
@@ -575,6 +572,17 @@ class Hub:
         self._health("problem", session.channel_id, (hit[0], hit[2]), "desync",
                      "%s seconds %s its picture" % (m.group(1), m.group(2)))
 
+    def _blocked(self, channel_id, stream_provider):
+        """Feed health blocked this stream (it still plays if every stream of the channel is blocked)."""
+        health = self.health
+        if health is None:
+            return False
+        stream, provider = stream_provider
+        try:
+            return health.is_blocked(channel_id, (str(provider.get("id")), str(stream.get("stream_id"))))
+        except Exception:  # noqa: BLE001
+            return False
+
     def _health(self, kind, channel_id, key, *args):
         health = self.health
         if health is None:
@@ -590,6 +598,7 @@ class Hub:
         if hit is None:
             return
         pid, lid, sid = hit
+        self._health("switched", session.channel_id, session.cur_key, (pid, sid))
         session.cur_key = (pid, sid)
         with self._lock:
             self._bad.pop((pid, sid), None)
@@ -675,7 +684,8 @@ class Hub:
             return None
         providers = self._providers(cfg)
         cands = sorted(self._candidates(channel_cfg, providers),
-                       key=lambda sp: self._is_bad(sp[1].get("id"), sp[0].get("stream_id")))
+                       key=lambda sp: (self._blocked(channel_cfg.get("id"), sp),
+                                       self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
         for stream, provider in cands:
             if not provider.get("enabled", True):
                 continue
@@ -736,7 +746,8 @@ class Hub:
                 return []
             own = mine[0]
             cands = sorted(self._candidates(channel_cfg, providers),
-                           key=lambda sp: self._is_bad(sp[1].get("id"), sp[0].get("stream_id")))
+                           key=lambda sp: (self._blocked(channel_id, sp),
+                                           self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
             for stream, provider in cands:
                 if not provider.get("enabled", True):
                     continue
