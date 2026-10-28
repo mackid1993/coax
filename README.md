@@ -21,11 +21,11 @@ Everything you set lives in one folder, `./data`.
 > or reach it remotely through a VPN such as Tailscale or WireGuard.
 
 > [!IMPORTANT]
-> **coax is built for HLS. Use a provider that offers HLS.** Most of what keeps playback smooth depends on it:
+> **coax is built for HLS. Use a source that offers HLS.** Most of what keeps playback smooth depends on it:
 > refetching missed video, a full one-minute reserve, and [Smart Standby](#smart-standby) checking every backup
 > before switching so a bad one is never shown. coax supports MPEG-TS and every effort has been made to make it
 > work well, but on TS these recovery features are heavily reduced: the reserve is about 20 seconds, video lost
-> in an outage is gone, and a bad backup can only be judged after viewers have seen it. If your provider only
+> in an outage is gone, and a bad backup can only be judged after viewers have seen it. If your source only
 > offers MPEG-TS, you are better off finding one that offers HLS than relying on coax to make up for it. See
 > [HLS or MPEG-TS](#hls-or-mpeg-ts) for the full comparison.
 
