@@ -510,3 +510,30 @@ class FrozenFeedBlockedEndToEnd(unittest.TestCase):
         texts = [n["text"] for n in health.list()["items"]]
         self.assertTrue(any("main" in t and "Blocked" in t for t in texts), texts)
         s.close()
+
+
+class PlaceholderBlameTest(unittest.TestCase):
+    def test_placeholder_blames_the_stream_that_showed_it(self):
+        h, _ = make(config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b")])]))
+        seen = []
+
+        class Health:
+            def problem(self, ch, key, kind, *a):
+                seen.append((key, kind))
+
+            def switched(self, *a):
+                pass
+
+            def is_blocked(self, *a):
+                return False
+
+            def rank(self, *a):
+                return (0, 0.0)
+        h.health = Health()
+        s = h.open("uuid-1", "ip", "ua")
+        h.backup_urls(1)
+        ref_b = sorted(hubmod.url_refs("fake://p1/l1/b"))[0]
+        s._watch("[hlsloop stream] provider is serving an offline placeholder; switching to stream 2 of 2 [ref %s]" % ref_b)
+        self.assertEqual(seen, [(("p1", "a"), "placeholder")])
+        self.assertEqual(s.cur_key, ("p1", "b"))
+        s.close()

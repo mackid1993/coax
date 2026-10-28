@@ -253,7 +253,7 @@ def avlead(d, k):
     return 0.0
 
 def ffcmd():
-    b = [FF, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"] + (["-probesize", "5000000", "-analyzeduration", "3000000"] if TRANSCODE else [])
+    b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"] + (["-probesize", "5000000", "-analyzeduration", "3000000"] if TRANSCODE else [])
     if not TRANSCODE:
         return b + ["-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
     h = hwpick()

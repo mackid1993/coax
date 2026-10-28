@@ -314,7 +314,7 @@ def eofs(vk, av):
     return e[0] + dif(e[3], e[2]) + dif(vk, e[3]) * e[1] - av
 
 def ffcmd():
-    b = [FF, "-hide_banner", "-loglevel", "error", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
+    b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
     if not TRANSCODE:
         return b + ["-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
     h = hwpick()

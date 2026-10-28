@@ -266,6 +266,10 @@ class Session:
                     except (IndexError, ValueError, TypeError):
                         pass
                 break
+        for pattern, kind in PROBLEMS:
+            if pattern.search(line):
+                self.hub._health("problem", self.channel_id, self.cur_key, kind)
+                break
         m = REF.search(line)
         if m:
             if "sync check:" in line:
@@ -274,10 +278,6 @@ class Session:
                 self.hub._follow(self, m.group(1))
             elif re.search(r"\b(failed|is not answering)\b", line):
                 self.hub._note_bad(m.group(1), self)
-        for pattern, kind in PROBLEMS:
-            if pattern.search(line):
-                self.hub._health("problem", self.channel_id, self.cur_key, kind)
-                break
         if "status: " in line:
             self.hub._history(self, line)
             m = re.search(r"(\d+) (?:switches|failovers), (\d+)s keepalive", line)
