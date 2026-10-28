@@ -746,6 +746,22 @@ class Hub:
                 urls.append(url)
         return urls
 
+    @staticmethod
+    def _live_reserve(s):
+        """The engine's reserve from its state file (written every second); None if not fresh."""
+        script = "tsloop" if str(s.fmt).lower() == "ts" else "hlsloop"
+        name = "%s-%s%s.json" % (script, hashlib.md5(("ch%s" % s.channel_id).encode()).hexdigest(),
+                                  "~%d" % s.instance if s.instance else "")
+        try:
+            path = os.path.join("/tmp", name)
+            if time.time() - os.path.getmtime(path) > 5:
+                return None
+            with open(path, encoding="utf-8") as f:
+                res = json.load(f).get("res")
+            return int(round(float(res))) if res is not None else None
+        except (OSError, ValueError, TypeError):
+            return None
+
     def status(self):
         now = time.time()
         with self._lock:
@@ -762,7 +778,8 @@ class Hub:
                 "bitrate_bps": int(s.bytes_out * 8 / up), "restarts": len(s.restarts),
                 "transcode": {"on": bool(s.encoder), "profile": (self._config().get("transcode") or "off"),
                               "encoder": s.encoder},
-                "speed": {"slow": s.slow, "since": s.slow_since, "reserve": s.reserve,
+                "speed": {"slow": s.slow, "since": s.slow_since,
+                          "reserve": self._live_reserve(s) if self._live_reserve(s) is not None else s.reserve,
                           "empty": s.reserve_empty},
                 "stream_no": s.stream_no,
                 "degraded": s.degraded,

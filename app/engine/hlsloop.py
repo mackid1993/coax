@@ -603,7 +603,7 @@ def save():
     try:
         with sl:
             with open(st + ".tmp", "w") as f:
-                json.dump({"last": wlast, "part": wpart, "hasseq": hasseq, "seen": list(seen), "off": off, "oend": oend, "cur": cur, "src": src, "dep": dep, "lead": wlead, "xb": xb, "pk": pk, "stk": skf, "to": tout, "t": time.time()}, f)
+                json.dump({"res": round(Qs[0] + max(wlead, 0.0), 1), "last": wlast, "part": wpart, "hasseq": hasseq, "seen": list(seen), "off": off, "oend": oend, "cur": cur, "src": src, "dep": dep, "lead": wlead, "xb": xb, "pk": pk, "stk": skf, "to": tout, "t": time.time()}, f)
             os.replace(st + ".tmp", st)
     except Exception:
         pass
