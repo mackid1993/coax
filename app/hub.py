@@ -879,18 +879,19 @@ class Hub:
                         info = cat.find_stream(pid, sid) or {}
                     except Exception:  # noqa: BLE001
                         info = {}
-                info = None
+                blk = None
                 if self.health is not None:
                     try:
-                        info = self.health.block_info(s.channel_id, (pid, sid))
+                        blk = self.health.block_info(s.channel_id, (pid, sid))
                     except Exception:  # noqa: BLE001
-                        info = None
+                        blk = None
                 out.append({"provider": pid, "provider_name": p.get("name") or pid, "stream_id": sid,
                             "name": info.get("name", ""), "group": info.get("group", ""),
-                            "disabled": bool(ref.get("disabled")), "playing": (pid, sid) == cur, "blocked": bool(info),
-                            "blocked_until": info["until"] if info else None, "block_why": info["why"] if info else ""})
+                            "disabled": bool(ref.get("disabled")), "playing": (pid, sid) == cur, "blocked": bool(blk),
+                            "blocked_until": blk["until"] if blk else None, "block_why": blk["why"] if blk else ""})
             return out
         except Exception:  # noqa: BLE001
+            log.exception("could not list the streams of channel %s for the Status page", s.channel_id)
             return []
 
     def switch(self, channel_id, instance, provider_id, stream_id, why=None):

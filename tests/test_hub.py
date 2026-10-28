@@ -546,3 +546,32 @@ class DisabledStreamTest(unittest.TestCase):
         refs = server.stream_refs(ch["streams"])
         self.assertTrue(refs[0].get("disabled"))
         self.assertNotIn("disabled", refs[1])
+
+
+class FeedsViewTest(unittest.TestCase):
+    def test_card_lists_every_stream_with_block_and_disabled_state(self):
+        cfg = config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b"), ("p1", "c")])])
+        cfg["channels"][0]["streams"][2]["disabled"] = True
+        h, _ = make(cfg)
+
+        class Health:
+            def block_info(self, ch, key):
+                return {"until": 2e9, "kind": "placeholder", "why": "x"} if key == ("p1", "b") else None
+
+            def is_blocked(self, *a):
+                return False
+
+            def rank(self, *a):
+                return 0
+        h.health = Health()
+
+        class S:
+            channel_id = 1
+            cur_key = ("p1", "a")
+        f = h._feeds_view(cfg, S())
+        self.assertEqual([x["stream_id"] for x in f], ["a", "b", "c"])
+        self.assertTrue(f[0]["playing"])
+        self.assertTrue(f[1]["blocked"])
+        self.assertEqual(f[1]["blocked_until"], 2e9)
+        self.assertFalse(f[0]["blocked"])
+        self.assertTrue(f[2]["disabled"])
