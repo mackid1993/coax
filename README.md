@@ -365,7 +365,9 @@ the stream it replaced, so a bad stream that slipped through is caught within se
 **On MPEG-TS** a stream cannot be looked at without playing it, so coax switches to the best-ranked backup and
 watches it: its first 25 seconds are compared, by picture and sound, with the end of the stream it left. If its
 sound is off its picture, coax leaves it right away for the next stream by score and blocks it. Viewers see the
-bad stream for about half a minute; on HLS they never see it. Everything else works the same. See the table under
+bad stream for about half a minute; on HLS they never see it. The check needs the two streams to show the same
+moments; when a TS backup is too far behind or ahead of the stream it replaced, the check has no clear verdict, and
+that backup is judged on real failures only (a freeze, an offline slate, a dead stream). Everything else works the same. See the table under
 [HLS or MPEG-TS](#hls-or-mpeg-ts).
 
 History is kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
@@ -392,7 +394,7 @@ coax reads from the provider differs.
 | Delay behind live | about 60 s | about 20 s |
 | Recording extension past the scheduled end | about 105 s | about 65 to 80 s |
 | [Smart Standby](#smart-standby): backups checked before a switch | Yes: every backup is checked by picture and sound before coax switches, so it never switches to a bad one | No: coax switches to the best-ranked backup, checks it while it plays, and moves on if it is bad |
-| Smart Standby: sound off its picture | Caught before the switch; never shown | Caught after the switch and left within about half a minute; seen briefly |
+| Smart Standby: sound off its picture | Caught before the switch; never shown | Usually caught after the switch and left within about half a minute; seen briefly. Missed when the clips do not line up |
 | Smart Standby: blocking, reordering, new main stream | Yes | Yes, from real failures only |
 | Log prefix | `[hlsloop stream]` | `[tsloop stream]` |
 
