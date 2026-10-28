@@ -88,6 +88,7 @@ class FeedHealth:
         data = _load(self.path, {})
         self.feeds = data.get("feeds") if isinstance(data.get("feeds"), dict) else {}
         self.notes = _load(self.npath, [])
+        self.pending = {}           # channel -> (troubled stream, stream switched to, time): promote once proven
 
     # -- state ------------------------------------------------------------------------------
 
@@ -160,20 +161,72 @@ class FeedHealth:
                 rec["confirmed"] = c
                 if len(c) >= DEAD_REPEAT:
                     self._block(ch, old, "dead", "", now)
+                else:
+                    self.pending[str(ch)] = (old, new, now)
+                    self._try_promote(ch, now)
                 self._persist(now)
 
     def good(self, ch, key, minutes, now=None):
         now = now or time.time()
         with self.lock:
             self._rec(ch, key)["good"].append([now, minutes])
+            self._try_promote(ch, now)
             self._persist(now)
 
     def verified(self, ch, key, now=None):
-        """The stream passed the sync check after a switch."""
+        """The stream passed the sync check (before or after a switch)."""
         now = now or time.time()
         with self.lock:
             self._rec(ch, key)["ok"] = now
+            self._try_promote(ch, now)
             self._persist(now)
+
+    def _try_promote(self, ch, now):
+        """After trouble, the stream coax switched to moves ahead of the troubled one, once it is proven
+        (passed the sync check or played 10 minutes cleanly). Nothing else ever moves it back."""
+        p = self.pending.get(str(ch))
+        if p is None:
+            return
+        old, new, t = p
+        if now - t > HOUR:
+            del self.pending[str(ch)]
+            return
+        if self.is_blocked(ch, new, now) or not self._proven(ch, new, now):
+            return
+        del self.pending[str(ch)]
+        done = {}
+
+        def mutate(cfg):
+            chan = self._channel(cfg, ch)
+            if chan is None:
+                return None
+            streams = chan.get("streams") or []
+            keys = [_key(s) for s in streams]
+            if old not in keys or new not in keys or keys.index(new) < keys.index(old):
+                return None
+            i = keys.index(old)
+            order = [k for k in keys if k != new]
+            order.insert(i, new)
+            by = {_key(s): s for s in streams}
+            chan["streams"] = [by[k] for k in order]
+            done.update(old=keys, new=order, name=chan.get("name"))
+            return True
+        try:
+            if not self.store.update(mutate):
+                return
+        except Exception:  # noqa: BLE001
+            log.exception("could not reorder streams")
+            return
+        keys, order = done["old"], done["new"]
+        if order[0] != keys[0]:
+            text = ("Made stream %s %s the main stream: the main stream had connection trouble and this one is "
+                    "stable. The order stays like this until the next trouble." % new)
+        else:
+            text = ("Moved stream %s %s ahead of stream %s %s: that one had connection trouble and this one is "
+                    "stable." % (new[0], new[1], old[0], old[1]))
+        log.warning("[%s] %s", done["name"], text)
+        self._note("promoted" if order[0] != keys[0] else "reordered", ch, done["name"], new, text,
+                   {"order": [list(k) for k in keys]}, now)
 
     def _proven(self, ch, key, now):
         rec = self.feeds.get(self._k(ch, key)) or {}

@@ -349,6 +349,12 @@ fetches (but does not play) the new stream's previous 35 seconds, which cover th
 old stream. The two are compared by picture and sound, so the verdict comes within seconds. A stream with no clear
 verdict stays unchecked.
 
+**Trouble moves the stable stream up, once.** When the playing stream has connection trouble and coax switches
+to another stream that is stable (it passed the sync check, or played 10 minutes cleanly), that stream moves
+ahead of the troubled one in the channel's saved order; if the troubled one was the main stream, the stable one
+becomes the main stream. The next tune starts on it. The order changes again only at the next connection trouble,
+so a stream that recovers later does not move back.
+
 **No trouble, no change.** When a block ends the stream stays where it is; coax does not move things back. The
 order changes again only at the next real problem.
 

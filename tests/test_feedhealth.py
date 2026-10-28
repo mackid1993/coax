@@ -74,7 +74,7 @@ class FeedHealthTest(unittest.TestCase):
         h.good(5, K("b2"), 30, now=500)
         h.problem(5, K("main"), "dead", now=1000)
         h.switched(5, K("main"), K("b2"), now=1030)
-        self.assertEqual(ids(st), ["main", "b2"])
+        self.assertEqual(ids(st), ["b2", "main"])          # stable backup moves up, main is not blocked
         self.assertFalse(h.is_blocked(5, K("main"), now=1030))
 
     def test_dead_three_times_in_six_hours_blocks(self):
@@ -152,3 +152,55 @@ class FeedHealthTest(unittest.TestCase):
         h2 = fh.FeedHealth(st, self.tmp.name)
         self.assertTrue(h2.is_blocked(5, K("b2"), now=1000))
         self.assertTrue(h2._proven(5, K("main"), 1000))
+
+
+class TroublePromoteTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def make(self, *sids):
+        st = Store({"channels": [{"id": 5, "name": "Bravo", "streams": [{"provider": "p1", "stream_id": s} for s in sids]}]})
+        return st, fh.FeedHealth(st, self.tmp.name)
+
+    def test_trouble_then_checked_stream_becomes_main_and_stays(self):
+        st, h = self.make("main", "b2", "b3")
+        h.verified(5, K("b2"), now=990)                    # pre-switch check passed
+        h.problem(5, K("main"), "dead", now=1000)
+        h.switched(5, K("main"), K("b2"), now=1010)
+        self.assertEqual(ids(st), ["b2", "main", "b3"])
+        self.assertEqual(h.list()["items"][0]["kind"], "promoted")
+        self.assertFalse(h.is_blocked(5, K("main"), now=1010))
+        h.good(5, K("main"), 500, now=5000)               # main fine again later: no rubber band
+        self.assertEqual(ids(st), ["b2", "main", "b3"])
+
+    def test_unchecked_stream_promoted_once_it_plays_clean(self):
+        st, h = self.make("main", "b2")
+        h.problem(5, K("main"), "dead", now=1000)
+        h.switched(5, K("main"), K("b2"), now=1010)
+        self.assertEqual(ids(st), ["main", "b2"])
+        h.good(5, K("b2"), 10, now=1610)
+        self.assertEqual(ids(st), ["b2", "main"])
+
+    def test_switch_without_trouble_changes_nothing(self):
+        st, h = self.make("main", "b2")
+        h.verified(5, K("b2"), now=990)
+        h.switched(5, K("main"), K("b2"), now=1000)
+        self.assertEqual(ids(st), ["main", "b2"])
+
+    def test_backup_trouble_moves_good_backup_ahead(self):
+        st, h = self.make("main", "b2", "b3")
+        h.verified(5, K("b3"), now=990)
+        h.problem(5, K("b2"), "dead", now=1000)
+        h.switched(5, K("b2"), K("b3"), now=1010)
+        self.assertEqual(ids(st), ["main", "b3", "b2"])
+        self.assertEqual(h.list()["items"][0]["kind"], "reordered")
+
+    def test_pending_expires_after_an_hour(self):
+        st, h = self.make("main", "b2")
+        h.problem(5, K("main"), "dead", now=1000)
+        h.switched(5, K("main"), K("b2"), now=1010)
+        h.good(5, K("b2"), 10, now=1010 + 2 * H)
+        self.assertEqual(ids(st), ["main", "b2"])
