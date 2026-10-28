@@ -61,7 +61,7 @@ listeners (time zone, DVR sync). Never write the file directly.
 
 Other files: `config.json.bak` (previous), `backups/`, `notifications.json` (bell), `cache/` (catalogs, XMLTV,
 Gracenote index, `feedhealth.json`, `history/<channel>.jsonl`, recording job files). Engines write state files in
-`/tmp` (`hlsloop-<md5>.json`, rewritten every second).
+`/tmp` (`hlsloop-<md5>.json`, rewritten at most 5 times a second while playing).
 
 ## Request flow
 
@@ -107,15 +107,28 @@ own while the DVR is connected:
   LookupError if it is not blocked.
 - **Switch and Disable (manual).** `POST /api/channels/<id>/switch {instance, provider, stream_id}` calls
   `Hub.switch(channel_id, instance, provider, stream_id)`: it updates the session (`url`, `fmt`, `cur_key`,
-  `stream_no`, and the line and slots when the provider changes), sets `fresh`, then stops the engine with the
-  session's `_kill` (the hub has no `_kill`; calling it was the 1.0.5-2 bug). The copy loop respawns the engine
-  with `COAX_NEWSTREAM=1`: hlsloop keeps the output clock (`-output_ts_offset`) but drops the old stream's
-  segment state. `POST /api/channels/<id>/feed {provider, stream_id, disabled}` sets or clears `disabled` on
+  `stream_no`, and the line and slots when the provider changes) under the hub lock and the session lock (so
+  the copy loop cannot start an engine on the old address meanwhile), sets `fresh`, then stops the engine with
+  the session's `_kill` (the hub has no `_kill`; calling it was the 1.0.5-2 bug). Slots it gives up go to
+  `drop_after_kill` and are released only after that kill (kill before release; `_release` drops them too).
+  A line the session already holds for a backup on the target provider is reused. The copy loop respawns
+  the engine at once (no crash backoff) with `COAX_NEWSTREAM=1`: both engines keep the output clock and
+  continue the timeline from where the old engine's output ended (`pend`; hlsloop's `oend` includes a
+  partly sent segment, tsloop restores `qend` from the old `prim`), and drop the old stream's segment state,
+  failure clock (`rg`) and stuck flag (`rstk`). A fresh DVR connection (no `COAX_RESTART`) may resume the
+  position from a state file under 4 s old but never its player lead, head start or stuck flag. `POST /api/channels/<id>/feed {provider, stream_id, disabled}` sets or clears `disabled` on
   the ref (400 if it would leave no enabled stream) and calls `Hub.feed_disabled`, which switches
   any session playing that stream to the next enabled candidate at once.
 - **Credentials in logs.** `app/main.py` `_Redact` is a logging filter on the console and the Logs page buffer;
-  it runs `hub._redact`, which masks usernames and passwords in URL paths and queries. Every log record goes
-  through it.
+  it runs `hub._redact`, which masks usernames and passwords in URL paths (including the short
+  `/<user>/<pass>/<id>.ts` form) and queries, and every configured line login of 6+ characters
+  (`_learn_secrets`, refreshed from `Hub._config`). Every log record goes through it.
+- **Proxy errors.** Both engines note the last HTTP 407 (`PXE`, a response hook). A stream that fails, or a
+  backup that does not answer, within 30 s of one is logged "... during provider proxy errors": the hub still
+  tries it last for a while (`_bad`) but does not report `dead` to Smart Standby, since the whole line hiccuped.
+- **Catalog and guide calls** (`player_api.php`, `xmltv.php`, Test) use an idle line: `xtream.first_line` asks
+  `Hub.busy_lines` (wired in `main.py` through `xtream.BUSY_LINES`) and takes the last idle enabled line, the
+  first line only when all are busy.
 - **Engine log wording is an API.** `PROBLEMS` in `hub.py` (for example `r"offline placeholder"` ->
   `placeholder`, an instant block) matches any engine line containing the phrase, informational or not, and
   so do the Status timeline patterns. Grep them before adding or rewording an engine log line; an
@@ -148,8 +161,10 @@ threads). `hlsloop.py` is the recommended path.
     when an audio parameter change makes ffmpeg rebuild the filter, `first_pts=0` inserts silence.
   - Transcode input `-drop_changed:a 1` (right before `-i pipe:0`): audio frames whose parameters change are
     dropped instead of rebuilding the filter. Guard: `silent(pid, b)` in both engines; if a transcode encoder
-    sends video but no audio for 10 s, at least 15 s after it started, it is killed once so it restarts with
-    the new format.
+    sends video but no audio for 10 s, at least 15 s after it started, it is killed so it restarts with the
+    new format. At most once per encoder, then again only after 1, 2, 4 ... 10 minutes while sound stays
+    missing; never for a feed that has had no sound since the engine started. Its kills are kept in `SK`, so
+    `remux()` never mistakes them for a GPU decoding failure (which would move decode to the CPU for good).
   - Any change here: run the candidate command for a few seconds offline on real data of the affected feed
     before it reaches a live server (`-map 0:a:0` with a short probe crash-looped a live stream).
 - **Provider format:** `fmtprobe.py` reads the incoming stream once per stream and the engine logs
@@ -159,6 +174,11 @@ threads). `hlsloop.py` is the recommended path.
   audio lead (`avlead`, `eofs`), so audio and video start together.
 - **Refill:** below half reserve for 75 s (HLS) or 60 s (TS), outside the first 90 s and at least 60 s after the
   last edge, play 3% slower (video `setpts`, audio `atempo`) until three quarters full. `rstep()`.
+- **Downloads (hlsloop):** every playlist, probe and segment is read through `grab()`, with an overall deadline
+  (segments `max(3 * tgt, 30)` s, playlists 30 s, probes 6 s) and a 2 MB cap on playlists, and the response is
+  always closed. A trickling provider then fails into the normal retry and failover path instead of holding
+  the fetch loop, and a `.ts` URL where a playlist was expected is refused. A master playlist chain is
+  followed at most 3 hops.
 - **Keepalive:** null packets when no video for 2 s (HLS) or 3 s (TS); stopped on purpose when the fetch loop is
   stuck so the hub restarts the engine.
 - **Failover:** `handoff(why)` takes `feeds()` (coax's order), skips streams marked bad (`fbad`, 60 s doubling to
@@ -176,7 +196,13 @@ threads). `hlsloop.py` is the recommended path.
   stalled; the engine polls every 2 s and logs "provider sent an ended playlist; staying on this stream while
   the reserve lasts". When the reserve runs low it hands off: "provider is serving an offline placeholder"
   (blocks the stream) only if the ended playlist persisted 60 s, else "provider sent an ended playlist and the
-  reserve ran low" (moves playback, blocks nothing). TS detects the placeholder by a redirect to `black.*`.
+  reserve ran low" (moves playback, blocks nothing). `PHG` is reset only by a normal playlist or an actual
+  switch, so while no backup answers the minute keeps counting. TS detects the placeholder by a redirect to
+  `black.*`.
+- **TS short connections:** a connection that ends with under 15 s of video and under 60 s long counts in
+  `short`; only other errors reset it. Three in a row with reserve plus lead at 15 s or less hand off.
+- **TS transcode pacing:** like hlsloop, while the encoder's output has been silent for 0.7 s (`OWT`) the
+  writer keeps feeding it (within the lead cap), because a GPU encoder holds a few seconds.
 - **Viewer buffer:** polls Channels DVR `/dvr/activity`; a joining device gets a 5 s head start.
 - **Recordings:** extends coax recordings in Channels DVR by the delay plus 45 s (max 3 min); job files in
   `cache/*-jobs-<channel>.json`.
@@ -202,7 +228,8 @@ Keeps each channel's saved stream order stable and good, acting only on real tro
   for ranking only and never block on their own (since 1.0.4-1); `dead` (a stream failed and another took over,
   confirmed by `switched()`) blocks on the 3rd within 6 hours. Absorbed problems (stalls, keepalive) are never
   blocking. tsloop short connections hand off only when reserve plus lead is 15 s or less and never report
-  `placeholder`.
+  `placeholder`. A channel with fewer than two enabled streams is never blocked (disabled streams do not
+  count), and a disabled stream never becomes main or is promoted.
 - Blocks: 12 h, 24 h, 3 days within a week. Never deleted. `is_blocked()` is used by the hub at tune time and
   in the failover list. If all streams are blocked, the least bad still plays. `block_info(ch, key)` returns
   `{until, kind, why}` (why = `TEXT`) for the card; `unblock(ch, key)` lifts it by hand.
@@ -219,8 +246,11 @@ Keeps each channel's saved stream order stable and good, acting only on real tro
 ## Channels DVR integration (app/channels_dvr.py)
 
 `add_or_update` creates or updates the lineup's custom M3U source (`PUT /providers/m3u/sources/<key>`), refreshes
-it and downloads the guide. `Syncer` listens to config changes, debounces 3 s, and refreshes every added lineup's
-source (and guide when channels or guide ids changed). Sources must never need a manual Refresh in Channels DVR.
+it and downloads the guide. `Syncer` listens to config changes and to provider refreshes (`App.on_refresh`
+calls `on_change`), debounces 3 s, and refreshes every added lineup's source when its M3U text changed (and the
+guide when enabled channels or guide ids changed). The M3U it compares is `App.lineup_m3u`, the same text the
+DVR downloads, so a provider renumbering a lineup sorted by provider number is pushed too. Disabled channels
+are not in the M3U and do not count as members. Sources must never need a manual Refresh in Channels DVR.
 
 ## Web UI (app/web)
 
@@ -240,7 +270,7 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 
 ## Build, test, release
 
-- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (284, about 35 s).
+- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (304, about 40 s).
 - A change to a Status or card function is run against the live config (or a test that exercises it) before a
   build; a syntax check is not enough.
 - UI checks: Gemini has no Node. Copy `app/web` to the Hermes container and drive the real page modules with

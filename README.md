@@ -599,7 +599,8 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    Press *Test connection*.
 3. **Lines.** Add one line per login you have with that provider and set *max streams* to what your plan
    allows (0 means unlimited, for M3U sources without a limit). If you have three logins on one service, add
-   three lines; coax spreads tunes across them.
+   three lines; coax spreads tunes across them. Channel list and guide downloads use a line nobody is watching
+   when there is one, so they only share a login with a playing stream when every line is in use.
 4. **Groups.** coax fetches the provider's live groups. Tick the ones you want (search helps with large
    lists). Only streams in these groups are offered when adding channels. Optionally turn on *auto add* to
    add new streams in those groups as disabled channels at each refresh.
@@ -626,7 +627,8 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
 
    **It stays in sync on its own.** After that, every change you make in coax (adding, removing, renaming or
    renumbering channels, new guide matches, logos) is pushed to Channels DVR a few seconds later: coax refreshes
-   the source and, when channels or guide ids changed, downloads the guide again. There is no *Refresh* button to
+   the source and, when channels or guide ids changed, downloads the guide again. The same happens when a
+   provider's channel list refresh renumbers a lineup sorted by provider number. There is no *Refresh* button to
    press in Channels DVR. *Sync now* on the lineup card forces it, and the card shows when it last synced.
 
    To add a source by hand instead (for example on another DVR), use *Custom Channels* with stream format
@@ -797,7 +799,9 @@ coax stays on the current stream and keeps retrying.
 | coax had to restart or retune it (frozen, or no video for 90 seconds) | Never on its own; it only lowers the stream's score |
 
 The ladder climbs when a stream keeps causing trouble within a week. A stream that stops working while every
-other stream of the channel is down too is not blocked, since that is the provider or the network. If every
+other stream of the channel is down too is not blocked, since that is the provider or the network. Neither is a
+stream that fails during a burst of the provider's proxy errors (HTTP 407), which hit the whole line, not one
+stream. If every
 stream of a channel is blocked, coax still plays the least bad one. Click a *Blocked* pill on the Status page to
 lift a block early.
 
@@ -812,7 +816,8 @@ block ends, does not move back on its own, so channels do not flip back and fort
 
 **6. Every change is under the bell.** Each entry says what happened, to which stream and why, with **Undo**
 (restores the order and lifts the block), an **X** to dismiss it, and **Clear all**. A channel with one stream is
-never changed.
+never changed, and neither is a channel with only one stream left enabled. A disabled stream never becomes the
+main stream.
 
 **What Smart Standby cannot see.** A feed whose sound is off its picture plays without errors, so Smart Standby
 treats it as healthy. Use **Switch** and **Disable** on the Status page for it (see [First run](#first-run)).
@@ -1097,7 +1102,7 @@ coax starts and then every 24 hours. It only ever touches the files listed here,
 
 | What | Where | Deleted when |
 | --- | --- | --- |
-| Engine state files (`hlsloop-*`, `tsloop-*`), one per tuned channel | `/tmp` inside the container | not written for 24 hours. A playing channel rewrites its file every second, so a live stream is never affected. |
+| Engine state files (`hlsloop-*`, `tsloop-*`), one per tuned channel | `/tmp` inside the container | not written for 24 hours. A playing channel rewrites its file several times a second, so a live stream is never affected. |
 | Half-written temporary files (`.tmp*`, `*.tmp`) | `cache/` | older than 24 hours |
 | Recording jobs (`hlsloop-jobs-*`, `tsloop-jobs-*`) | `cache/` | older than 24 hours |
 | Provider catalog and XMLTV id lists (`catalog-<id>.json`, `xmltv-ids-<id>.json`) | `cache/` | the provider or XMLTV source was deleted, and the file is older than 24 hours |
