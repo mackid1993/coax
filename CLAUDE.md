@@ -119,6 +119,9 @@ mistake.
   examples carry a comment on every value (the owner wants them self-explanatory for users), unlike ah4c's bare
   list. When a compose variable is renamed, tell the owner to update his own Apollo `.env` (the `DATA_DIR` to
   `HOST_DIR` rename left his stack pointing at an empty folder).
+- The `.env` examples ship values only for what must be there (`TAG`, container names, `HOST_PORT`); every
+  other value is blank with examples in the comments. Never put an Unraid path (or any one platform's path) in
+  as a value.
 - Word choice in the README HLS box: "source", not "provider" (final decision after going back and forth).
 - Screenshots use made-up channels (Raccoon Network HD, Cat Courtroom...), never real channel names or logos.
 - No Unraid-specific labels in repo compose files (his own override keeps them).
