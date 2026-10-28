@@ -165,7 +165,7 @@ function feedsHtml(x) {
   const at = (s) => `data-ch="${esc(x.channel_id)}" data-inst="${esc(x.instance || 0)}" data-p="${esc(s.provider)}" data-s="${esc(s.stream_id)}" data-n="${esc(s.name || "Stream " + s.stream_id)}" data-g="${esc(s.group || "")}" data-pn="${esc(s.provider_name)}"`;
   return `<div class="feeds"><div class="stat-label">Streams for this channel</div>${f.map((s, i) => `<div class="feed${s.playing ? " playing" : ""}${s.disabled ? " off" : ""}">
     <span class="ord num">${i + 1}</span>
-    <span class="f-main"><span class="ellip f-name">${esc(s.name || "Stream " + s.stream_id)}</span><span class="faint small ellip">${esc(s.provider_name)}${s.group ? ` · ${esc(s.group)}` : ""} · <span class="num">${esc(s.stream_id)}</span></span></span>
+    <span class="f-main" data-pop="${esc(s.name || "Stream " + s.stream_id)}" data-pop-sub="${esc(`${s.provider_name}${s.group ? " · " + s.group : ""} · stream ${s.stream_id}`)}"><span class="ellip f-name">${esc(s.name || "Stream " + s.stream_id)}</span><span class="faint small ellip">${esc(s.provider_name)}${s.group ? ` · ${esc(s.group)}` : ""} · <span class="num">${esc(s.stream_id)}</span></span></span>
     ${s.playing ? `<span class="badge badge-ok"><span class="dot pulse"></span>Playing now</span>` : ""}
     ${s.disabled ? `<span class="badge badge-bad" title="Disabled by you: never played or used as a backup">Disabled</span>` : ""}
     ${s.blocked && !s.disabled ? `<span class="badge badge-warn" title="Smart Standby blocked this stream for a while">Blocked</span>` : ""}
