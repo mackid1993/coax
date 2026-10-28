@@ -1,7 +1,8 @@
 # AGENTS.md: how coax works
 
-A map of coax for anyone changing it. Read [CLAUDE.md](CLAUDE.md) first for the history, the owner's rules and
-the mistakes not to repeat. The README is the user guide; this file is the engineering guide.
+A map of coax for anyone changing it. Read [CLAUDE.md](CLAUDE.md) first for the owner's rules, the settled
+decisions and the mistakes not to repeat; [HISTORY.md](HISTORY.md) holds the full record behind it.
+The README is the user guide; this file is the engineering guide.
 
 ## What coax is
 
@@ -151,7 +152,7 @@ threads). `hlsloop.py` is the recommended path.
 - **ffmpeg flags** (pinned by `FfmpegArgsTest` and `DropChangedTest` in `tests/test_engine_adapt.py`):
   - Probe: the base `-probesize 1000000 -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s). The
     1.0.4 5 s probe and `-muxdelay 0 -muxpreload 0` were removed in 1.0.5: they were believed to fix an HE-AAC
-    lip-sync problem, but that feed was out of sync at the provider itself (see CLAUDE.md 4.7). The test
+    lip-sync problem, but that feed was out of sync at the provider itself (see HISTORY.md 4.7). The test
     asserts no `-muxpreload` in `ffcmd()`. The restart timestamp shift (`tsfix.py`) and the keyframe-start
     filter are gone too.
   - `-dts_delta_threshold 86400`: never let ffmpeg rewrite timestamps after a jump (a 10 s audio dropout
