@@ -36,7 +36,7 @@ usually after a mistake.
 - **Do only what was asked.** Propose anything else first and build it on an explicit go. An unrequested
   "Run Auto-match first" empty state had to be reverted.
 - **One change at a time**, so results stay readable. Three simultaneous changes (sticky sessions, a new
-  address, a VPN change) once made a whole day of results useless.
+  address, a VPN change) once made the results unreadable.
 - **No spaghetti:** no sidecar tools, no extra layers. **No patching other people's apps.**
 - **Fix, do not label.** "That's not a known limitation. That's something you have to fix."
 - **Fix forward, do not roll back.** Never roll back or deploy without the owner's go-ahead. Do not revert
@@ -44,7 +44,10 @@ usually after a mistake.
 - **Never give up on a stream.** coax retries forever while the DVR is connected. Proposals to give up after N
   seconds, turn off tuner sharing, turn off transcoding, or disable a core feature were all rejected.
 - **No knobs.** coax is an appliance: hard-code sensible behavior (user agent, prefix cleanup, Smart Standby).
-- **General, not personal.** It must work for any provider, HLS or MPEG-TS, and on low-power hosts.
+- **General, not personal.** It must work for any provider, HLS or MPEG-TS, and on low-power hosts. Build for
+  the masses: most users have ONE line (one login, one connection) per provider. Nothing may depend on extra
+  lines; an extra line can only be an optional bonus on top of something that already works with one.
+- **HLS first.** MPEG-TS is used only when HLS is not possible. Nothing may force TS where HLS can play.
 - **Gracenote station IDs in the M3U are a hard requirement. Channels DVR is the platform.** Do not suggest
   another player.
 - **When porting, keep every feature and every piece of documented research**, but improve rather than copy
@@ -67,7 +70,10 @@ usually after a mistake.
 
 ### The live system
 - **Never restart or deploy coax while the owner is watching or working, without asking.** A restart cuts the
-  stream and once wiped finished, unsaved Auto-match results (twice).
+  stream and wipes finished, unsaved Auto-match results (it happened twice).
+- **Never block the stream the owner is watching for a test.** Force a switch with reorder plus retune, then
+  restore the channel order and any blocks. Live candidates go to the owner one change at a time, each run
+  offline for a few seconds on real data of that feed first.
 - **Never open a second connection on a provider line in use.** One connection per line; a second returns 509
   and can kill the stream. Probes use an idle line, or none. Live tests: one test stream on the whole account,
   only when the owner is off it.
@@ -95,7 +101,9 @@ usually after a mistake.
   research behind them (keep "Why 3%"). Describe the one-click Add to Channels DVR and the automatic sync.
   Transcoding is highly recommended (always on unless "running on a potato"). Do not imply coax depends on
   provider keyframes. HLS is strongly preferred, stated near the top. Verify a whole section against the code
-  when the owner points at one row.
+  when the owner points at one row. Keep the Fancy Bits / Channels DVR non-affiliation notice at the top and
+  the ah4c credit (README and file headers). The HLS box says "source", not "provider" (final, after going
+  back and forth). Explain the daily cleanup transparently.
 - **Install docs:** no `curl` downloads. Compose files and `.env` examples are embedded in collapsed
   `<details>` blocks and must match the repo files.
 - **Compose files follow ah4c's style:** no editing needed; every setting is `${VAR:-default}` with a comment;
@@ -110,6 +118,9 @@ usually after a mistake.
 - Issues and pull requests are not accepted; provided as is; forks welcome (MIT). Rare updates are deliberate.
 - **Images:** published only by manual dispatch (`gh workflow run image.yml -f version=X -f tag=latest`),
   amd64 only. The owner names versions: a significant change gets a new number, follow-ups are `-1`, `-2`.
+  Every build is stamped: `scripts/stamp-version.sh <version>` writes `app/VERSION` (gitignored; CI runs it
+  with the version input, else `<tag>-<commit>`), the UI shows it at the bottom of the sidebar, `/api/version`
+  returns it and the startup log line includes it. Local builds: `scripts/build-image.sh <version>`.
 - **Commits:** one fix per commit, so a change can be traced or reverted on its own. After pushing a split
   series, confirm the pushed tree is byte-identical to what was tested.
 
@@ -199,10 +210,15 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   the reserve absorbs is ignored. Block for long periods (12 h, 24 h, 3 days), never delete. Only a proven
   stream (10 clean minutes) becomes main. Move once, never rubber-band. Notifications go to the bell with Undo.
 - **Switching is a last resort:** stay on a slow or briefly stalled feed to keep the viewer's place; switch on a
-  placeholder, a dead feed (before the reserve runs out), a stuck download, or audio and video timestamps more
-  than 3 s apart.
+  placeholder, a dead feed (before the reserve runs out), a stuck download, audio and video timestamps more
+  than 3 s apart, or a feed that stays far below real time for minutes (HLS below 0.75x while the reserve
+  drains, TS below 0.85x with the reserve nearly empty, 5 minutes).
+- **Auto-match:** backups come only from the provider's selected groups (searching the whole catalog once
+  matched a Polish Comedy Central), and the Gracenote region (Settings > Auto-match region) decides which
+  stations are trusted. Unmatched channels stay listed ("Everything has to be matched").
 - **Settings live in coax's config, typed by the user.** No environment variables for app settings (Dispatcharr
-  once wiped them with `su -`), no auto-discovery of Channels DVR.
+  once wiped them with `su -`), no auto-discovery of Channels DVR, and no guessing of coax's own Base URL
+  (required, verified via `/healthz`; the request-Host fallback was removed).
 - **User agent hard-coded** to `TiviMate/5.1.6 (Android 12)`. Prefix cleanup always on.
 - **Version pinning:** coax pins everything (base image digest, Debian snapshot, pip hashes, Jellyfin ffmpeg by
   checksum, action SHAs); Gluetun is not pinned (security fixes).
@@ -334,7 +350,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 304 after 1.0.6, about 40 s.
+- **Tests:** 309 after 1.0.6-1, about 40 s.
 
 ---
 
@@ -365,8 +381,20 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
     format; logs mask the short Xtream form and every configured login;
   - Smart Standby ignores disabled streams; DVR sync pushes provider renumbering and ignores disabled
     channels; the backup check no longer opens every archive every 30 s.
-  Tested offline on Artemis (real hub and engines, local HLS and TS feeds); GPU paths and the real provider
-  not tested before release.
+  Tested offline on Artemis (real hub and engines, local HLS and TS feeds). Checked live on Apollo afterwards:
+  full VAAPI chain, ~10% of one core, no false guard restarts.
+- **1.0.6-1** (Oct 28) from a second adversarial audit of 1.0.6:
+  - HLS first: 1.0.6 had started playing M3U `/live/...ts` streams as MPEG-TS even with the provider on HLS;
+    now only a stream with no HLS form (or a provider set to MPEG-TS) uses TS;
+  - TS short-connection handoff no longer waits 5 s on a channel without a working backup and no longer
+    counts against the stream;
+  - a hand Switch back to the tuned stream plays it (the engine had resumed its last failover stream);
+  - M3U ids that change with a rotating URL token are still followed; disabled streams keep their places in
+    Smart Standby reorders; the silent-audio guard judges each stream on its own; logins are masked from
+    startup; Switch refuses cleanly if a retune just moved the channel's line;
+  - HLS continues the output timeline over lost video (a skipped segment, or an outage longer than the
+    playlist) instead of a freeze with silence; a busy answer to a backup probe no longer marks the backup;
+  - build version stamped into the image, shown in the sidebar and the startup log.
 
 ---
 
@@ -378,7 +406,8 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - The transcode audio filter has not had a 10+ minute live watch on a healthy HE-AAC feed.
 - Audit of every engine switch trigger against "no switch while the reserve is healthy and the feed still
   delivers" (playlist errors after 5 retries, about 18 s, mark a stream failed).
-- A health check at tune time, every ~30 minutes and on failover: discussed, deferred.
+- A health check at tune time, every ~30 minutes and on failover: discussed, deferred. If built, it must decide
+  in seconds at tune time; multi-minute measurement runs were rejected.
 - `desync` entries in `feedhealth` `TEXT`/`RANK_W` and `verified()` have no producer; harmless.
 - A long, untouched coax run to compare with the Dispatcharr baseline.
 - 1.0.6 GPU paths (VAAPI/NVENC keep-feeding in tsloop, the GPU-decode fallback) to be confirmed on Apollo.

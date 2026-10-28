@@ -130,6 +130,10 @@ own while the DVR is connected:
 - **Catalog and guide calls** (`player_api.php`, `xmltv.php`, Test) use an idle line: `xtream.first_line` asks
   `Hub.busy_lines` (wired in `main.py` through `xtream.BUSY_LINES`) and takes the last idle enabled line, the
   first line only when all are busy.
+- **Catalog refresh.** An empty answer never replaces a catalog that had streams. M3U stream ids skip an id
+  two entries could both claim; `catalog.diff` maps a vanished id to a new one by identical URL, or by the URL
+  without token and credential parts when that URL is unique in both the whole old and the whole new catalog, and `App._apply_renamed` points
+  channel refs at the new id.
 - **Engine log wording is an API.** `PROBLEMS` in `hub.py` (for example `r"offline placeholder"` ->
   `placeholder`, an instant block) matches any engine line containing the phrase, informational or not, and
   so do the Status timeline patterns. Grep them before adding or rewording an engine log line; an
@@ -183,7 +187,10 @@ threads). `hlsloop.py` is the recommended path.
 - **Keepalive:** null packets when no video for 2 s (HLS) or 3 s (TS); stopped on purpose when the fetch loop is
   stuck so the hub restarts the engine.
 - **Failover:** `handoff(why)` takes `feeds()` (coax's order), skips streams marked bad (`fbad`, 60 s doubling to
-  10 min), probes candidates (confirms they answer) and switches, joining the backup at the outage depth.
+  10 min), probes candidates (confirms they answer) and switches, joining the backup at the outage depth. A probe
+  that gets a busy answer (429/503/509, `BZ`) does not mark the backup (up to three rounds in a row, `BZN`):
+  the next backup is tried, and if only busy answers came back the next round is in about 5 s, not 30. hlsloop continues the output timeline (`pend`, `plost`) over video lost on the same stream: a skipped
+  broken segment, or segments that left the playlist during an outage ("lost N segments ...").
   No new video for 60 s hands off, sooner when the reserve is nearly empty (HLS about three segments, TS about
   8 s). Slow feed: HLS below 0.75x while the reserve drains, TS below 0.85x with the reserve nearly empty, for
   5 minutes.
@@ -201,7 +208,16 @@ threads). `hlsloop.py` is the recommended path.
   switch, so while no backup answers the minute keeps counting. TS detects the placeholder by a redirect to
   `black.*`.
 - **TS short connections:** a connection that ends with under 15 s of video and under 60 s long counts in
-  `short`; only other errors reset it. Three in a row with reserve plus lead at 15 s or less hand off.
+  `short`; only other errors reset it. Three in a row with reserve plus lead at 15 s or less hand off with
+  `charge=False` (logged "failed after short connections", so the hub tries the stream last for a while but
+  does not count it in Smart Standby) and reconnect at once, switched or not.
+- **Stream format (HLS first):** `providers.stream_format` picks the engine. A `.m3u8` address is always HLS;
+  an Xtream `/live/<u>/<p>/<id>` address (`.ts` or no extension) is HLS unless the provider is set to `ts`
+  (hlsloop's `HSX` and `hub._HSX` rewrite it to `<id>.m3u8`); any other `.ts` address is TS; anything else
+  follows the provider's setting.
+- **Hand switch state:** on `COAX_NEWSTREAM` both engines also clear `rcur`, so the stream the hub chose plays,
+  not the old engine's last failover stream. The silent-audio guard's "has had sound" flag resets on every
+  stream switch.
 - **TS transcode pacing:** like hlsloop, while the encoder's output has been silent for 0.7 s (`OWT`) the
   writer keeps feeding it (within the lead cap), because a GPU encoder holds a few seconds.
 - **Viewer buffer:** polls Channels DVR `/dvr/activity`; a joining device gets a 5 s head start.
@@ -230,7 +246,8 @@ Keeps each channel's saved stream order stable and good, acting only on real tro
   confirmed by `switched()`) blocks on the 3rd within 6 hours. Absorbed problems (stalls, keepalive) are never
   blocking. tsloop short connections hand off only when reserve plus lead is 15 s or less and never report
   `placeholder`. A channel with fewer than two enabled streams is never blocked (disabled streams do not
-  count), and a disabled stream never becomes main or is promoted.
+  count), and a disabled stream never becomes main or is promoted. When `_fix_order` rearranges a channel,
+  disabled streams keep their places and "main" means the first enabled stream.
 - Blocks: 12 h, 24 h, 3 days within a week. Never deleted. `is_blocked()` is used by the hub at tune time and
   in the failover list. If all streams are blocked, the least bad still plays. `block_info(ch, key)` returns
   `{until, kind, why}` (why = `TEXT`) for the card; `unblock(ch, key)` lifts it by hand.
@@ -271,7 +288,7 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 
 ## Build, test, release
 
-- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (304, about 40 s).
+- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (309, about 40 s).
 - A change to a Status or card function is run against the live config (or a test that exercises it) before a
   build; a syntax check is not enough.
 - UI checks: Gemini has no Node. Copy `app/web` to the Hermes container and drive the real page modules with

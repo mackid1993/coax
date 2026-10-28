@@ -701,12 +701,14 @@ last resort.
 | Situation | What coax does |
 | --- | --- |
 | Late segments, stalls, stale playlists, provider restarts, refused or timed-out requests | Keeps retrying the same feed. On HLS, video that comes back within about a minute is fetched from the playlist, so you continue where you were. Busy answers (429, 503, 509) back off, honoring `Retry-After` up to 30 seconds. |
+| Video is lost on HLS: a broken segment is skipped, or an outage outlasts the provider's playlist | The timeline continues across the gap: the picture moves on instead of freezing with silence. |
 | The provider's playlist ends (HLS), often right after a burst of proxy errors | Stays on the feed while the reserve lasts, since this is usually a passing hiccup. If the reserve runs low it switches to the next stream without blocking anything. Only an ended playlist that lasts a full minute counts as an offline placeholder, which blocks the stream. |
 | The provider redirects to its offline placeholder (MPEG-TS) | Switches to the next stream at once, blocks the stream, and never plays the placeholder. |
 | The connection keeps ending after a few seconds (MPEG-TS) | Keeps reconnecting while the reserve lasts; switches to the next stream only when it runs low. Nothing is blocked. |
 | No new video for 60 seconds | Switches to the next stream. It switches sooner when the reserve is nearly empty: on HLS after about three segments, on MPEG-TS after about 8 seconds. |
 | The feed's audio and video timestamps start more than 3 seconds apart | On HLS, keeps playing it for up to 30 seconds while it tries the next stream, then switches. On MPEG-TS, a backup like this is passed over at connect time. With no other stream it plays anyway. |
 | Slower than real time for 5 minutes | Switches to the next stream. On HLS that means below 0.75x while the reserve drains; on MPEG-TS, below 0.85x with the reserve nearly empty. A feed that is slow but keeps the reserve up never triggers a switch. |
+| A backup answers busy (429, 503, 509) when coax checks it | Not held against the backup (the provider may still count the stream just left); coax tries the next backup, and asks again a few seconds later if none answered. A backup that stays busy three times in a row is treated as not answering. |
 | No backup on the channel | Keeps retrying the same feed until the provider comes back. |
 | Sound off its picture with matching timestamps | Not detected. Use **Switch** and **Disable** on the Status page. |
 
