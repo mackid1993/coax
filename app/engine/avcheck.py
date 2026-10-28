@@ -4,8 +4,8 @@ Two feeds of one channel carry the same program. Their picture and their sound s
 the other feed by the same amount. If the sound lines up 12 s later than the picture does, the new feed's
 sound is 12 s off its picture.
 
-offset(ref_path, cand_path) decodes both files at low resolution (video) and 8 kHz mono (audio), builds a
-picture-change signal and a sound-energy signal at RATE Hz, and cross-correlates each pair within MAXLAG.
+offset(ref_path, cand_path) aligns the sound with ffmpeg's chromaprint audio fingerprint (within MAXLAG), then
+aligns a low-resolution picture-change signal at RATE Hz, searched within PICWIN of where the sound matched.
 It returns a dict with "offset" (seconds, cand sound minus cand picture relative to ref; None when not
 confident) and the evidence. Only stdlib and ffmpeg; no network.
 """
@@ -17,6 +17,7 @@ RATE = 20          # signal samples per second
 MAXLAG = 90.0      # how far apart the two feeds may run, seconds
 MIN_OVERLAP = 12.0  # seconds of shared content needed for a verdict
 OUT_OF_SYNC = 2.0  # seconds; a smaller offset is left alone
+PICWIN = 40.0      # seconds; the picture is searched this far either side of where the sound matched
 
 
 def _starts(ff, path):
@@ -46,26 +47,39 @@ def _picture(ff, path):
     return out
 
 
-def _sound(ff, path):
-    raw = subprocess.run([ff, "-v", "quiet", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "8000",
-                          "-f", "s16le", "-"], capture_output=True, timeout=120).stdout
-    a = array.array("h")
-    a.frombytes(raw[:len(raw) // 2 * 2])
-    step = 8000 // RATE
-    env = []
-    for i in range(0, len(a) - step + 1, step):
-        blk = a[i:i + step]
-        env.append(math.log(1.0 + math.sqrt(sum(x * x for x in blk) / step)))
-    # remove the slow level so only the rhythm of the sound (words, cuts, music beats) is compared
-    w = RATE
-    out = []
-    for i in range(len(env)):
-        lo, hi = max(0, i - w), min(len(env), i + w + 1)
-        out.append(env[i] - sum(env[lo:hi]) / (hi - lo))
-    return out
+HOP = 4096 / 3 / 11025.0  # seconds per chromaprint item (ffmpeg chromaprint muxer, raw format)
 
 
-def _xcorr(a, b, maxlag):
+def _prints(ff, path):
+    raw = subprocess.run([ff, "-v", "quiet", "-i", path, "-map", "0:a:0", "-f", "chromaprint", "-fp_format", "raw", "-"],
+                         capture_output=True, timeout=120).stdout
+    a = array.array("I")
+    a.frombytes(raw[:len(raw) // 4 * 4])
+    return list(a)
+
+
+def _audio_lag(ref, cand, maxlag):
+    """Audio fingerprint alignment: (seconds t with cand content at ref time + t, bit error, runner-up error)."""
+    need = int(MIN_OVERLAP / HOP)
+    span = int(maxlag / HOP)
+    res = []
+    for k in range(-span, span + 1):
+        lo, hi = max(0, -k), min(len(cand), len(ref) - k)
+        if hi - lo < need:
+            continue
+        e = 0
+        for i in range(lo, hi):
+            e += bin(ref[i + k] ^ cand[i]).count("1")
+        res.append((e / (32.0 * (hi - lo)), k))
+    if not res:
+        return None, 1.0, 1.0
+    res.sort()
+    best = res[0]
+    second = next((x for x, k in res if abs(k - best[1]) * HOP > 1.0), 1.0)
+    return -best[1] * HOP, best[0], second
+
+
+def _xcorr(a, b, maxlag, center=0):
     """Best k with a[i] ~ b[i + k]: (k, peak, runner-up at least 1 s away, overlap samples)."""
     def z(x):
         m = sum(x) / len(x)
@@ -75,7 +89,7 @@ def _xcorr(a, b, maxlag):
         return 0, -1.0, -1.0, 0
     a, b = z(a), z(b)
     res = []
-    for k in range(-maxlag, maxlag + 1):
+    for k in range(center - maxlag, center + maxlag + 1):
         lo, hi = max(0, -k), min(len(a), len(b) - k)
         n = hi - lo
         if n < MIN_OVERLAP * RATE:
@@ -99,18 +113,22 @@ def offset(ref_path, cand_path, ff="ffmpeg"):
     if None in (rv, ra, cv, ca):
         out["why"] = "missing audio or video"
         return out
-    lag = int(MAXLAG * RATE)
-    kv, pv, sv, nv = _xcorr(_picture(ff, ref_path), _picture(ff, cand_path), lag)
-    ka, pa, sa, na = _xcorr(_sound(ff, ref_path), _sound(ff, cand_path), lag)
+    # Sound first, by audio fingerprint (chromaprint): it pins where the same program sits in both feeds.
+    t, err, err2 = _audio_lag(_prints(ff, ref_path), _prints(ff, cand_path), MAXLAG)
+    if t is None or err > 0.30 or err2 - err < 0.08:
+        out["why"] = "sound does not match clearly"
+        out["sound"] = (None, round(err, 2), round(err2, 2))
+        return out
+    snd = (ca - ra) - t
+    # Then the picture, searched only near where the sound says the program is, so an unrelated scene that
+    # happens to look alike far away cannot win.
+    exp = int(round((t - (ca - ra) + (cv - rv)) * RATE))   # picture lag that would mean "in sync"
+    kv, pv, sv, nv = _xcorr(_picture(ff, ref_path), _picture(ff, cand_path), int(PICWIN * RATE), exp)
     pic = (cv - rv) - kv / RATE   # how much later the cand picture is stamped for the same content
-    snd = (ca - ra) - ka / RATE
-    out.update(picture=(round(pic, 2), round(pv, 2), round(sv, 2)), sound=(round(snd, 2), round(pa, 2), round(sa, 2)),
-               overlap=round(min(nv, na) / RATE, 1))
+    out.update(picture=(round(pic, 2), round(pv, 2), round(sv, 2)), sound=(round(snd, 2), round(err, 2), round(err2, 2)),
+               overlap=round(nv / RATE, 1))
     if pv < 0.45 or pv - sv < 0.15:
         out["why"] = "pictures do not match clearly"
-        return out
-    if pa < 0.3 or pa - sa < 0.08:
-        out["why"] = "sound does not match clearly"
         return out
     out["offset"] = round(snd - pic, 1)
     return out

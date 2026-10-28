@@ -1380,16 +1380,23 @@ while not gone():
             ph += 1
             if PHG[0] is None:
                 PHG[0] = mono()
-            if not stalled and mono() - PHG[0] < 15 and Qs[0] + max(wlead, 0.0) > 30:
+            # An ended playlist is often a passing provider hiccup (it follows proxy errors), not an offline slate.
+            # Stay on this stream while the reserve covers it. Call it an offline placeholder (which blocks the
+            # stream) only when it has lasted a full minute; a shorter one only moves playback, it blocks nothing.
+            held = mono() - PHG[0]
+            if not stalled and Qs[0] + max(wlead, 0.0) > 15:
                 if not PHG[1]:
                     PHG[1] = True
-                    log("provider is serving an offline placeholder; reserve %.0fs, retrying this stream for up to 15s before any switch" % Qs[0])
+                    log("provider sent an ended playlist; staying on this stream while the reserve lasts (%.0fs)" % Qs[0])
                 rb = mono() + 2
                 time.sleep(2)
                 continue
             PHG[0] = None
             PHG[1] = False
-            handoff("provider is serving an offline placeholder")
+            if held >= 60:
+                handoff("provider is serving an offline placeholder")
+            else:
+                handoff("provider sent an ended playlist and the reserve ran low")
             z = 5 if stalled else 0
             rb = mono() + z
             time.sleep(z)
