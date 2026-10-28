@@ -122,6 +122,8 @@ mistake.
 - The `.env` examples ship values only for what must be there (`TAG`, container names, `HOST_PORT`); every
   other value is blank with examples in the comments. Never put an Unraid path (or any one platform's path) in
   as a value.
+- Gluetun's DNS filters (`BLOCK_MALICIOUS`, `BLOCK_SURVEILLANCE`, `BLOCK_ADS`) are set in the VPN compose with
+  default `off` (they can block IPTV hosts) and are deliberately left out of the `.env` example.
 - Word choice in the README HLS box: "source", not "provider" (final decision after going back and forth).
 - Screenshots use made-up channels (Raccoon Network HD, Cat Courtroom...), never real channel names or logos.
 - No Unraid-specific labels in repo compose files (his own override keeps them).

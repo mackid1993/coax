@@ -272,6 +272,10 @@ services:
       # DNS through the VPN (OpenVPN and WireGuard). Set both to use your VPN provider's DNS server, so lookups stay in the tunnel
       - DNS_UPSTREAM_RESOLVER_TYPE=${DNS_UPSTREAM_RESOLVER_TYPE} # plain to use DNS_UPSTREAM_PLAIN_ADDRESSES. Empty means Gluetun's encrypted DNS (DNS over TLS to Cloudflare)
       - DNS_UPSTREAM_PLAIN_ADDRESSES=${DNS_UPSTREAM_PLAIN_ADDRESSES} # Your VPN provider's DNS server WITH the port, IP:53, for example 10.255.255.1:53. Gluetun refuses a bare IP. Never a LAN address: that leaks DNS outside the tunnel
+      # Gluetun's DNS content filters, off on purpose: their block lists can block IPTV provider, guide and logo domains, which breaks playback
+      - BLOCK_MALICIOUS=${BLOCK_MALICIOUS:-off} # Malware and phishing block list. Gluetun's own default is on; coax turns it off because it can block IPTV hosts
+      - BLOCK_SURVEILLANCE=${BLOCK_SURVEILLANCE:-off} # Tracking and telemetry block list
+      - BLOCK_ADS=${BLOCK_ADS:-off} # Ad block list. Can block ad-inserted (SSAI) streams and some guide and logo servers
       # Server choice (optional). Comma separated; the names are on your provider's Gluetun page
       - SERVER_COUNTRIES=${SERVER_COUNTRIES} # For example Netherlands
       - SERVER_REGIONS=${SERVER_REGIONS} # For example Europe
@@ -573,7 +577,11 @@ Everything from the table above applies, plus:
    - **A VPN Gluetun has no page for:** `VPN_SERVICE_PROVIDER=custom`, `VPN_TYPE=wireguard`, and all six
      `WIREGUARD_` values from its WireGuard config (`WIREGUARD_ENDPOINT_IP` must be an IP address). See
      Gluetun's [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
-3. **Ports.** coax shares Gluetun's network, so `HOST_PORT` is published on the `gluetun` service.
+3. **DNS filters.** Gluetun can block domains from lists of malware, tracking and ad hosts. These lists
+   can catch IPTV provider, guide and logo servers, so the compose file turns all three off
+   (`BLOCK_MALICIOUS`, `BLOCK_SURVEILLANCE`, `BLOCK_ADS`; Gluetun itself turns the malware list on by
+   default). To turn one on, add it to `.env`, for example `BLOCK_MALICIOUS=on`.
+4. **Ports.** coax shares Gluetun's network, so `HOST_PORT` is published on the `gluetun` service.
 
 Everything else about Gluetun (options, health checks, troubleshooting) is in the
 [Gluetun wiki](https://github.com/qdm12/gluetun-wiki).
