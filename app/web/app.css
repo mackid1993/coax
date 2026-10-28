@@ -703,3 +703,6 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
 .note.unread { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
 .note.undone { opacity: .6; }
 .note-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.feed-note { cursor: help; }
+.pop-sub { white-space: pre-line; }

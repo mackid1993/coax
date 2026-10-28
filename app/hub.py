@@ -75,6 +75,15 @@ def _has_video(chunk, pos):
     return False
 
 
+# Engine log lines that are a problem with the stream playing now (stream switch lines carry their own ref).
+PROBLEMS = [
+    (re.compile(r"offline placeholder", re.I), "placeholder"),
+    (re.compile(r"audio and video are [\d.]+s apart", re.I), "avsplit"),
+    (re.compile(r"playlist stale \d+s", re.I), "stall"),
+    (re.compile(r"sending keepalive packets", re.I), "keepalive"),
+]
+
+
 def url_refs(url):
     """Short ids the engine logs for a stream URL (raw, and the HLS form hlsloop switches to)."""
     out = set()
@@ -260,6 +269,10 @@ class Session:
                 self.hub._follow(self, m.group(1))
             elif re.search(r"\b(failed|is not answering)\b", line):
                 self.hub._note_bad(m.group(1), self)
+        for pattern, kind in PROBLEMS:
+            if pattern.search(line):
+                self.hub._health("problem", self.channel_id, self.cur_key, kind)
+                break
         if "status: " in line:
             self.hub._history(self, line)
             m = re.search(r"(\d+) (?:switches|failovers), (\d+)s keepalive", line)
@@ -407,6 +420,8 @@ class Session:
                     return
                 self.proc = None
             moved = False
+            if why in ("frozen", "dead"):
+                self.hub._health("problem", self.channel_id, self.cur_key, "frozen" if why == "frozen" else "novideo")
             if why == "frozen":
                 log.warning("[%s] engine sent nothing for %.0fs; restarting it on the same line", self.name, STALL_TIMEOUT)
                 self.event("restart", "Engine froze for %.0fs; restarted it" % STALL_TIMEOUT, "warn")
@@ -547,7 +562,7 @@ class Hub:
             strikes = (self._bad.get(key) or [0, 0])[1]
             self._bad[key] = [time.monotonic() + min(60 * 2 ** strikes, 600), strikes + 1]
         if session is not None:
-            self._health("fail", session.channel_id, key)
+            self._health("problem", session.channel_id, key, "dead")
 
     def _desync(self, session, ref, line):
         """The engine found a stream whose sound is off its picture: feed health removes it."""
@@ -557,7 +572,8 @@ class Hub:
             return
         with self._lock:
             self._bad[(hit[0], hit[2])] = [time.monotonic() + 86400, 9]
-        self._health("desync", session.channel_id, (hit[0], hit[2]), float(m.group(1)), m.group(2) == "ahead of")
+        self._health("problem", session.channel_id, (hit[0], hit[2]), "desync",
+                     "%s seconds %s its picture" % (m.group(1), m.group(2)))
 
     def _health(self, kind, channel_id, key, *args):
         health = self.health

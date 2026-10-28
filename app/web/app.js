@@ -88,7 +88,8 @@ async function pollNotes() {
   n.textContent = notes.unread > 99 ? "99+" : String(notes.unread);
   $("#bell").classList.toggle("has", !!notes.unread);
 }
-const NOTE_KIND = { desync: "Out of sync, removed", removed: "Kept failing, removed", promoted: "New main stream" };
+const NOTE_KIND = { reordered: "Streams reordered", removed: "Stream removed", promoted: "New main stream",
+  flagged: "Bad stream seen", desync: "Out of sync, removed" };
 function notesHtml() {
   if (!notes.items?.length) return `<p class="faint">Nothing yet. When coax removes a bad stream from a channel or makes a more reliable backup the main stream, it shows up here.</p>`;
   return `<ol class="notes">${notes.items.map((x) => `<li class="note ${x.read ? "" : "unread"} ${x.undone ? "undone" : ""}">

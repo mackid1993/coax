@@ -300,26 +300,42 @@ switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries 
 `data/cache/history/`.
 
 
-### Bad streams are removed, reliable ones are promoted
+### Streams stay in their most stable order
 
-coax keeps a day of history for every stream of every channel and acts on it. Each change appears under the
-**bell** in the sidebar, with the channel, the stream, the reason and an **Undo**. A channel with only one stream
-is never changed.
+coax keeps a day of history for every stream of every channel and uses it to keep each channel's streams in
+their most stable order, all the time. Each change appears under the **bell** in the sidebar (with an **Undo**)
+and as a note on the channel in the *Channels* page; hover the note for the channel's recent changes. A channel
+with only one stream is never changed, and a channel always keeps at least one stream.
 
-- **Sound off its picture.** Some feeds carry correct timestamps but sound that is seconds ahead of or behind the
-  picture, because the provider built the feed that way. After every switch to another stream, coax compares the
-  first 35 seconds of the new stream with the last 35 seconds of the stream it left, by their actual picture and
-  sound (scene changes and the rhythm of the audio), in a low-priority background process. If the new stream's
-  sound is 2 seconds or more off, coax leaves it for another stream and removes it from the channel. This needs
-  no second connection, so it works with a single line. The check runs on HLS streams.
-- **A backup that keeps failing** in 6 separate half hours of a day, plays well for less than 20 minutes, while
-  another stream of the channel plays well, is removed.
-- **An unreliable main stream.** When the main stream failed in 3 separate half hours of a day and a backup played
-  at least an hour without a single problem, that backup becomes the main stream and the old one moves to second
-  place. This happens at most once a day per channel.
+**What counts as a problem.** Every problem coax sees on the stream it is playing is a strike against that stream:
 
-Failures within one half hour count once, so one bad evening at the provider does not remove a stream. History is
-kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
+| Problem | How coax sees it | Weight |
+| --- | --- | --- |
+| Sound off its picture | After every switch, the first 35 seconds of the new stream are compared with the last 35 seconds of the old one by picture and sound (HLS) | 10 |
+| Stream stopped working | The engine gave up on it, or it did not answer when coax tried it | 3 |
+| Offline slate | The provider served an "unavailable" placeholder instead of the channel | 3 |
+| No video | coax had to retune because no video came for 90 seconds | 3 |
+| Frozen | The engine sent nothing for 25 seconds | 2 |
+| Audio and video apart | The feed's own audio and video timestamps came apart | 2 |
+| Stall | The playlist stalled long enough to need the reserve | 1 |
+| Dropped video | Video stopped long enough that coax held the connection with keepalive | 1 |
+
+The same problem on the same stream within 2 minutes counts once. A stream's score is its strikes over the last
+day, each fading by half every 6 hours, minus a little for every 10 clean minutes. Lower is better.
+
+**What coax does with it, right away:**
+
+- **The first three problems in the table move the stream out of the way at once:** it goes below every stream
+  that has not had one of them in the last hour. If it was the main stream, the best of the others becomes the
+  main stream, so the next tune starts on a working one. If the stream is already below the working ones, coax
+  still notes what it saw.
+- **Otherwise the streams are kept in score order.** The main stream keeps its place unless another stream scores
+  clearly better (by 3), so a single hiccup does not reshuffle a channel.
+- **A stream that recovers earns its place back** as its strikes fade.
+- **A stream is removed** only when its sound was off its picture twice in a day, or when a backup stayed bad
+  for a long time: a score of 12 or more, strikes in 6 separate hours of the last day, and under 20 clean minutes.
+
+History is kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
 
 ## HLS or MPEG-TS
 

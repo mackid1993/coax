@@ -1,24 +1,38 @@
-"""Feed health: learn which streams of a channel are bad and act on it, then tell the user (the bell).
+"""Feed health: keep each channel's streams in their most stable order, all the time.
 
-Owning the whole pipeline means coax sees every failure of every stream. This module keeps a rolling
-day of that history per channel stream (in <data>/cache/feedhealth.json) and makes three decisions:
+coax sees every problem on every stream it plays. Each problem is a strike against that stream:
 
-- Out-of-sync stream: the engine compared a stream it just switched to against the one it left and found
-  the sound several seconds off the picture. That stream is removed from the channel at once.
-- Constantly failing backup: a backup that failed in REMOVE_FAILS separate half hours of the last day, and
-  played well for less than REMOVE_MAX_GOOD minutes, while another stream of the channel played well,
-  is removed.
-- Unreliable main stream: when the main stream failed in PROMOTE_FAILS separate half hours of the last day
-  and a backup played at least PROMOTE_GOOD minutes without a single failure, that backup becomes the main
-  stream (the old main stream moves to second place). At most once a day per channel.
+  desync     sound seconds off the picture (content check after a switch)      weight 10, demote now
+  dead       a stream failed or stopped answering (engine gave up on it)       weight 3,  demote now
+  placeholder  the provider served an offline slate instead of the channel     weight 3,  demote now
+  novideo    coax had to retune because no video came for 90 s                 weight 3
+  frozen     the engine stopped sending anything for 25 s                      weight 2
+  avsplit    the feed's own audio and video timestamps came apart              weight 2
+  stall      the playlist stalled long enough to need the reserve              weight 1
+  keepalive  video stopped long enough that coax had to hold the connection    weight 1
 
-A channel is never left with fewer than one stream, and a channel with one stream is never changed.
-Every change is recorded as a notification (<data>/notifications.json) with an Undo. Never raises.
+and every clean 10 minutes of playback is credit. A stream's score is its weighted strikes over the last
+day, each fading with a 6 hour half-life, minus a little for clean minutes. Lower is better.
+
+What coax does with it, right away:
+- Demote: a stream with a "demote now" problem moves below every stream that has not had one in the last
+  hour. If that stream was the main one, the best of the others becomes the main stream.
+- Reorder: whenever a strike lands, the streams are kept in score order (the main stream keeps its place
+  unless another stream scores clearly better, so a single hiccup does not reshuffle the channel).
+- Remove: a backup that stayed bad for a long time (score >= REMOVE_SCORE with strikes on at least
+  REMOVE_HOURS separate hours of the last day, and less than 20 clean minutes) is removed, as is a stream
+  whose sound was found off its picture twice. A channel always keeps at least one stream, and a channel
+  with one stream is never changed.
+
+A stream that recovers earns its way back up as its strikes fade. Every change is written to the bell
+(<data>/notifications.json, with Undo) and as a note on the channel (feed_notes in <data>/cache/feedhealth.json).
+Never raises.
 """
 
 import copy
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -26,14 +40,25 @@ import time
 log = logging.getLogger("coax.health")
 
 DAY = 24 * 3600
-FAIL_WINDOW = 1800        # failures of one stream within half an hour count once
-REMOVE_FAILS = 6          # failure half hours in a day that make a backup constantly failing
-REMOVE_MAX_GOOD = 20      # ... when it played well for fewer minutes than this that day
-OTHER_GOOD = 60           # ... and another stream of the channel played well at least this long
-PROMOTE_FAILS = 3         # failure half hours in a day that make a main stream unreliable
-PROMOTE_GOOD = 60         # minutes a backup must have played well, with no failure, to take over
-PROMOTE_COOLDOWN = DAY
+HALF_LIFE = 6 * 3600
+WEIGHT = {"desync": 10.0, "dead": 3.0, "placeholder": 3.0, "novideo": 3.0, "frozen": 2.0, "avsplit": 2.0,
+          "stall": 1.0, "keepalive": 1.0}
+DEMOTE_NOW = {"desync", "dead", "placeholder"}
+DEMOTE_WINDOW = 3600       # a stream hit by a "demote now" problem in the last hour sorts below the rest
+SAME_KIND_GAP = 120        # the same problem on the same stream within 2 minutes counts once
+CLEAN_CREDIT = 0.05        # score taken off per clean minute (10 clean minutes undo half a stall)
+PROMOTE_MARGIN = 3.0       # a backup must score this much better than the main stream to replace it
+REMOVE_SCORE = 12.0
+REMOVE_HOURS = 6
+REMOVE_MAX_GOOD = 20
+DESYNC_REMOVE = 2
+REORDER_GAP = 300          # at most one score reorder per channel every 5 minutes
 MAX_NOTES = 200
+CHANNEL_NOTES = 20
+
+TEXT = {"desync": "sound was off its picture", "dead": "stopped working", "placeholder": "showed an offline slate",
+        "novideo": "sent no video", "frozen": "froze", "avsplit": "had audio and video come apart",
+        "stall": "stalled", "keepalive": "dropped video"}
 
 
 def _load(path, default):
@@ -66,88 +91,170 @@ class FeedHealth:
         self.path = os.path.join(data_dir, "cache", "feedhealth.json")
         self.npath = os.path.join(data_dir, "notifications.json")
         self.lock = threading.RLock()
-        self.feeds = _load(self.path, {})
+        data = _load(self.path, {})
+        self.feeds = data.get("feeds") if isinstance(data.get("feeds"), dict) else {}
+        self.chnotes = data.get("notes") if isinstance(data.get("notes"), dict) else {}
+        self.reordered = data.get("reordered") if isinstance(data.get("reordered"), dict) else {}
         self.notes = _load(self.npath, [])
 
-    # -- history --------------------------------------------------------------------
+    # -- history ------------------------------------------------------------------------
 
     @staticmethod
     def _k(ch, key):
         return "%s|%s|%s" % (ch, key[0], key[1])
 
     def _rec(self, ch, key):
-        return self.feeds.setdefault(self._k(ch, key), {"fails": [], "good": []})
+        return self.feeds.setdefault(self._k(ch, key), {"ev": [], "good": []})
 
-    def _stats(self, ch, key, now):
+    def score(self, ch, key, now):
         rec = self.feeds.get(self._k(ch, key)) or {}
-        fails = [t for t in rec.get("fails", []) if now - t < DAY]
+        s = 0.0
+        for t, kind in rec.get("ev", []):
+            if now - t < DAY:
+                s += WEIGHT.get(kind, 1.0) * math.pow(0.5, (now - t) / HALF_LIFE)
         good = sum(m for t, m in rec.get("good", []) if now - t < DAY)
-        return len(fails), good
+        return max(s - CLEAN_CREDIT * good, 0.0)
 
-    def _save_feeds(self, now):
+    def _recent(self, ch, key, now, kinds, window):
+        rec = self.feeds.get(self._k(ch, key)) or {}
+        return any(now - t < window and k in kinds for t, k in rec.get("ev", []))
+
+    def _hours(self, ch, key, now):
+        rec = self.feeds.get(self._k(ch, key)) or {}
+        return len({int(t // 3600) for t, _ in rec.get("ev", []) if now - t < DAY})
+
+    def _good(self, ch, key, now):
+        rec = self.feeds.get(self._k(ch, key)) or {}
+        return sum(m for t, m in rec.get("good", []) if now - t < DAY)
+
+    def _count(self, ch, key, now, kind):
+        rec = self.feeds.get(self._k(ch, key)) or {}
+        return sum(1 for t, k in rec.get("ev", []) if k == kind and now - t < DAY)
+
+    def _persist(self, now):
         for k in list(self.feeds):
-            if k.startswith("_"):
-                continue
             rec = self.feeds[k]
-            rec["fails"] = [t for t in rec.get("fails", []) if now - t < DAY]
+            rec["ev"] = [e for e in rec.get("ev", []) if now - e[0] < DAY]
             rec["good"] = [g for g in rec.get("good", []) if now - g[0] < DAY]
-            if not rec["fails"] and not rec["good"]:
+            if not rec["ev"] and not rec["good"]:
                 del self.feeds[k]
-        _save(self.path, self.feeds)
+        _save(self.path, {"feeds": self.feeds, "notes": self.chnotes, "reordered": self.reordered})
 
-    def fail(self, ch, key, now=None):
+    # -- signals from the hub --------------------------------------------------------------
+
+    def problem(self, ch, key, kind, detail="", now=None):
+        """A problem seen on a stream (kind is one of WEIGHT)."""
         now = now or time.time()
         with self.lock:
             rec = self._rec(ch, key)
-            if not rec["fails"] or now - rec["fails"][-1] >= FAIL_WINDOW:
-                rec["fails"].append(now)
-            self._save_feeds(now)
-            self._decide(ch, now)
+            if any(k == kind and now - t < SAME_KIND_GAP for t, k in rec["ev"]):
+                return
+            rec["ev"].append([now, kind])
+            self._persist(now)
+            self._decide(ch, now, (key, kind, detail))
 
     def good(self, ch, key, minutes, now=None):
         now = now or time.time()
         with self.lock:
             self._rec(ch, key)["good"].append([now, minutes])
-            self._save_feeds(now)
-            self._decide(ch, now)
+            self._persist(now)
+            self._decide(ch, now, None)
+
+    # compatibility with 1.0.2 callers
+    def fail(self, ch, key, now=None):
+        self.problem(ch, key, "dead", now=now)
 
     def desync(self, ch, key, seconds, ahead, now=None):
-        now = now or time.time()
-        with self.lock:
-            self._remove(ch, key, "its sound was %.0f seconds %s its picture" % (seconds, "ahead of" if ahead else "behind"),
-                         "desync", now)
+        self.problem(ch, key, "desync", "%.0f seconds %s its picture" % (seconds, "ahead of" if ahead else "behind"), now)
 
-    # -- decisions ------------------------------------------------------------------
+    # -- decisions ---------------------------------------------------------------------------
 
-    def _channel(self, cfg, ch):
+    @staticmethod
+    def _channel(cfg, ch):
         return next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(ch)), None)
 
-    def _decide(self, ch, now):
+    def _decide(self, ch, now, hit):
         try:
             chan = self._channel(self.store.get(), ch)
             if chan is None or len(chan.get("streams") or []) < 2:
                 return
             keys = [_key(s) for s in chan["streams"]]
-            st = {k: self._stats(ch, k, now) for k in keys}
-            for k in keys[1:]:
-                fails, good = st[k]
-                if fails >= REMOVE_FAILS and good < REMOVE_MAX_GOOD and \
-                        any(st[o][1] >= OTHER_GOOD for o in keys if o != k):
-                    self._remove(ch, k, "it failed in %d separate half hours of the last day and rarely played" % fails,
-                                 "removed", now)
+            # 1. Remove a stream that has been bad for a long time.
+            for k in keys:
+                desyncs = self._count(ch, k, now, "desync")
+                long_bad = (k != keys[0] and self.score(ch, k, now) >= REMOVE_SCORE
+                            and self._hours(ch, k, now) >= REMOVE_HOURS and self._good(ch, k, now) < REMOVE_MAX_GOOD)
+                if desyncs >= DESYNC_REMOVE or long_bad:
+                    why = ("its sound was off its picture %d times today" % desyncs if desyncs >= DESYNC_REMOVE else
+                           "it kept failing in %d separate hours of the last day" % self._hours(ch, k, now))
+                    self._remove(ch, k, why, now)
                     return
-            fails0 = st[keys[0]][0]
-            last = (self.feeds.get("_promoted") or {}).get(str(ch), 0)
-            if fails0 >= PROMOTE_FAILS and now - last >= PROMOTE_COOLDOWN:
-                cands = [k for k in keys[1:] if st[k][0] == 0 and st[k][1] >= PROMOTE_GOOD]
-                if cands:
-                    best = max(cands, key=lambda k: st[k][1])
-                    self._promote(ch, best, "the main stream failed in %d separate half hours of the last day, and "
-                                  "this backup played %d minutes without a problem" % (fails0, st[best][1]), now)
+            # 2. Best order: streams hit by a "demote now" problem in the last hour go last, then by score.
+            def rank(k):
+                return (self._recent(ch, k, now, DEMOTE_NOW, DEMOTE_WINDOW), self.score(ch, k, now))
+            order = sorted(keys, key=lambda k: (rank(k), keys.index(k)))
+            main = keys[0]
+            urgent = hit is not None and hit[1] in DEMOTE_NOW
+            if order[0] != main:
+                better = (rank(main)[0] and not rank(order[0])[0]) or \
+                    self.score(ch, main, now) - self.score(ch, order[0], now) >= PROMOTE_MARGIN
+                if not better:
+                    order = [main] + [k for k in order if k != main]
+            if order == keys:
+                if urgent:
+                    key, kind, detail = hit
+                    self._note("flagged", ch, chan.get("name"), key,
+                               "Stream %s %s (stream %d) %s%s; it stays where it is, below the working streams." % (
+                                   key[0], key[1], keys.index(key) + 1, TEXT.get(kind, kind),
+                                   " (%s)" % detail if detail else ""), None, now)
+                return
+            if not urgent and now - self.reordered.get(str(ch), 0) < REORDER_GAP and order[0] == main:
+                return
+            self._reorder(ch, keys, order, hit, now)
         except Exception:  # noqa: BLE001 - feed health never takes coax down
             log.exception("feed health decision failed")
 
-    def _remove(self, ch, key, reason, kind, now):
+    def _reorder(self, ch, old, new, hit, now):
+        done = {}
+
+        def mutate(cfg):
+            chan = self._channel(cfg, ch)
+            if chan is None:
+                return None
+            streams = chan.get("streams") or []
+            if [_key(s) for s in streams] != old:
+                return None
+            by = {_key(s): s for s in streams}
+            chan["streams"] = [by[k] for k in new]
+            done["name"] = chan.get("name")
+            return True
+        try:
+            if not self.store.update(mutate):
+                return
+        except Exception:  # noqa: BLE001
+            log.exception("could not reorder streams")
+            return
+        self.reordered[str(ch)] = now
+        moved, cause = (hit[0], hit[1]) if hit else (None, None)
+        if new[0] != old[0]:
+            kind = "promoted"
+            text = "Made stream %s %s the main stream (was stream %d)" % (new[0][0], new[0][1], old.index(new[0]) + 1)
+            if moved == old[0] and cause:
+                text += " because the main stream %s%s." % (TEXT.get(cause, cause), " (%s)" % hit[2] if hit[2] else "")
+            else:
+                text += " because it has been more stable."
+        else:
+            kind = "reordered"
+            if moved and cause:
+                text = "Moved stream %s %s from place %d to %d because it %s%s." % (
+                    moved[0], moved[1], old.index(moved) + 1, new.index(moved) + 1, TEXT.get(cause, cause),
+                    " (%s)" % hit[2] if hit[2] else "")
+            else:
+                text = "Put the streams in order of how stable they have been."
+        log.warning("[%s] %s", done["name"], text)
+        self._note(kind, ch, done["name"], moved or new[0], text, {"order": [list(k) for k in old]}, now)
+
+    def _remove(self, ch, key, reason, now):
         done = {}
 
         def mutate(cfg):
@@ -156,10 +263,8 @@ class FeedHealth:
                 return None
             streams = chan.get("streams") or []
             for i, s in enumerate(streams):
-                if _key(s) == key:
-                    if len(streams) < 2:
-                        return None
-                    done.update(index=i, stream=copy.deepcopy(s), name=chan.get("name"), main=i == 0)
+                if _key(s) == key and len(streams) > 1:
+                    done.update(index=i, stream=copy.deepcopy(s), name=chan.get("name"))
                     del streams[i]
                     return True
             return None
@@ -170,49 +275,29 @@ class FeedHealth:
             log.exception("could not remove a stream")
             return
         self.feeds.pop(self._k(ch, key), None)
-        self._save_feeds(now)
-        which = "main stream" if done["main"] else "backup stream %d" % (done["index"] + 1)
-        text = "Removed %s (%s %s) because %s." % (which, key[0], key[1], reason)
+        text = "Removed stream %s %s (was stream %d) because %s." % (key[0], key[1], done["index"] + 1, reason)
         log.warning("[%s] %s", done["name"], text)
-        self._note(kind, ch, done["name"], key, text, {"index": done["index"], "stream": done["stream"]}, now)
+        self._note("removed", ch, done["name"], key, text, {"index": done["index"], "stream": done["stream"]}, now)
 
-    def _promote(self, ch, key, reason, now):
-        done = {}
-
-        def mutate(cfg):
-            chan = self._channel(cfg, ch)
-            if chan is None:
-                return None
-            streams = chan.get("streams") or []
-            i = next((j for j, s in enumerate(streams) if _key(s) == key), None)
-            if not i:
-                return None
-            done.update(order=[_key(s) for s in streams], name=chan.get("name"), index=i)
-            streams.insert(0, streams.pop(i))
-            return True
-        try:
-            if not self.store.update(mutate):
-                return
-        except Exception:  # noqa: BLE001
-            log.exception("could not promote a stream")
-            return
-        self.feeds.setdefault("_promoted", {})[str(ch)] = now
-        self._save_feeds(now)
-        text = "Made backup stream %d (%s %s) the main stream because %s." % (done["index"] + 1, key[0], key[1], reason)
-        log.warning("[%s] %s", done["name"], text)
-        self._note("promoted", ch, done["name"], key, text, {"order": done["order"]}, now)
-
-    # -- notifications ----------------------------------------------------------------
+    # -- notifications and channel notes ------------------------------------------------------
 
     def _note(self, kind, ch, name, key, text, undo, now):
         nid = str(int(now * 1000))
         while any(n["id"] == nid for n in self.notes):
             nid = str(int(nid) + 1)
-        self.notes.insert(0, {"id": nid, "t": now, "kind": kind, "channel_id": ch, "channel": name,
-                              "provider": key[0], "stream_id": key[1], "text": text, "undo": undo,
-                              "undone": False, "read": False})
+        note = {"id": nid, "t": now, "kind": kind, "channel_id": ch, "channel": name, "provider": key[0],
+                "stream_id": key[1], "text": text, "undo": undo, "undone": False, "read": False}
+        self.notes.insert(0, note)
         del self.notes[MAX_NOTES:]
         _save(self.npath, self.notes)
+        lst = self.chnotes.setdefault(str(ch), [])
+        lst.insert(0, {"t": now, "kind": kind, "text": text})
+        del lst[CHANNEL_NOTES:]
+        self._persist(now)
+
+    def channel_notes(self):
+        with self.lock:
+            return copy.deepcopy(self.chnotes)
 
     def list(self):
         with self.lock:
@@ -239,9 +324,8 @@ class FeedHealth:
                     return None
                 streams = chan.setdefault("streams", [])
                 if "stream" in u:
-                    if any(_key(s) == key for s in streams):
-                        return True
-                    streams.insert(min(int(u["index"]), len(streams)), u["stream"])
+                    if not any(_key(s) == key for s in streams):
+                        streams.insert(min(int(u["index"]), len(streams)), u["stream"])
                     return True
                 order = [tuple(x) for x in u.get("order") or []]
                 if sorted(order) == sorted(_key(s) for s in streams):
@@ -251,8 +335,12 @@ class FeedHealth:
             if not self.store.update(mutate):
                 raise KeyError(nid)
             self.feeds.pop(self._k(note["channel_id"], key), None)
+            self.reordered[str(note["channel_id"])] = time.time()
             note["undone"] = True
             note["read"] = True
+            lst = self.chnotes.setdefault(str(note["channel_id"]), [])
+            lst.insert(0, {"t": time.time(), "kind": "undo", "text": "Undid: " + note["text"]})
+            del lst[CHANNEL_NOTES:]
             _save(self.npath, self.notes)
-            _save(self.path, self.feeds)
+            self._persist(time.time())
             return note

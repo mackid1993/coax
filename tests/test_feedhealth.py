@@ -1,7 +1,6 @@
-"""Feed health: out-of-sync and constantly failing streams are removed, a reliable backup takes over."""
+"""Feed health: problems reorder streams at once; long-bad streams are removed; notes and Undo."""
 
 import copy
-import os
 import tempfile
 import unittest
 
@@ -22,10 +21,6 @@ class Store:
         return r
 
 
-def cfg(*sids):
-    return {"channels": [{"id": 5, "name": "Ch", "streams": [{"provider": "p1", "stream_id": s} for s in sids]}]}
-
-
 def ids(store):
     return [s["stream_id"] for s in store.cfg["channels"][0]["streams"]]
 
@@ -38,71 +33,87 @@ class FeedHealthTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def make(self, *sids):
-        st = Store(cfg(*sids))
+        st = Store({"channels": [{"id": 5, "name": "Ch", "streams": [{"provider": "p1", "stream_id": s} for s in sids]}]})
         return st, fh.FeedHealth(st, self.tmp.name)
 
-    def test_desync_removes_stream_notifies_and_undo_restores(self):
+    def test_desync_on_backup_moves_it_last_at_once_and_notes(self):
         st, h = self.make("a", "b", "c")
-        h.desync(5, ("p1", "c"), 11.8, True)
-        self.assertEqual(ids(st), ["a", "b"])
-        n = h.list()
-        self.assertEqual(n["unread"], 1)
-        self.assertIn("ahead of its picture", n["items"][0]["text"])
-        h.undo(n["items"][0]["id"])
-        self.assertEqual(ids(st), ["a", "b", "c"])
-        self.assertTrue(h.list()["items"][0]["undone"])
-        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "notifications.json")))
+        h.problem(5, ("p1", "b"), "desync", "12 seconds ahead of its picture", now=1000)
+        self.assertEqual(ids(st), ["a", "c", "b"])
+        n = h.list()["items"][0]
+        self.assertEqual(n["kind"], "reordered")
+        self.assertIn("sound was off its picture", n["text"])
+        self.assertIn("off its picture", h.channel_notes()["5"][0]["text"])
 
-    def test_single_stream_channel_is_never_changed(self):
-        st, h = self.make("a")
-        h.desync(5, ("p1", "a"), 12, True)
+    def test_dead_main_stream_hands_over_to_best_backup_immediately(self):
+        st, h = self.make("a", "b", "c")
+        h.problem(5, ("p1", "b"), "stall", now=900)
+        h.problem(5, ("p1", "a"), "dead", now=1000)
+        self.assertEqual(ids(st), ["c", "b", "a"])
+        self.assertEqual(h.list()["items"][0]["kind"], "promoted")
+
+    def test_one_hiccup_does_not_reshuffle_main(self):
+        st, h = self.make("a", "b")
+        h.problem(5, ("p1", "a"), "stall", now=1000)
+        self.assertEqual(ids(st), ["a", "b"])
+
+    def test_steady_minor_problems_on_main_promote_a_clean_backup(self):
+        st, h = self.make("a", "b")
+        for i in range(4):
+            h.problem(5, ("p1", "a"), "frozen", now=1000 + i * 600)
+        self.assertEqual(ids(st), ["b", "a"])
+
+    def test_recovered_stream_earns_its_place_back(self):
+        st, h = self.make("a", "b")
+        h.problem(5, ("p1", "a"), "dead", now=1000)
+        self.assertEqual(ids(st), ["b", "a"])
+        t = 1000 + 2 * 3600
+        for i in range(6):
+            h.problem(5, ("p1", "b"), "frozen", now=t + i * 600)
+        self.assertEqual(ids(st), ["a", "b"])
+
+    def test_second_desync_removes_stream_and_undo_restores(self):
+        st, h = self.make("a", "b", "c")
+        h.problem(5, ("p1", "c"), "desync", now=1000)
+        h.problem(5, ("p1", "c"), "desync", now=1000 + 600)
+        self.assertEqual(ids(st), ["a", "b"])
+        n = h.list()["items"][0]
+        self.assertEqual(n["kind"], "removed")
+        h.undo(n["id"])
+        self.assertIn("c", ids(st))
+
+    def test_long_bad_backup_removed(self):
+        st, h = self.make("a", "b")
+        h.good(5, ("p1", "a"), 300, now=500)
+        for hour in range(fh.REMOVE_HOURS):
+            for j in range(3):
+                h.problem(5, ("p1", "b"), "dead", now=1000 + hour * 3600 + j * 300)
+        self.assertEqual(ids(st), ["a"])
+
+    def test_same_problem_within_two_minutes_counts_once(self):
+        st, h = self.make("a", "b")
         for i in range(10):
-            h.fail(5, ("p1", "a"), now=1000 + i * 3600)
+            h.problem(5, ("p1", "b"), "stall", now=1000 + i)
+        self.assertEqual(len(h.feeds["5|p1|b"]["ev"]), 1)
+
+    def test_single_stream_never_changed(self):
+        st, h = self.make("a")
+        for i in range(5):
+            h.problem(5, ("p1", "a"), "desync", now=1000 + i * 600)
         self.assertEqual(ids(st), ["a"])
         self.assertEqual(h.list()["items"], [])
 
-    def test_constantly_failing_backup_removed_only_when_another_plays_well(self):
+    def test_bad_stream_already_last_is_still_noted(self):
         st, h = self.make("a", "b")
-        t = 100000
-        for i in range(fh.REMOVE_FAILS):
-            h.fail(5, ("p1", "b"), now=t + i * fh.FAIL_WINDOW)
-        self.assertEqual(ids(st), ["a", "b"])            # nothing played well yet: maybe a provider outage
-        h.good(5, ("p1", "a"), fh.OTHER_GOOD, now=t + 7 * fh.FAIL_WINDOW)
-        self.assertEqual(ids(st), ["a"])
-        self.assertEqual(h.list()["items"][0]["kind"], "removed")
-
-    def test_failures_in_one_half_hour_count_once(self):
-        st, h = self.make("a", "b")
-        h.good(5, ("p1", "a"), 600, now=1000)
-        for i in range(20):
-            h.fail(5, ("p1", "b"), now=1000 + i * 60)
+        h.problem(5, ("p1", "b"), "dead", now=1000)
         self.assertEqual(ids(st), ["a", "b"])
+        n = h.list()["items"][0]
+        self.assertEqual(n["kind"], "flagged")
+        self.assertIsNone(n["undo"])
 
-    def test_reliable_backup_becomes_main_once_a_day(self):
-        st, h = self.make("a", "b", "c")
-        t = 200000
-        h.good(5, ("p1", "c"), fh.PROMOTE_GOOD, now=t)
-        for i in range(fh.PROMOTE_FAILS):
-            h.fail(5, ("p1", "a"), now=t + i * fh.FAIL_WINDOW)
-        self.assertEqual(ids(st), ["c", "a", "b"])
-        note = h.list()["items"][0]
-        self.assertEqual(note["kind"], "promoted")
-        # the new main stream failing right away does not flip it back the same day
-        for i in range(fh.PROMOTE_FAILS):
-            h.fail(5, ("p1", "c"), now=t + 3600 + i * fh.FAIL_WINDOW)
-        self.assertEqual(ids(st)[0], "c")
-        h.undo(note["id"])
-        self.assertEqual(ids(st), ["a", "b", "c"])
-
-    def test_backup_with_a_failure_is_not_promoted(self):
+    def test_mark_read_and_persist(self):
         st, h = self.make("a", "b")
-        h.good(5, ("p1", "b"), 600, now=1000)
-        h.fail(5, ("p1", "b"), now=1100)
-        for i in range(fh.PROMOTE_FAILS):
-            h.fail(5, ("p1", "a"), now=2000 + i * fh.FAIL_WINDOW)
-        self.assertEqual(ids(st), ["a", "b"])
-
-    def test_mark_read(self):
-        st, h = self.make("a", "b")
-        h.desync(5, ("p1", "b"), 5, False)
+        h.problem(5, ("p1", "b"), "desync", now=1000)
         self.assertEqual(h.mark_read()["unread"], 0)
+        h2 = fh.FeedHealth(st, self.tmp.name)
+        self.assertTrue(h2.channel_notes()["5"])

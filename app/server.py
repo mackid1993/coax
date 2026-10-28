@@ -1057,8 +1057,13 @@ class Handler(BaseHTTPRequestHandler):
     def h_channels_list(self):
         cfg = self.app.store.get()
         lineup_map = self._lineup_map(cfg)
-        return {"channels": [self._channel_view(c, cfg, lineup_map) for c in cfg["channels"]],
-                "next_id": cfg["next_channel_id"]}
+        notes = self.app.health.channel_notes() if self.app.health is not None else {}
+        out = []
+        for c in cfg["channels"]:
+            view = self._channel_view(c, cfg, lineup_map)
+            view["feed_notes"] = notes.get(str(c["id"]), [])[:5]
+            out.append(view)
+        return {"channels": out, "next_id": cfg["next_channel_id"]}
 
     def h_channel_get(self, channel_id):
         cfg = self.app.store.get()

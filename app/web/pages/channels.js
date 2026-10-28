@@ -322,7 +322,7 @@ function rowHtml(c) {
     <td class="keep">${checkHtml(sel, `data-sel aria-label="Select ${esc(c.name)}"`)}</td>
     <td class="keep"><button class="drag-handle" draggable="true" data-drag aria-label="Reorder ${esc(c.name)}, Alt plus arrow keys" title="Drag to reorder (Alt+↑/↓)">${icon("grip")}</button></td>
     <td><input class="input num-input" data-num value="${esc(c.number ?? "")}" aria-label="Channel number for ${esc(c.name)}" inputmode="decimal"></td>
-    <td><div class="cell-name">${logo(c.logo, c.name)}<div style="min-width:0"><div class="row" style="gap:4px;flex-wrap:nowrap"><div class="name">${esc(c.name)}</div><button class="btn btn-ghost btn-sm btn-icon edit-ch" data-act="edit" aria-label="Edit name, number, group and logo of ${esc(c.name)}" data-pop="Edit channel" data-pop-sub="Name, number, group and logo" data-pop-always>${icon("edit")}</button></div><div class="meta">${lineupCell(c)}${c.missing_streams ? ` <span class="badge badge-bad" title="A stream vanished from the provider catalog">${icon("alert", 'style="width:12px;height:12px"')}${c.missing_streams} vanished</span>` : ""}</div></div></div></td>
+    <td><div class="cell-name">${logo(c.logo, c.name)}<div style="min-width:0"><div class="row" style="gap:4px;flex-wrap:nowrap"><div class="name">${esc(c.name)}</div><button class="btn btn-ghost btn-sm btn-icon edit-ch" data-act="edit" aria-label="Edit name, number, group and logo of ${esc(c.name)}" data-pop="Edit channel" data-pop-sub="Name, number, group and logo" data-pop-always>${icon("edit")}</button></div><div class="meta">${lineupCell(c)}${feedNote(c)}${c.missing_streams ? ` <span class="badge badge-bad" title="A stream vanished from the provider catalog">${icon("alert", 'style="width:12px;height:12px"')}${c.missing_streams} vanished</span>` : ""}</div></div></div></td>
     <td class="keep">${switchHtml("", c.enabled !== false, "", `data-enabled aria-label="Enabled"`)}</td>
     <td>${guideCell(c, p)}</td>
     <td>${backupsCell(c, p)}</td>
@@ -777,6 +777,15 @@ function downloadUnsaved() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   toast("Downloaded", `${rows.length} channels with checked suggestions`, "ok");
+}
+
+function feedNote(c) {
+  const n = c.feed_notes || [];
+  if (!n.length) return "";
+  const t = (x) => new Date(x.t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const sub = n.map((x) => `${t(x)}: ${x.text}`).join("\n");
+  const label = { removed: "Stream removed", promoted: "New main stream", undo: "Change undone", flagged: "Bad stream seen" }[n[0].kind] || "Streams reordered";
+  return ` <span class="badge badge-warn feed-note" data-pop="${esc(label)}, ${esc(t(n[0]))}" data-pop-sub="${esc(sub)}" data-pop-always>${icon("layers", 'style="width:12px;height:12px"')}${esc(label)}</span>`;
 }
 
 // ---------- Guide editor ----------
