@@ -131,6 +131,29 @@ class FeedHealth:
         rec = self.feeds.get(self._k(ch, key)) or {}
         return max((b[1] for b in rec.get("blocks", []) if b[1] > now), default=0)
 
+    def block_info(self, ch, key, now=None):
+        """The block on a stream now: {"until": epoch, "kind", "why"}, or None."""
+        now = now or time.time()
+        with self.lock:
+            rec = self.feeds.get(self._k(ch, key)) or {}
+            live = [b for b in rec.get("blocks", []) if b[1] > now]
+        if not live:
+            return None
+        b = max(live, key=lambda x: x[1])
+        return {"until": b[1], "kind": b[2], "why": TEXT.get(b[2], "")}
+
+    def unblock(self, ch, key, now=None):
+        """Lift every block on a stream now; its strikes are cleared so it is not blocked again at once."""
+        now = now or time.time()
+        with self.lock:
+            rec = self.feeds.get(self._k(ch, key))
+            if not rec or not any(b[1] > now for b in rec.get("blocks", [])):
+                return False
+            rec["blocks"] = [[b[0], min(b[1], now), b[2]] for b in rec["blocks"]]
+            rec["ev"] = []
+            self._persist(now)
+            return True
+
     def is_blocked(self, ch, key, now=None):
         return self.blocked_until(ch, key, now) > 0
 

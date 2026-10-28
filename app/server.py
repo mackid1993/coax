@@ -494,6 +494,7 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/channels/(\d+)/streams", "h_channel_attach"),
         ("POST", r"/api/channels/(\d+)/feed", "h_channel_feed"),
         ("POST", r"/api/channels/(\d+)/switch", "h_channel_switch"),
+        ("POST", r"/api/channels/(\d+)/unblock", "h_channel_unblock"),
         ("GET", r"/api/gracenote/search", "h_gracenote_search"),
         ("GET", r"/api/gracenote/suggest", "h_gracenote_suggest"),
         ("POST", r"/api/gracenote/bulk-suggest", "h_gracenote_bulk_suggest"),
@@ -1349,6 +1350,18 @@ class Handler(BaseHTTPRequestHandler):
         except (LookupError, ValueError, TypeError) as exc:
             raise bad_request(str(exc))
         return {"ok": True, "text": text}
+
+    def h_channel_unblock(self, channel_id):
+        """Lift Smart Standby's block on one stream of a channel now."""
+        body = self._body_object()
+        hub = self.app.hub
+        if hub is None or not hasattr(hub, "unblock"):
+            raise bad_request("feed health is not running")
+        try:
+            hub.unblock(int(channel_id), str(body.get("provider") or ""), str(body.get("stream_id") or ""))
+        except LookupError as exc:
+            raise bad_request(str(exc))
+        return {"ok": True}
 
     def h_channel_attach(self, channel_id):
         channel_id = int(channel_id)

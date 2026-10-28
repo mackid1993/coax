@@ -168,12 +168,27 @@ function feedsHtml(x) {
     <span class="f-main" data-pop="${esc(s.name || "Stream " + s.stream_id)}" data-pop-sub="${esc(`${s.provider_name}${s.group ? " · " + s.group : ""} · stream ${s.stream_id}`)}"><span class="ellip f-name">${esc(s.name || "Stream " + s.stream_id)}</span><span class="faint small ellip">${esc(s.provider_name)}${s.group ? ` · ${esc(s.group)}` : ""} · <span class="num">${esc(s.stream_id)}</span></span></span>
     ${s.playing ? `<span class="badge badge-ok"><span class="dot pulse"></span>Playing now</span>` : ""}
     ${s.disabled ? `<span class="badge badge-bad" title="Disabled by you: never played or used as a backup">Disabled</span>` : ""}
-    ${s.blocked && !s.disabled ? `<span class="badge badge-warn" title="Smart Standby blocked this stream for a while">Blocked</span>` : ""}
+    ${s.blocked && !s.disabled ? `<button type="button" class="badge badge-blocked" data-unblock ${at(s)} data-pop="Blocked for ${esc(timeLeft(s.blocked_until))}" data-pop-sub="${esc((s.block_why ? `Smart Standby blocked it because ${s.block_why}. ` : "") + "Click to unblock it now.")}" data-pop-always>Blocked · ${esc(timeLeft(s.blocked_until))}</button>` : ""}
     <button class="btn btn-sm" data-feed-switch ${at(s)} ${s.playing || s.disabled ? "disabled" : ""}>Switch</button>
     <label class="f-off" title="A disabled stream is never played or used as a backup"><input type="checkbox" data-feed-off ${at(s)} ${s.disabled ? "checked" : ""}> Disable</label>
   </div>`).join("")}</div>`;
 }
+function timeLeft(t) {
+  const m = Math.max(1, Math.round(((Number(t) || 0) * 1000 - Date.now()) / 60000));
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
 async function onFeedClick(e) {
+  const u = e.target.closest("[data-unblock]");
+  if (u) {
+    if (u.disabled) return;
+    u.disabled = true;
+    try {
+      await api.unblockFeed(u.dataset.ch, { provider: u.dataset.p, stream_id: u.dataset.s });
+      toast("Stream unblocked", `${u.dataset.n} (stream ${u.dataset.s}) can be played and used as a backup again.`, "ok", 5000);
+    } catch (err) { toastError("Could not unblock the stream", err); u.disabled = false; }
+    poll();
+    return;
+  }
   const b = e.target.closest("[data-feed-switch]");
   if (!b || b.disabled) return;
   b.disabled = true;

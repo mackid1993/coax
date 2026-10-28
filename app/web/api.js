@@ -127,6 +127,7 @@ export const api = {
   updateChannel: (id, c) => put(routes.channel(id), c),
   setFeedDisabled: (id, b) => post(`/api/channels/${id}/feed`, b),
   switchFeed: (id, b) => post(`/api/channels/${id}/switch`, b),
+  unblockFeed: (id, b) => post(`/api/channels/${id}/unblock`, b),
   deleteChannel: (id) => del(routes.channel(id)),
   setChannelStreams: (id, streams, mode = "replace") => post(routes.channelStreams(id), { streams, mode }),
   bulkAdd: (body) => post(routes.channelsBulkAdd(), body),

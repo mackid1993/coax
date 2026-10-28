@@ -726,3 +726,5 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
 .feed.off .f-name, .backup-item.off .ellip { text-decoration: line-through; }
 .f-off { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .bchip.off { opacity: .55; text-decoration: line-through; }
+.badge-blocked { min-width: 108px; justify-content: center; background: rgba(167, 139, 250, .14); color: #A78BFA; border: 1px dashed rgba(167, 139, 250, .6); cursor: pointer; font-family: inherit; }
+.badge-blocked:hover, .badge-blocked:focus-visible { border-style: solid; background: rgba(167, 139, 250, .22); }

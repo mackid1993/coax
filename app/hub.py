@@ -122,8 +122,7 @@ def _r(p):
 # Engine log line -> (kind, level, plain-English text) for the Status page timeline.
 EVENT_RULES = [
     (_r(r"switching to stream (\d+) of (\d+)"), "failover", "warn",
-     lambda m: "Switched to %s (stream %s of %s)" % ("the main stream" if m.group(1) == "1" else "backup stream",
-                                                     m.group(1), m.group(2))),
+     lambda m: "Switched to stream %s of %s" % (m.group(1), m.group(2))),
     (_r(r"offline placeholder"), "placeholder", "warn", "Provider showed an offline placeholder; avoiding it"),
     (_r(r"audio and video are ([\d.]+)s apart"), "avsync", "warn",
      lambda m: "Audio and video %ss apart in this feed; held back" % m.group(1)),
@@ -150,10 +149,6 @@ EVENT_RULES = [
     (_r(r"viewer buffer: (\d+) viewers"), "viewers", "info", lambda m: "%s viewers; new viewer given a head start" % m.group(1)),
     (_r(r"transcoding with (.+)$"), "transcode", "info", lambda m: "Transcoding with %s" % m.group(1)),
     (_r(r"resuming after an engine restart"), "restart", "info", "Resumed after an engine restart"),
-    (_r(r"sync check: stream (\d+) of \d+ has its sound ([\d.]+)s (ahead of|behind)"), "avsync", "bad",
-     lambda m: "Stream %s's sound was %ss %s its picture; left it and removed it from the channel"
-     % (m.group(1), m.group(2), m.group(3))),
-    (_r(r"sync check: stream (\d+) is in step"), "avsync", "ok", lambda m: "Stream %s checked: sound in step" % m.group(1)),
 ]
 
 
@@ -242,7 +237,7 @@ class Session:
                 line = _redact(raw.decode("utf-8", "replace").rstrip())
                 if line:
                     self._watch(line)
-                    log.info("[%s] %s", self.name, line)
+                    log.info("[%s] %s", self.name, self.hub._label(line))
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -267,7 +262,7 @@ class Session:
                 # while a freshly started engine gets its first video out is startup, not a correction.
                 startup = kind == "keepalive" and time.monotonic() - self.spawned_at < STARTUP_GRACE
                 if kind != "transcode" and not startup:
-                    self.event(kind, text, level)
+                    self.event(kind, self.hub._label(line, text), level)
                 if kind == "failover":
                     self.input_fmt = {}
                     try:
@@ -281,9 +276,7 @@ class Session:
                 break
         m = REF.search(line)
         if m:
-            if "sync check:" in line:
-                self.hub._desync(self, m.group(1), line)
-            elif "switching to stream" in line:
+            if "switching to stream" in line:
                 self.hub._follow(self, m.group(1))
             elif re.search(r"\b(failed|is not answering)\b", line):
                 self.hub._note_bad(m.group(1), self)
@@ -607,19 +600,25 @@ class Hub:
         if session is not None:
             self._health("problem", session.channel_id, key, "dead")
 
-    def _desync(self, session, ref, line):
-        """Sync check result: a stream in step is checked; one whose sound is off its picture is blocked."""
-        hit = self._refs.get(ref)
-        if hit is not None and "is in step" in line:
-            self._health("verified", session.channel_id, (hit[0], hit[2]))
-            return
-        m = re.search(r"sound ([\d.]+)s (ahead of|behind)", line)
-        if hit is None or m is None:
-            return
+    def _label(self, line, text=None):
+        """Name the stream by its id, not by its place in the engine's list (that list starts with the playing
+        stream and leaves disabled streams out, so "stream 1 of 2" is not the channel's first stream)."""
+        text = line if text is None else text
+        m = REF.search(line)
+        hit = self._refs.get(m.group(1)) if m else None
+        if hit is None:
+            return text
+        return re.sub(r"\bstream \d+ of \d+\b", "stream %s" % hit[2], text, count=1)
+
+    def unblock(self, channel_id, provider_id, stream_id):
+        """Lift a Smart Standby block now (the Unblock button)."""
+        key = (str(provider_id), str(stream_id))
+        if self.health is None or not self.health.unblock(channel_id, key):
+            raise LookupError("that stream is not blocked")
         with self._lock:
-            self._bad[(hit[0], hit[2])] = [time.monotonic() + 86400, 9]
-        self._health("problem", session.channel_id, (hit[0], hit[2]), "desync",
-                     "%s seconds %s its picture" % (m.group(1), m.group(2)))
+            self._bad.pop(key, None)
+        log.info("stream %s of channel %s unblocked by hand", key[1], channel_id)
+        return True
 
     def _blocked(self, channel_id, stream_provider):
         """Feed health blocked this stream (it still plays if every stream of the channel is blocked)."""
@@ -880,13 +879,16 @@ class Hub:
                         info = cat.find_stream(pid, sid) or {}
                     except Exception:  # noqa: BLE001
                         info = {}
-                try:
-                    blocked = bool(p) and bool(self._blocked(s.channel_id, (ref, p)))
-                except Exception:  # noqa: BLE001
-                    blocked = False
+                info = None
+                if self.health is not None:
+                    try:
+                        info = self.health.block_info(s.channel_id, (pid, sid))
+                    except Exception:  # noqa: BLE001
+                        info = None
                 out.append({"provider": pid, "provider_name": p.get("name") or pid, "stream_id": sid,
                             "name": info.get("name", ""), "group": info.get("group", ""),
-                            "disabled": bool(ref.get("disabled")), "playing": (pid, sid) == cur, "blocked": blocked})
+                            "disabled": bool(ref.get("disabled")), "playing": (pid, sid) == cur, "blocked": bool(info),
+                            "blocked_until": info["until"] if info else None, "block_why": info["why"] if info else ""})
             return out
         except Exception:  # noqa: BLE001
             return []

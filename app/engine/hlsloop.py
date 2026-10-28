@@ -674,209 +674,6 @@ cur = src
 pend = False
 fbad = {}
 lpr = -1000000000.0
-# Sync check. Timestamps can be right while a feed's sound is seconds off its picture (the provider built it
-# that way). After a switch, the new stream's first SYNCD seconds are compared by content with the last
-# SYNCD seconds of the stream it replaced (avcheck.py, in a separate low-priority process). A stream whose
-# sound is off is left for good, and coax removes it from the channel. Only a stream already known to be
-# in step (the tuned one, or one that passed this check) is used as the reference.
-SL = threading.Lock()
-SYNCD = 35.0
-REFD = 60.0
-SCANBAD = set()
-SCAN = {"t": -1e9, "busy": False}
-SYNC = {"ref": collections.deque(), "refd": 0.0, "refu": None, "old": None, "oldu": None, "new": [], "newd": 0.0, "newu": None}
-TRUST = {src}
-SYNCBAD = [None]
-
-def synckeep(u, d, dur):
-    with SL:
-        if SYNC["old"] is not None and SYNC["newu"] == u:
-            SYNC["new"].append(d)
-            SYNC["newd"] += dur
-            syncfire()
-        if SYNC["refu"] != u:
-            SYNC["ref"].clear()
-            SYNC["refd"] = 0.0
-            SYNC["refu"] = u
-        SYNC["ref"].append((d, dur))
-        SYNC["refd"] += dur
-        while SYNC["ref"] and SYNC["refd"] - SYNC["ref"][0][1] >= REFD:
-            SYNC["refd"] -= SYNC["ref"].popleft()[1]
-
-def syncswitch(u):
-    with SL:
-        if SYNC["refu"] in TRUST and SYNC["refd"] >= SYNCD / 2 and u not in TRUST:
-            SYNC["old"] = [x[0] for x in SYNC["ref"]]
-            SYNC["oldu"] = SYNC["refu"]
-            SYNC["new"] = []
-            SYNC["newd"] = 0.0
-            SYNC["newu"] = u
-            SYNC["pre"] = False
-        else:
-            SYNC["old"] = None
-
-def synccheck(old, new, u):
-    r_ = avcmp(old, new)
-    if r_ is not None:
-        syncverdict(u, r_, True)
-
-def avcmp(old, new):
-    a_ = "/tmp/hlsloop-sync-%d-%d-a.ts" % (os.getpid(), threading.get_ident())
-    b_ = "/tmp/hlsloop-sync-%d-%d-b.ts" % (os.getpid(), threading.get_ident())
-    r_ = {}
-    try:
-        with open(a_, "wb") as f:
-            f.write(old)
-        with open(b_, "wb") as f:
-            f.write(new)
-        c_ = sp.run(["nice", "-n", "10", sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "avcheck.py"), a_, b_, FF], capture_output=True, text=True, timeout=240)
-        r_ = json.loads(c_.stdout or "{}")
-        o1 = r_.get("offset")
-        if o1 is not None and abs(o1) >= 2.0:
-            # One reading never blocks a stream: the later half of the new clip must give the same answer.
-            h_ = len(new) // 2 // 188 * 188
-            with open(b_, "wb") as f:
-                f.write(new[h_:])
-            c2 = sp.run(c_.args, capture_output=True, text=True, timeout=240)
-            o2 = json.loads(c2.stdout or "{}").get("offset")
-            if o2 is None or (o2 < 0) != (o1 < 0) or abs(o2 - o1) > 1.5:
-                r_ = {"offset": None, "why": "a second reading did not agree (%.1fs, then %s)" % (o1, "none" if o2 is None else "%.1fs" % o2)}
-    except Exception as x:
-        log("sync check: could not compare (%s)" % x)
-        return None
-    finally:
-        for p_ in (a_, b_):
-            try:
-                os.remove(p_)
-            except Exception:
-                pass
-    return r_
-
-def syncverdict(u, r_, leave):
-    o_ = r_.get("offset")
-    fl_ = feeds()
-    i_ = fl_.index(u) + 1 if u in fl_ else 0
-    if o_ is None:
-        log("sync check: no clear verdict for stream %d (%s); it stays unchecked [ref %s]" % (i_, r_.get("why") or "no result", ref(u)))
-        return
-    if abs(o_) < 2.0:
-        TRUST.add(u)
-        log("sync check: stream %d is in step with the previous stream [ref %s]" % (i_, ref(u)))
-        return
-    log("sync check: stream %d of %d has its sound %.1fs %s its picture; %s [ref %s]" % (i_, len(fl_), abs(o_), "ahead of" if o_ < 0 else "behind", "leaving it for good" if leave else "not switching to it", ref(u)))
-    SCANBAD.add(u)
-    fbad[u] = [mono() + 86400, 9]
-    if leave:
-        SYNCBAD[0] = u
-
-def grabwin(w, u):
-    # The stream's current HLS window, newest REFD seconds, for the check only (not played).
-    r = w.get(u, timeout=(3, 5))
-    r.raise_for_status()
-    t = r.text
-    if "#EXT-X-STREAM-INF" in t:
-        v = [x.strip() for x in t.splitlines() if x.strip() and (not x.startswith("#"))]
-        r = w.get(up.urljoin(r.url, v[0]), timeout=(3, 5))
-        r.raise_for_status()
-        t = r.text
-    segs = []
-    du = 0.0
-    for x in t.splitlines():
-        x = x.strip()
-        if x.startswith("#EXTINF:"):
-            try:
-                du = float(x[8:].split(",")[0])
-            except Exception:
-                du = 0.0
-        elif x and (not x.startswith("#")):
-            segs.append((up.urljoin(r.url, x), du or tgt))
-            du = 0.0
-    out = []
-    tot = 0.0
-    for su, sd in reversed(segs):
-        if tot >= REFD:
-            break
-        g = w.get(su, timeout=(3, 10))
-        g.raise_for_status()
-        out.insert(0, g.content)
-        tot += sd
-    if not out:
-        raise ValueError("empty playlist")
-    return b"".join(out)
-
-def lineof(u):
-    m = XC.search(u or "")
-    return (up.urlsplit(u).netloc, m.group(2), m.group(3)) if m else (up.urlsplit(u or "").netloc,)
-
-def scan(why):
-    # Real trouble on the playing stream: check every other stream of the channel now, while the reserve
-    # plays, so a switch goes to a stream known to be in step. Problems the reserve absorbs never get here.
-    with SL:
-        if SCAN["busy"] or mono() - SCAN["t"] < 600 or SYNC["refu"] not in TRUST or SYNC["refd"] < 20:
-            return
-        SCAN["busy"] = True
-        SCAN["t"] = mono()
-        rd_ = b"".join((x[0] for x in SYNC["ref"]))
-    threading.Thread(target=scanrun, args=(why, rd_), daemon=True).start()
-
-def scanrun(why, rd_):
-    try:
-        fl_ = feeds()
-        # Only streams on other lines: a second connection on the line in use can be refused (HTTP 509).
-        c_ = [u for u in fl_ if u != cur and u not in TRUST and u not in SCANBAD and lineof(u) != lineof(cur)]
-        if not c_:
-            return
-        log("trouble on this stream (%s); checking %d other stream(s) before any switch" % (why, len(c_)))
-        w = requests.Session()
-        w.headers["User-Agent"] = ua
-        try:
-            for u in c_:
-                try:
-                    d_ = grabwin(w, u)
-                except Exception as x:
-                    log("stream check: could not fetch stream %d of %d for the check (%s)" % (fl_.index(u) + 1, len(fl_), x))
-                    continue
-                r_ = avcmp(rd_, d_)
-                if r_ is not None:
-                    syncverdict(u, r_, False)
-        finally:
-            w.close()
-    except Exception as x:
-        log("stream check failed (%s)" % x)
-    finally:
-        SCAN["busy"] = False
-
-def syncfire():
-    if SYNC["old"] is not None and SYNC["newd"] >= SYNCD:
-        a_ = (b"".join(SYNC["old"]), b"".join(SYNC["new"]), SYNC["newu"])
-        SYNC["old"] = None
-        SYNC["new"] = []
-        threading.Thread(target=synccheck, args=a_, daemon=True).start()
-
-def syncpre(segs, new):
-    # A switch joins the new stream where the old one stopped, so the clips would not overlap. Fetch the new
-    # stream's segments just before the join point for the check only (they are not played): they cover the
-    # same moments as the end of the old stream, and the check has its verdict within seconds.
-    with SL:
-        if SYNC["old"] is None or SYNC["newu"] != cur or SYNC.get("pre"):
-            return
-        SYNC["pre"] = True
-    if not new or new[0] not in segs:
-        return
-    i = segs.index(new[0])
-    out, dur = [], 0.0
-    for q in segs[max(0, i - int(-(-SYNCD // max(tgt, 1)))):i]:
-        try:
-            out.append(fetch(q))
-            dur += q["d"] or tgt
-        except Exception:
-            pass
-    with SL:
-        if SYNC["old"] is not None and SYNC["newu"] == cur:
-            SYNC["new"] = out + SYNC["new"]
-            SYNC["newd"] += dur
-            syncfire()
-
 def mark(u):
     b = fbad.get(u, [0, 0])
     fbad[u] = [mono() + min(60 * 2 ** b[1], 600), b[1] + 1]
@@ -921,9 +718,6 @@ def handoff(why, depth=None, fl=None):
         log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
     cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
-    # coax's order (best first), skipping streams found out of sync; checked streams keep their place.
-    pref = [u for u in cand if u not in SCANBAD]
-    cand = pref if pref else (cand if stalled and mono() - ost > 120 else [])
     for u in cand:
         if mono() - pt > 6:
             break
@@ -942,7 +736,6 @@ def handoff(why, depth=None, fl=None):
     inc("sw")
     was = stalled
     cur = nxt
-    syncswitch(nxt)
     gap = mono() - ost if was else gap + mono() - got if gap is not None else mono() - got if last is not None else None
     media = None
     last = None
@@ -967,15 +760,6 @@ def bye():
     killall()
     os._exit(0)
 
-def synctmp_clean():
-    # Sync-check clips of this engine; a stop in the middle of a check would otherwise leave them in /tmp.
-    try:
-        for n in os.listdir("/tmp"):
-            if n.startswith("hlsloop-sync-%d-" % os.getpid()):
-                os.remove(os.path.join("/tmp", n))
-    except Exception:
-        pass
-
 def killall():
     with fql:
         ps = list(fq)
@@ -985,7 +769,7 @@ def killall():
         except Exception:
             pass
 for g in (15, 2, 1):
-    signal.signal(g, lambda *a: (killall(), synctmp_clean(), os._exit(0)))
+    signal.signal(g, lambda *a: (killall(), os._exit(0)))
 if rcur:
     cur = hsu(rcur)
 bw = re.compile("(?<![A-Z-])BANDWIDTH=(\\d+)")
@@ -1218,7 +1002,6 @@ def stat():
             if ns and (not low) and (qs < 2):
                 low = True
                 log("reserve: empty, video now arrives only as fast as the provider publishes it")
-                scan("reserve empty")
             elif low and qs >= dp / 2:
                 low = False
                 log("reserve: refilled to %.0fs" % qs)
@@ -1413,19 +1196,6 @@ if rstk:
     handoff("the previous process got stuck reading this feed")
 while not gone():
     rb = mono()
-    if SYNCBAD[0] is not None and SYNCBAD[0] != cur:
-        SYNCBAD[0] = None
-    if SYNCBAD[0] is not None and mono() - lpr >= 30:
-        # Leave the out-of-sync stream. It may already be gone from the channel's list, so add it back at the
-        # end of this one call: every other stream is then a candidate. If none answers, try again in 30 s.
-        u_ = cur
-        fl_ = feeds()
-        if u_ not in fl_:
-            fl_ = fl_ + [u_]
-        handoff("sound is off its picture on this stream", fl=fl_)
-        fbad[u_] = [mono() + 86400, 9]
-        if cur != u_:
-            SYNCBAD[0] = None
     try:
         r = s.get(media or cur, timeout=(5, 10))
         r.raise_for_status()
@@ -1524,7 +1294,6 @@ while not gone():
         w = min(max(tgt / 2, 1), 5)
         if last is None:
             new = join(segs) if gap is None else segs[-max(1, min(len(segs), int(-(-gap // max(tgt, 1))))):]
-            syncpre(segs, new)
             lag = None
         elif segs[-1]["n"] < last:
             if not {q["p"].rsplit("/", 1)[-1] for q in segs} & {x.rsplit("/", 1)[-1] for x in seen} or last - segs[-1]["n"] > 50 or (lag is not None and mono() - lag > 4 * tgt):
@@ -1555,7 +1324,6 @@ while not gone():
                 continue
         elif not new and mono() - fresh > 0.6 * cushlim():
             log("playlist stale %ds, re-resolving" % (mono() - fresh))
-            scan("playlist stalled")
             media = None
             fresh = mono()
             continue
@@ -1632,7 +1400,6 @@ while not gone():
                 o = rpart[1] - rpart[1] % 188
                 rpart = None
             enq(["seg", d, q["d"] or tgt, n, p0, o])
-            synckeep(cur, d, q["d"] or tgt)
             fmtnote(cur, d, q["d"] or tgt)
             dq.append((mono(), q["d"] or tgt))
             ns += 1
@@ -1692,8 +1459,6 @@ while not gone():
         if not stalled:
             dl = max(0.5, min(dl, max(cushlim(), DEADT) - (mono() - got)))
         log("playlist error (%s); retry %d in %ds" % (e, err, dl))
-        if err >= 2:
-            scan("playlist errors")
         inc("pe")
         rb = mono() + dl
         time.sleep(dl)

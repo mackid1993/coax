@@ -18,7 +18,7 @@ class EventTests(unittest.TestCase):
         kinds = [e["kind"] for e in st["events"]]
         self.assertEqual(kinds, ["failover", "stall", "speed", "failover"])
         self.assertEqual(st["stream_no"], 1)
-        self.assertIn("backup stream", st["events"][0]["text"])
+        self.assertIn("Switched to stream", st["events"][0]["text"])
         s.close()
 
 

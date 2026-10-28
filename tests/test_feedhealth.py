@@ -261,3 +261,26 @@ class WordingAndUndoTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             h.undo(h.list()["items"][0]["id"])
         self.assertFalse(h.list()["items"][0]["undone"])
+
+
+class UnblockTest(unittest.TestCase):
+    def test_unblock_lifts_the_block(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+
+        class Store:
+            def __init__(self):
+                self.cfg = {"channels": [{"id": 5, "streams": [{"provider": "p", "stream_id": "a"}, {"provider": "p", "stream_id": "b"}]}]}
+
+            def get(self):
+                return self.cfg
+
+            def update(self, mutate):
+                return mutate(self.cfg)
+        h = fh.FeedHealth(Store(), tmp.name)
+        h.problem(5, ("p", "a"), "placeholder", now=1000)
+        self.assertEqual(h.block_info(5, ("p", "a"), now=1001)["kind"], "placeholder")
+        self.assertTrue(h.unblock(5, ("p", "a"), now=1002))
+        self.assertIsNone(h.block_info(5, ("p", "a"), now=1003))
+        self.assertFalse(h.unblock(5, ("p", "a"), now=1004))

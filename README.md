@@ -859,8 +859,8 @@ coax reads from the provider differs.
 | Extra head start per joining device | 5 s each, up to about 40 s in total | 5 s each, capped at about 8 to 14 s so failover keeps its headroom |
 | Delay behind live | about 60 s | about 20 s |
 | Recording extension past the scheduled end | about 105 s | about 65 to 80 s |
-| [Smart Standby](#smart-standby): backups checked before a switch | Yes: every backup is checked by picture and sound before coax switches, so it never switches to a bad one | No: coax switches to the best-ranked backup, checks it while it plays, and moves on if it is bad |
-| Smart Standby: sound off its picture | Caught before the switch when another stream shows the same moments | Usually caught after the switch and left within about half a minute; seen briefly. Missed when the clips do not line up |
+| [Smart Standby](#smart-standby): backups checked before a switch | Yes: coax confirms a backup is answering before it switches | Yes: coax confirms a backup is answering before it switches |
+| Smart Standby: sound off its picture | Not detected; disable the stream on the Status page | Not detected; disable the stream on the Status page |
 | Smart Standby: blocking, reordering, new main stream | Yes | Yes, from real failures only |
 | Log prefix | `[hlsloop stream]` | `[tsloop stream]` |
 
