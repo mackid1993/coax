@@ -702,17 +702,17 @@ last resort.
 | The provider's playlist ends (HLS), often right after a burst of proxy errors | Stays on the feed while the reserve lasts, since this is usually a passing hiccup. If the reserve runs low it switches to the next stream without blocking anything. Only an ended playlist that lasts a full minute counts as an offline placeholder, which blocks the stream. |
 | The provider redirects to its offline placeholder (MPEG-TS) | Switches to the next stream at once, blocks the stream, and never plays the placeholder. |
 | The connection keeps ending after a few seconds (MPEG-TS) | Keeps reconnecting while the reserve lasts; switches to the next stream only when it runs low. Nothing is blocked. |
-| No new video for 60 seconds (sooner if the reserve is about to run out) | Switches to the next stream. |
-| Audio and video timestamps more than 3 seconds apart in the feed | Holds that feed back for up to about 30 seconds while it tries a backup, so you do not hear one moment over the picture of another. With no working backup it is passed through. |
-| Far slower than real time (below 0.75x) for 5 minutes | Switches to the next stream. A merely slow feed never triggers a switch. |
+| No new video for 60 seconds | Switches to the next stream. It switches sooner when the reserve is nearly empty: on HLS after about three segments, on MPEG-TS after about 8 seconds. |
+| The feed's audio and video timestamps start more than 3 seconds apart | On HLS, keeps playing it for up to 30 seconds while it tries the next stream, then switches. On MPEG-TS, a backup like this is passed over at connect time. With no other stream it plays anyway. |
+| Slower than real time for 5 minutes | Switches to the next stream. On HLS that means below 0.75x while the reserve drains; on MPEG-TS, below 0.85x with the reserve nearly empty. A feed that is slow but keeps the reserve up never triggers a switch. |
 | No backup on the channel | Keeps retrying the same feed until the provider comes back. |
 | Sound off its picture with matching timestamps | Not detected. Use **Switch** and **Disable** on the Status page. |
 
 - **Order.** Backups are tried in the order the channel's streams are saved on the *Channels* page.
-  Disabled streams are skipped, and streams Smart Standby has blocked are tried last. A stream that failed recently, on any channel, is tried last, both for a new
-  tune and for failover. A failed feed
-  is left alone for 1, 2, 4, 8, then 10 minutes, so a channel whose feeds are all down waits instead of
-  hopping between dead feeds.
+  Disabled streams are skipped, and streams Smart Standby has blocked are tried last. A stream that failed
+  recently, on any channel, is also tried last, both for a new tune and for failover. A failed feed is left
+  alone for 1, 2, 4, 8, then 10 minutes, so a channel whose feeds are all down waits instead of hopping between
+  dead feeds.
 - **Before switching,** coax checks that the backup answers with a real stream, not the placeholder. Once on
   a backup it stays there as long as it works.
 - **Across providers.** A backup on another provider is only offered while that provider has a free line,
