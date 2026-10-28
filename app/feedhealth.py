@@ -77,7 +77,7 @@ def _key(stream):
 
 
 def _name(store, key):
-    """'stream 174571 (Trex)' using the provider's name."""
+    """'stream 174571 (Provider A)' using the provider's name."""
     try:
         p = next((x for x in store.get().get("providers") or [] if str(x.get("id")) == key[0]), None)
         return "stream %s (%s)" % (key[1], (p or {}).get("name") or key[0])

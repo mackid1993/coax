@@ -168,7 +168,7 @@ class ApiTestCase(unittest.TestCase):
         return response.status, payload, response
 
     def add_provider(self, **extra):
-        body = {"name": "Trex", "type": "xtream", "server": "http://host:80/",
+        body = {"name": "Provider A", "type": "xtream", "server": "http://host:80/",
                 "lines": [{"username": "u", "password": "secret", "max_streams": 2}]}
         body.update(extra)
         status, data, _ = self.request("POST", "/api/providers", body)
@@ -283,7 +283,7 @@ class ProviderRoutes(ApiTestCase):
         status, result, _ = self.request("POST", "/api/providers/p1/test")
         self.assertEqual((status, result["ok"]), (200, True))
         status, result, _ = self.request("POST", "/api/providers/test", {
-            "id": "p1", "name": "Trex", "type": "xtream", "server": "http://host",
+            "id": "p1", "name": "Provider A", "type": "xtream", "server": "http://host",
             "lines": [{"id": "l1", "username": "u", "password": "********"}]})
         self.assertTrue(result["ok"], result)
 

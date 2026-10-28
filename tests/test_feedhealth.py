@@ -234,7 +234,7 @@ class WordingAndUndoTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def make(self, *sids):
-        st = Store({"providers": [{"id": "p1", "name": "Trex"}],
+        st = Store({"providers": [{"id": "p1", "name": "Provider A"}],
                     "channels": [{"id": 5, "name": "Bravo", "streams": [{"provider": "p1", "stream_id": s} for s in sids]}]})
         return st, fh.FeedHealth(st, self.tmp.name)
 
@@ -242,12 +242,12 @@ class WordingAndUndoTest(unittest.TestCase):
         st, h = self.make("main", "b2", "b3")
         h.problem(5, K("b3"), "desync", "11.6 seconds ahead of its picture", now=1000)
         t = h.list()["items"][0]["text"]
-        self.assertEqual(t, "Blocked stream b3 (Trex) for 24 hours because its audio was 11.6 seconds ahead of the video.")
+        self.assertEqual(t, "Blocked stream b3 (Provider A) for 24 hours because its audio was 11.6 seconds ahead of the video.")
         h.verified(5, K("b2"), now=1100)
         h.problem(5, K("main"), "dead", now=1200)
         h.switched(5, K("main"), K("b2"), now=1210)
         t = h.list()["items"][0]["text"]
-        self.assertIn("Stream b2 (Trex) is now the main stream.", t)
+        self.assertIn("Stream b2 (Provider A) is now the main stream.", t)
         self.assertIn("until another problem occurs", t)
         self.assertNotIn("p1", t)
 
