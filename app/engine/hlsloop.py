@@ -348,8 +348,6 @@ def remux(why=None, ofs=None):
     if why:
         log("restarting remuxer: " + why)
     old = ff
-    if old is None:
-        KS.arm()   # a fresh encoder starts on a keyframe, sound trimmed to match
     if old is not None and TRANSCODE and GPUDEC[0] and old.poll() is not None and old.returncode != 0 and mono() - FST[0] < 20:
         GPUDEC[0] = False
         log("transcode: GPU decoding failed on this stream, decoding on the CPU instead (encoding stays on the GPU)")
@@ -460,16 +458,7 @@ def gone():
     except Exception:
         return False
 
-import kstart
-KS = kstart.Start()
-
 def put(b):
-    if KS.on:
-        b, m_ = KS.filter(b)
-        if m_:
-            log(m_)
-        if not b:
-            return
     if TRANSCODE:
         note(b)
     try:
