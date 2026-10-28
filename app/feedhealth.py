@@ -330,19 +330,23 @@ class FeedHealth:
             if bad not in keys:
                 return None
             off = {_key(s) for s in streams if s.get("disabled")}   # disabled by hand: never the main stream
-            working = [k for k in keys if not self.is_blocked(ch, k, now) and k not in off]
-            blocked = sorted([k for k in keys if k not in working and k not in off],
-                             key=lambda k: self.blocked_until(ch, k, now))
-            new = working + blocked + [k for k in keys if k in off]
-            if keys[0] not in working:
+            live = [k for k in keys if k not in off]
+            working = [k for k in live if not self.is_blocked(ch, k, now)]
+            blocked = sorted([k for k in live if k not in working], key=lambda k: self.blocked_until(ch, k, now))
+            order = working + blocked
+            if live and live[0] not in working:
                 # Only a checked stream (passed the sync check, or played cleanly) may become the main stream.
                 proven = [k for k in working if self._proven(ch, k, now)]
                 if proven:
                     best = min(proven, key=lambda k: (-self._clean(ch, k, now), self._strikes(ch, k, now), keys.index(k)))
-                    new = [best] + [k for k in working if k != best] + blocked + [k for k in keys if k in off]
+                    order = [best] + [k for k in working if k != best] + blocked
                 else:
-                    new = keys   # nothing checked to take over: keep the order; tuning skips the blocked stream
-            done.update(old=keys, new=new, name=chan.get("name"))
+                    order = live   # nothing checked to take over: keep the order; tuning skips the blocked stream
+            # Disabled streams keep their places; only the enabled ones are rearranged around them.
+            rest = iter(order)
+            new = [k if k in off else next(rest) for k in keys]
+            done.update(old=keys, new=new, name=chan.get("name"),
+                        main_old=live[0] if live else None, main_new=order[0] if order else None)
             if new == keys:
                 return True
             by = {_key(s): s for s in streams}
@@ -356,10 +360,11 @@ class FeedHealth:
             why = "its audio was %s" % detail.replace("its picture", "the video")
         text = "Blocked %s for %s because %s." % (_name(self.store, bad), _hours(dur), why)
         text = text[0].upper() + text[1:]
-        if new[0] != old[0]:
-            text += " %s is now the main stream." % _cap(_name(self.store, new[0]))
+        main_old, main_new = done["main_old"], done["main_new"]
+        if main_new != main_old:
+            text += " %s is now the main stream." % _cap(_name(self.store, main_new))
         log.warning("[%s] %s", done["name"], text)
-        self._note("promoted" if new[0] != old[0] else "blocked", ch, done["name"], bad, text,
+        self._note("promoted" if main_new != main_old else "blocked", ch, done["name"], bad, text,
                    {"order": [list(k) for k in old]}, now)
 
     # -- the bell -----------------------------------------------------------------------------------

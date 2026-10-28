@@ -301,9 +301,18 @@ class DisabledStreamHealthTest(unittest.TestCase):
         h.good(5, K("off"), 600, now=400)
         h.good(5, K("b3"), 60, now=500)
         h.problem(5, K("main"), "placeholder", now=1000)
-        self.assertEqual(ids(st), ["b3", "main", "off"])
+        self.assertEqual(ids(st), ["b3", "off", "main"])   # the disabled stream keeps its place
         one = Store({"channels": [{"id": 6, "name": "Solo", "streams": [
             {"provider": "p1", "stream_id": "only"}, {"provider": "p1", "stream_id": "off", "disabled": True}]}]})
         h2 = fh.FeedHealth(one, self.tmp.name)
         h2.problem(6, K("only"), "placeholder", now=1000)
         self.assertFalse(h2.is_blocked(6, K("only"), now=1000))
+
+    def test_disabled_first_stream_stays_put_and_is_not_announced(self):
+        st = Store({"channels": [{"id": 7, "name": "Ch", "streams": [
+            {"provider": "p1", "stream_id": "off", "disabled": True}, {"provider": "p1", "stream_id": "main"},
+            {"provider": "p1", "stream_id": "b2"}]}]})
+        h = fh.FeedHealth(st, self.tmp.name)
+        h.problem(7, K("b2"), "placeholder", now=1000)
+        self.assertEqual(ids(st), ["off", "main", "b2"])
+        self.assertEqual(h.list()["items"][0]["kind"], "blocked")
