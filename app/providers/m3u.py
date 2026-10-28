@@ -5,6 +5,7 @@ memory as one big string. Gzip is handled both as Content-Encoding and as a .gz 
 """
 
 import codecs
+import collections
 import hashlib
 import logging
 import re
@@ -274,13 +275,19 @@ def fetch_catalog(provider):
     seen_urls = set()
     seen_ids = set()
     streams = []
+    entries = []
     for entry in parsed["entries"]:
         url = entry["url"].strip()
         if url in seen_urls:
             continue
         seen_urls.add(url)
-        candidates = candidate_ids(entry)
-        sid = next((c for c in candidates if c not in seen_ids), None)
+        entries.append((entry, url, candidate_ids(entry)))
+    # An id two entries could both claim (same tvg-id and name, different URLs) would go to whichever comes
+    # first, so a reordered playlist would swap them. Such shared ids are skipped for every entry.
+    shared = collections.Counter(c for _, _, cands in entries for c in set(cands))
+    for entry, url, candidates in entries:
+        sid = next((c for c in candidates if shared[c] == 1 and c not in seen_ids), None) \
+            or next((c for c in candidates if c not in seen_ids), None)
         if sid is None:
             # Same normalized URL and name as an earlier entry: fall back to the full URL.
             sid = _digest("raw:" + url)

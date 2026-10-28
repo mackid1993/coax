@@ -319,3 +319,36 @@ class DownloadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StabilityTests(unittest.TestCase):
+    setUp = DownloadTests.setUp
+    tearDown = DownloadTests.tearDown
+
+    def test_duplicate_name_entries_keep_their_ids_when_reordered(self):
+        a = b'#EXTINF:-1 tvg-id="x" group-title="News",Same\nhttp://h1/one.ts\n'
+        b = b'#EXTINF:-1 tvg-id="x" group-title="News",Same\nhttp://h2/two.ts\n'
+        self.fake.set("/list.m3u", (200, {}, b"#EXTM3U\n" + a + b))
+        provider = make_provider(self.fake.url + "/list.m3u")
+        first = {s["url"]: s["stream_id"] for s in catalog.refresh(provider)["streams"]}
+        self.fake.set("/list.m3u", (200, {}, b"#EXTM3U\n" + b + a))
+        second = {s["url"]: s["stream_id"] for s in catalog.refresh(provider)["streams"]}
+        self.assertEqual(first, second)
+
+    def test_empty_answer_keeps_the_good_catalog(self):
+        self.fake.set("/list.m3u", (200, {}, fixture_bytes("playlist.m3u")))
+        provider = make_provider(self.fake.url + "/list.m3u")
+        catalog.refresh(provider)
+        before = catalog.load("m1")
+        from unittest import mock
+        with mock.patch.object(catalog, "fetch", lambda p: {"groups": [], "streams": []}):
+            with self.assertRaises(ProviderError):
+                catalog.refresh(provider)
+        self.assertEqual(catalog.load("m1")["streams"], before["streams"])
+
+    def test_channel_ref_uses_the_streams_own_format(self):
+        self.fake.set("/list.m3u", (200, {}, b"#EXTM3U\nhttp://h/a.m3u8\nhttp://h/b.ts\n"))
+        provider = make_provider(self.fake.url + "/list.m3u", format="ts")
+        streams = catalog.refresh(provider)["streams"]
+        ref = {"provider": "m1", "stream_id": streams[0]["stream_id"]}
+        self.assertEqual(providers.stream_format(provider, ref), "hls")

@@ -276,6 +276,10 @@ class App:
         """Hook after every successful refresh (manual or scheduled): auto_add new streams. Returns count."""
         self.catalogs.invalidate(provider.get("id"))
         try:
+            self._apply_renamed(provider.get("id"), report.get("renamed") or {})
+        except Exception:  # noqa: BLE001 - never break a refresh
+            log.exception("could not carry renamed stream ids over for provider %s", provider.get("id"))
+        try:
             cfg = self.store.get()
             current = next((p for p in cfg["providers"] if p["id"] == provider.get("id")), None)
             if not current or not current.get("auto_add"):
@@ -292,6 +296,31 @@ class App:
         except Exception:  # noqa: BLE001 - never break a refresh
             log.exception("auto add failed for provider %s", provider.get("id"))
             return 0
+
+    def _apply_renamed(self, provider_id, renamed):
+        """The provider gave a stream a new id but kept its URL: point channels at the new id, so the channel
+        keeps playing the same stream (and keeps its order and Disable state)."""
+        renamed = {str(k): str(v) for k, v in renamed.items()}
+        if not any(r["provider"] == provider_id and str(r["stream_id"]) in renamed
+                   for c in self.store.get()["channels"] for r in c["streams"]):
+            return 0   # no channel uses a renamed stream: leave the config file alone
+
+        def mutate(cfg):
+            moved = 0
+            for channel in cfg["channels"]:
+                have = {r["stream_id"] for r in channel["streams"] if r["provider"] == provider_id}
+                for ref in channel["streams"]:
+                    new = renamed.get(str(ref["stream_id"])) if ref["provider"] == provider_id else None
+                    if new and new not in have:
+                        have.discard(ref["stream_id"])
+                        ref["stream_id"] = new
+                        have.add(new)
+                        moved += 1
+            return moved
+        moved = self.store.update(mutate)
+        if moved:
+            log.info("provider %s renamed %d streams; channels follow them", provider_id, moved)
+        return moved
 
     def _auto_add(self, provider_id, streams):
         """Add new streams as disabled channels unless a channel already uses them."""

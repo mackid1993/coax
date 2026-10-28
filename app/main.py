@@ -114,6 +114,10 @@ def main(argv=None):
     hub = start_hub(store)
     if hub is not None:
         hub.port = port
+        try:
+            importlib.import_module("app.providers.xtream").BUSY_LINES[0] = hub.busy_lines
+        except Exception:  # noqa: BLE001 - catalog calls then use the first line
+            log.exception("could not tell the provider client which lines are streaming")
     app = servermod.App(store, hub)
     try:
         app.health = importlib.import_module("app.feedhealth").FeedHealth(store, os.path.dirname(os.path.abspath(path)))

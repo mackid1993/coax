@@ -36,12 +36,27 @@ def base_url(server):
     return server
 
 
+# Set by main to the hub: provider id -> ids of its lines that are streaming now. Each line allows one connection,
+# so catalog and guide calls use a line nobody is watching when there is one.
+BUSY_LINES = [None]
+
+
 def first_line(provider):
-    """The first enabled line (its credentials are used for catalog API calls)."""
+    """The line whose credentials catalog and guide API calls use: an idle enabled line (the last one, as the hub
+    tunes from the first), else the first enabled line."""
     lines = [line for line in provider.get("lines") or []
              if isinstance(line, dict) and line.get("enabled", True) is not False]
     if not lines:
         raise ProviderError("provider %s has no lines configured" % provider.get("id", "?"))
+    busy_of = BUSY_LINES[0]
+    if busy_of is not None:
+        try:
+            busy = busy_of(provider.get("id"))
+        except Exception:  # noqa: BLE001 - never stop a catalog refresh over this
+            busy = set()
+        idle = [line for line in lines if line.get("id") not in busy]
+        if idle:
+            return idle[-1]
     return lines[0]
 
 

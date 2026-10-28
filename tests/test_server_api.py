@@ -333,6 +333,13 @@ class ProviderRoutes(ApiTestCase):
         channel = self.store.get()["channels"][0]
         self.assertEqual((channel["name"], channel["enabled"]), ("New", False))
 
+    def test_renamed_stream_ids_carry_over_to_channels(self):
+        self.refreshed_provider()
+        self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p1", "stream_id": "1"}]})
+        self.assertEqual(self.app._apply_renamed("p1", {"1": "77", "5": "6"}), 1)
+        self.assertEqual(self.store.get()["channels"][0]["streams"], [{"provider": "p1", "stream_id": "77"}])
+        self.assertEqual(self.app._apply_renamed("p1", {"5": "6"}), 0)
+
     def test_delete_provider_in_use(self):
         self.refreshed_provider()
         self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p1", "stream_id": "1"}]})

@@ -122,6 +122,9 @@ def refresh(provider):
     with _lock_for(provider_id):
         fresh = fetch(provider)
         previous = load(provider_id)
+        if not fresh.get("streams") and (previous or {}).get("streams"):
+            # A panel hiccup can answer an empty list; never trade a good catalog for it.
+            raise ProviderError("provider returned no streams; keeping the previous list")
         catalog = {"fetched_at": now_iso(), "groups": fresh["groups"], "streams": fresh["streams"]}
         atomic_write_json(cache_path(provider_id), catalog)
 

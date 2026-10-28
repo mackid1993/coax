@@ -37,6 +37,9 @@ def stream_format(provider, stream):
     """
     provider = provider or {}
     fmt = ""
+    if isinstance(stream, dict) and not stream.get("format") and not stream.get("url") \
+            and stream.get("stream_id") not in (None, ""):
+        stream = str(stream["stream_id"])   # a channel's stream ref: look the stream up in the catalog
     if isinstance(stream, dict):
         fmt = stream.get("format") or ""
         if not fmt and stream.get("url"):

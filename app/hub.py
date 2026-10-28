@@ -676,6 +676,11 @@ class Hub:
                 session.stream_no = i + 1
                 break
 
+    def busy_lines(self, provider_id):
+        """Ids of this provider's lines that hold a stream now (catalog and guide calls avoid them)."""
+        with self._lock:
+            return {lid for (pid, lid), holders in self._slots.items() if pid == provider_id and holders}
+
     def _lines(self, provider):
         """Enabled lines, a line released in the last LINE_COOLDOWN seconds last."""
         now = time.monotonic()
