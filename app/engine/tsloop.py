@@ -201,6 +201,7 @@ SPD = 1.0
 SPA = 1.0
 ADJ = [0.0]
 RP = [None, 0.0]
+SWP = [False]
 RQ = collections.deque(maxlen=6000)
 lowt = None
 ltk = -1000000000.0
@@ -874,7 +875,14 @@ def writer():
                     Q.popleft()
                     nrx[0] -= 1
                 off = it[3]
-                remux(it[1])
+                if TRANSCODE:
+                    # Restart the encoder on the new feed's first keyframe with the audio lead corrected,
+                    # the same way a refill does, so audio and video start together.
+                    RP[0] = it[1]
+                    RP[1] = mono()
+                    SWP[0] = True
+                else:
+                    remux(it[1])
                 continue
             d = it[1]
             ix = it[5]
@@ -896,13 +904,19 @@ def writer():
             if RP[0] and it[7] < en:
                 k_ = kfo(d, it[7], en) if now - RP[1] < 10 else it[7]
                 if k_ is not None:
-                    if k_ > it[7]:
+                    if k_ > it[7] and (not SWP[0]):
                         put(d[it[7]:k_])
                     it[7] = k_
                     w_ = RP[0]
                     RP[0] = None
+                    SWP[0] = False
                     ADJ[0] = avlead(d, k_)
                     remux(w_)
+                elif SWP[0]:
+                    it[6] = i + 1
+                    it[7] = en
+                    it[8] = max(ca, it[8])
+                    continue
             put(d[it[7]:en])
             it[6] = i + 1
             it[7] = en

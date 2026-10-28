@@ -197,6 +197,7 @@ SLOW = 1.03
 SPD = 1.0
 SPA = 1.0
 RP = [None, 0.0]
+SWP = [False]
 ADJ = [0.0]
 OFS = [0.0]
 EI = {}
@@ -1049,7 +1050,12 @@ def writer():
                 if it[0] == "remux":
                     if it[3] is not None:
                         off = it[3]
-                    remux(it[1])
+                    if TRANSCODE:
+                        RP[0] = it[1]
+                        RP[1] = mono()
+                        SWP[0] = True
+                    else:
+                        remux(it[1])
                 else:
                     put(it[1])
                 continue
@@ -1082,12 +1088,13 @@ def writer():
             if RP[0]:
                 k_ = kfo(d, it[5], e) if now - RP[1] < 10 else it[5]
                 if k_ is not None:
-                    if k_ > it[5]:
+                    if k_ > it[5] and (not SWP[0]):
                         put(d[it[5]:k_])
                     w_ = RP[0]
                     av_ = avlead(d, k_) if now - RP[1] < 10 else 0.0
                     q_ = pests(d[k_:k_ + 188])
-                    o_ = eofs(q_[1], av_) if q_ and 224 <= q_[0] <= 239 else None
+                    o_ = eofs(q_[1], av_) if q_ and 224 <= q_[0] <= 239 and (not SWP[0]) else None
+                    SWP[0] = False
                     if o_ is not None and abs(o_ - (tout + 1.4 - av_)) > 3:
                         o_ = None
                     if o_ is not None:
@@ -1098,7 +1105,7 @@ def writer():
                         ADJ[0] = av_
                         remux(w_)
                     put(d[k_:e])
-                else:
+                elif not SWP[0]:
                     put(d[it[5]:e])
             else:
                 put(d[it[5]:e])
