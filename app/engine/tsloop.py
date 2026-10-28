@@ -593,7 +593,7 @@ def probe(u):
         r.close()
     return None
 
-def handoff(why):
+def handoff(why, charge=True):
     global stalled, got, cur, pend, sticky, gap, dlv, lpr, prr, fst, ost
     fl = feeds()
     if len(fl) < 2:
@@ -612,7 +612,8 @@ def handoff(why):
     pt = mono()
     if not stalled:
         # During provider proxy errors the whole line hiccups; the hub then does not hold it against this stream.
-        log("stream %d of %d failed%s; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(cur), ref(cur)))
+        # charge=False: the stream still delivers (short connections); the hub does not count it against the stream.
+        log("stream %d of %d failed%s; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), " after short connections" if not charge else " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(cur), ref(cur)))
     cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
     for u in cand:
@@ -1479,10 +1480,8 @@ while not gone():
         if short >= 3 and Qs[0] + max(wlead, 0.0) <= 15:
             short = 0
             ph += 1
-            handoff("stream keeps ending after a few seconds and the reserve ran low")
-            dl_ = 5 if stalled else 0
-            rb = mono() + dl_
-            time.sleep(dl_)
+            handoff("stream keeps ending after a few seconds and the reserve ran low", charge=False)
+            rb = mono()   # video still arrives between the closes: reconnect at once, switched or not
             continue
         raise ValueError("stream ended")
     except Exception as e:

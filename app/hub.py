@@ -302,9 +302,10 @@ class Session:
             if "switching to stream" in line:
                 self.hub._follow(self, m.group(1))
             elif re.search(r"\b(failed|is not answering)\b", line):
-                # A failure during the provider's proxy errors is the line's hiccup: try the stream last for a
-                # while, but do not count it against the stream in Smart Standby.
-                self.hub._note_bad(m.group(1), self, charge="during provider proxy errors" not in line)
+                # A failure during the provider's proxy errors is the line's hiccup, and a stream left for short
+                # connections still delivers: try it last for a while, but do not count it in Smart Standby.
+                self.hub._note_bad(m.group(1), self, charge=not any(
+                    p in line for p in ("during provider proxy errors", "after short connections")))
         if "status: " in line:
             self.hub._history(self, line)
             m = re.search(r"(\d+) (?:switches|failovers), (\d+)s keepalive", line)

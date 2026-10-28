@@ -675,6 +675,8 @@ class ProxyErrorBlameTest(unittest.TestCase):
         s._watch("[hlsloop stream] stream 1 of 2 failed during provider proxy errors; not using it again for 60s [ref %s]" % ref)
         self.assertEqual(Health.calls, [])
         self.assertTrue(h._is_bad("p1", "a"))   # still tried last for a while
+        s._watch("[tsloop stream] stream 1 of 2 failed after short connections; not using it again for 60s [ref %s]" % ref)
+        self.assertEqual(Health.calls, [])
         s._watch("[hlsloop stream] stream 1 of 2 failed; not using it again for 120s [ref %s]" % ref)
         self.assertEqual([c[2] for c in Health.calls], ["dead"])
         s.close()
