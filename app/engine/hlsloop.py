@@ -707,7 +707,11 @@ def mark(u):
     fbad[u] = [mono() + min(60 * 2 ** b[1], 600), b[1] + 1]
     return fbad[u][0] - mono()
 
+BZ = [0]   # HTTP status of the last probe when the provider answered busy (429/503/509), else 0
+BZN = {}   # busy answers in a row per backup
+
 def probe(u):
+    BZ[0] = 0
     try:
         r = s.get(u, timeout=(2, 3), stream=True)
         t = grab(r, 6, 2000000).decode("utf-8", "replace")
@@ -720,7 +724,9 @@ def probe(u):
             r = s.get(up.urljoin(r.url, v[0]), timeout=(2, 3), stream=True)
             t = grab(r, 6, 2000000).decode("utf-8", "replace")
         return "#EXTINF" in t and "#EXT-X-ENDLIST" not in t
-    except Exception:
+    except Exception as e:
+        c = getattr(getattr(e, "response", None), "status_code", 0)
+        BZ[0] = c if c in BUSY else 0
         return False
 
 def handoff(why, depth=None, fl=None):
@@ -745,14 +751,26 @@ def handoff(why, depth=None, fl=None):
         log("stream %d of %d failed%s; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(cur), ref(cur)))
     cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
+    busy = False
     for u in cand:
         if mono() - pt > 6:
             break
         if probe(u):
             nxt = u
+            BZN.pop(u, None)
             break
+        BZN[u] = BZN.get(u, 0) + 1 if BZ[0] else 0
+        if BZ[0] and BZN[u] <= 3:
+            # A busy answer (the provider may still count the stream just left) says nothing about the backup:
+            # do not mark it bad, try the next one, and if none answers, ask again in a few seconds. A backup
+            # that stays busy three rounds running is treated as not answering (normal backoff).
+            log("backup stream %d of %d got a busy answer (HTTP %d); not held against it [ref %s]" % (fl.index(u) + 1, len(fl), BZ[0], ref(u)))
+            busy = True
+            continue
         log("backup stream %d of %d is not answering%s; not trying it again for %.0fs [ref %s]" % (fl.index(u) + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(u), ref(u)))
     if nxt is None:
+        if busy:
+            lpr = mono() - 25   # only busy answers: the next round comes in about 5 s, not 30
         if not stalled:
             ost = got
             log(why + "; no backup stream is answering right now, so staying on this feed")
