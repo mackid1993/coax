@@ -59,6 +59,9 @@ Channel names, providers and logos below are made up for the demo.
 - **Backup streams per channel**, mixed across providers, with automatic failover in the stream engine and
   suggested matches (same name, call sign, or provider guide ID).
 - **Tuner sharing**: a second viewer of the same channel shares the running stream and uses no extra line.
+- **Smart Standby**: at the first real trouble coax checks every backup by picture and sound before switching,
+  never switches to a bad one, blocks bad streams for a while (never deletes them), and moves the stream that
+  proves stable to the top of the channel. Changes appear under the bell with Undo. See [Smart Standby](#smart-standby).
 - **Never gives up on a stream.** While Channels DVR is connected, coax keeps recovering: a frozen engine is
   restarted, a stream with no video is retuned (alternating to another free line of the provider when there is one),
   and null packets hold the connection open in between, so a recording keeps going. Streams that failed recently
@@ -300,63 +303,64 @@ switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries 
 `data/cache/history/`.
 
 
-### Bad streams are blocked, the best one plays first
+### Smart Standby
 
-coax is meant to be left alone, so it fixes a channel's stream order itself, but only when a stream causes real
-trouble. Each fix appears under the **bell** in the sidebar, with an **Undo**; dismiss one with its **X**, or all of
-them with **Clear all**. A channel with one stream is never
-changed, and nothing is ever deleted from a channel.
+Pick the streams for a channel; Smart Standby decides which one plays. It watches every stream of every channel,
+checks the backups the moment real trouble starts, switches only to one that is good, and keeps the channel's
+order arranged so the next tune starts on the stream that has proven itself. It is built for an appliance you
+leave alone: it acts only on real trouble, never deletes anything, and reports every change under the **bell**.
 
-**Absorbed problems are ignored.** Stalls the reserve covers, catch-ups, refills and A/V holds are normal for
-IPTV. coax rides them out and changes nothing.
+**1. Normal IPTV wobble is ignored.** Stalls the reserve covers, catch-ups, refills and A/V holds are what IPTV
+does. Smart Standby rides them out and changes nothing. A shaky stream that coax keeps smooth stays where it is.
 
-**Real trouble blocks the stream:**
+**2. At the first real trouble, every backup is checked before any switch (HLS).** Real trouble means repeated
+playlist errors, a playlist that stops updating, or the reserve running out. While the reserve keeps playing,
+coax fetches the last minute of each other stream of the channel (it does not play them) and compares each one,
+by picture and sound, with the last minute you actually watched:
 
-| Trouble | When it blocks |
+| Result | What happens |
 | --- | --- |
-| Sound off its picture (content check after every switch, HLS) | At once |
-| Offline slate from the provider instead of the channel | At once |
-| The stream stopped working and another stream of the channel took over | 3 times within 6 hours |
-| coax had to restart or retune it (frozen, or no video for 90 seconds) | 3 times within an hour |
+| In step with what you were watching | Switched to first |
+| Sound off its picture (the provider's feed is built that way) | Blocked for 24 hours, never switched to |
+| Not answering | Skipped for now |
 
-A stream that stops working while no other stream of the channel works is not blocked, since that is the
-provider or the network.
+The check takes seconds, well inside the reserve, and uses the same short downloads as normal playback, so it
+works with a single line. If no good stream is left, coax stays on the current one rather than switch to a bad
+one, and falls back to it only after 2 minutes with nothing else to play.
 
-**How long:** 12 hours, then 24 hours, then 3 days if the stream keeps causing trouble within a week. Sound off
-its picture: 24 hours, then 3 days. A blocked stream is not tuned and is tried last on failover. If every stream
-of a channel is blocked, coax still plays the least bad one.
+**3. Bad streams sit out, they are not deleted.** A stream is blocked (not tuned, last on failover) when:
 
-**The fix, once:** when a stream is blocked, it moves to the bottom of the channel's saved order. If it was the
-main stream, a checked stream takes over: one that passed the sync check or has played at least 10 minutes
-cleanly, the one with the most clean time first. A stream that has not been checked never becomes the main
-stream; if none is checked, the order stays as it is and coax simply skips the blocked stream. Everything else
-keeps its place.
+| Trouble | Blocked |
+| --- | --- |
+| Sound off its picture | At once: 24 hours, then 3 days |
+| Offline slate from the provider instead of the channel | At once: 12 hours, then 24 hours, then 3 days |
+| It stopped working while another stream of the channel worked | The 3rd time within 6 hours: same ladder |
+| coax had to restart or retune it (frozen, or no video for 90 seconds) | The 3rd time within an hour: same ladder |
 
-**Before a switch (HLS).** At the first real trouble on the playing stream (repeated playlist errors, a
-stalled playlist, or an empty reserve; not the stalls the reserve absorbs), coax checks every other stream of the
-channel right away, while the reserve keeps playing: it fetches each one's last minute (not played) and compares
-it by picture and sound with the last minute of the stream that was playing. Streams in step are switched to
-first; a stream whose sound is off its picture is blocked for 24 hours and never switched to, and a stream that
-does not answer is skipped. If no checked stream is left, coax holds on the current stream rather than switch to
-one found out of sync, and only falls back to it after 2 minutes with nothing else.
+The ladder climbs when a stream keeps causing trouble within a week. A stream that stops working while every
+other stream of the channel is down too is not blocked, since that is the provider or the network. If every
+stream of a channel is blocked, coax still plays the least bad one.
 
-**After a switch** the same check runs again on a stream that was not checked before. On MPEG-TS a stream cannot
-be fetched without connecting to it, so there is no content check: TS streams are judged by real failures only
-(the rules above), and a stream that fails is left quickly and blocked.
+**4. The stable stream moves up, once.** When coax leaves a troubled stream for one that proves stable (it passed
+the check, or played 10 minutes cleanly), that stream moves ahead of the troubled one in the channel's saved
+order. If the troubled one was the main stream, the stable one becomes the main stream, so the next tune starts
+on it. A blocked main stream is replaced the same way, by the checked stream with the most clean playback. A
+stream that has never been checked never becomes the main stream.
 
-**The sync check** runs right after every switch. The new stream joins where the old one stopped, so coax also
-fetches (but does not play) the new stream's previous 35 seconds, which cover the same moments as the end of the
-old stream. The two are compared by picture and sound, so the verdict comes within seconds. A stream with no clear
-verdict stays unchecked.
+**5. No trouble, no change.** The order stays put until the next real trouble. A stream that recovers, or whose
+block ends, does not move back on its own, so channels do not flip back and forth.
 
-**Trouble moves the stable stream up, once.** When the playing stream has connection trouble and coax switches
-to another stream that is stable (it passed the sync check, or played 10 minutes cleanly), that stream moves
-ahead of the troubled one in the channel's saved order; if the troubled one was the main stream, the stable one
-becomes the main stream. The next tune starts on it. The order changes again only at the next connection trouble,
-so a stream that recovers later does not move back.
+**6. Every change is under the bell.** Each entry says what happened, to which stream and why, with **Undo**
+(restores the order and lifts the block), an **X** to dismiss it, and **Clear all**. A channel with one stream is
+never changed.
 
-**No trouble, no change.** When a block ends the stream stays where it is; coax does not move things back. The
-order changes again only at the next real problem.
+**After a switch** the same check runs on a stream that had not been checked yet, comparing it with the end of
+the stream it replaced, so a bad stream that slipped through is caught within seconds and left.
+
+**On MPEG-TS** a stream cannot be fetched without connecting to it, so there is no content check before a
+switch. Steps 1, 3, 4, 5 and 6 work the same, judged on real failures: a bad TS stream may play briefly before it
+is left and blocked, and a stream whose sound is off its picture is not detected at all. See the table under
+[HLS or MPEG-TS](#hls-or-mpeg-ts).
 
 History is kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
 
@@ -381,6 +385,9 @@ coax reads from the provider differs.
 | Extra head start per joining device | 5 s each, up to about 40 s in total | 5 s each, capped at about 8 to 14 s so failover keeps its headroom |
 | Delay behind live | about 60 s | about 20 s |
 | Recording extension past the scheduled end | about 105 s | about 65 to 80 s |
+| [Smart Standby](#smart-standby): backups checked before a switch | Yes: every backup is checked by picture and sound before coax switches, so it never switches to a bad one | No: a backup can only be judged after switching to it |
+| Smart Standby: sound off its picture | Detected and blocked, before or right after a switch | Not detected |
+| Smart Standby: blocking, reordering, new main stream | Yes | Yes, from real failures only |
 | Log prefix | `[hlsloop stream]` | `[tsloop stream]` |
 
 - **Xtream providers.** coax builds Xtream stream addresses as
