@@ -143,6 +143,10 @@ EVENT_RULES = [
     (_r(r"viewer buffer: (\d+) viewers"), "viewers", "info", lambda m: "%s viewers; new viewer given a head start" % m.group(1)),
     (_r(r"transcoding with (.+)$"), "transcode", "info", lambda m: "Transcoding with %s" % m.group(1)),
     (_r(r"resuming after an engine restart"), "restart", "info", "Resumed after an engine restart"),
+    (_r(r"sync check: stream (\d+) of \d+ has its sound ([\d.]+)s (ahead of|behind)"), "avsync", "bad",
+     lambda m: "Stream %s's sound was %ss %s its picture; left it and removed it from the channel"
+     % (m.group(1), m.group(2), m.group(3))),
+    (_r(r"sync check: stream (\d+) is in step"), "avsync", "ok", lambda m: "Stream %s checked: sound in step" % m.group(1)),
 ]
 
 
@@ -182,6 +186,7 @@ class Session:
         self.events = collections.deque(maxlen=60)  # what the engine corrected, newest last
         self.stream_no = 1          # which of the channel's streams is playing (1 = main)
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
+        self.cur_key = (provider.get("id"), str(stream.get("stream_id")))  # the stream playing now
         self.degraded = False       # last 10-minute status showed repeated failovers or long keepalive
         self.dead_retunes = 0       # retunes in a row without real video
         self.spawns = 0
@@ -249,15 +254,19 @@ class Session:
                 break
         m = REF.search(line)
         if m:
-            if "switching to stream" in line:
+            if "sync check:" in line:
+                self.hub._desync(self, m.group(1), line)
+            elif "switching to stream" in line:
                 self.hub._follow(self, m.group(1))
             elif re.search(r"\b(failed|is not answering)\b", line):
-                self.hub._note_bad(m.group(1))
+                self.hub._note_bad(m.group(1), self)
         if "status: " in line:
             self.hub._history(self, line)
             m = re.search(r"(\d+) (?:switches|failovers), (\d+)s keepalive", line)
             if m:
                 self.degraded = int(m.group(1)) >= 2 or int(m.group(2)) >= 30
+                if int(m.group(1)) == 0 and int(m.group(2)) < 10:
+                    self.hub._health("good", self.channel_id, self.cur_key, 10)
         m = re.search(r"transcoding with (.+)$", line)
         if m:
             self.encoder = m.group(1).strip()
@@ -460,6 +469,7 @@ class Hub:
         self._refs = {}                 # engine log ref -> (provider_id, line_id, stream_id)
         self._bad = {}                  # (provider_id, stream_id) -> [retry after (monotonic), strikes]
         self._released = {}             # (provider_id, line_id) -> monotonic time it was last released
+        self.health = None              # app.feedhealth.FeedHealth, set by main
 
     def _config(self):
         try:
@@ -527,7 +537,7 @@ class Hub:
         entry = self._bad.get((provider_id, str(stream_id)))
         return bool(entry) and entry[0] > time.monotonic()
 
-    def _note_bad(self, ref):
+    def _note_bad(self, ref, session=None):
         """An engine gave up on a stream: try it last everywhere for a while (60 s, doubling to 10 min)."""
         hit = self._refs.get(ref)
         if hit is None:
@@ -536,6 +546,27 @@ class Hub:
         with self._lock:
             strikes = (self._bad.get(key) or [0, 0])[1]
             self._bad[key] = [time.monotonic() + min(60 * 2 ** strikes, 600), strikes + 1]
+        if session is not None:
+            self._health("fail", session.channel_id, key)
+
+    def _desync(self, session, ref, line):
+        """The engine found a stream whose sound is off its picture: feed health removes it."""
+        hit = self._refs.get(ref)
+        m = re.search(r"sound ([\d.]+)s (ahead of|behind)", line)
+        if hit is None or m is None:
+            return
+        with self._lock:
+            self._bad[(hit[0], hit[2])] = [time.monotonic() + 86400, 9]
+        self._health("desync", session.channel_id, (hit[0], hit[2]), float(m.group(1)), m.group(2) == "ahead of")
+
+    def _health(self, kind, channel_id, key, *args):
+        health = self.health
+        if health is None:
+            return
+        try:
+            getattr(health, kind)(channel_id, key, *args)
+        except Exception:  # noqa: BLE001 - feed health never breaks streaming
+            log.exception("feed health %s failed", kind)
 
     def _follow(self, session, ref):
         """The engine switched streams: hold the line it now uses, and show which stream it is."""
@@ -543,6 +574,7 @@ class Hub:
         if hit is None:
             return
         pid, lid, sid = hit
+        session.cur_key = (pid, sid)
         with self._lock:
             self._bad.pop((pid, sid), None)
             for key in list(session.extra_slots):

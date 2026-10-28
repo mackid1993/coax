@@ -636,6 +636,79 @@ cur = src
 pend = False
 fbad = {}
 lpr = -1000000000.0
+# Sync check. Timestamps can be right while a feed's sound is seconds off its picture (the provider built it
+# that way). After a switch, the new stream's first SYNCD seconds are compared by content with the last
+# SYNCD seconds of the stream it replaced (avcheck.py, in a separate low-priority process). A stream whose
+# sound is off is left for good, and coax removes it from the channel. Only a stream already known to be
+# in step (the tuned one, or one that passed this check) is used as the reference.
+SL = threading.Lock()
+SYNCD = 35.0
+SYNC = {"ref": collections.deque(), "refd": 0.0, "refu": None, "old": None, "oldu": None, "new": [], "newd": 0.0, "newu": None}
+TRUST = {src}
+SYNCBAD = [None]
+
+def synckeep(u, d, dur):
+    with SL:
+        if SYNC["old"] is not None and SYNC["newu"] == u:
+            SYNC["new"].append(d)
+            SYNC["newd"] += dur
+            if SYNC["newd"] >= SYNCD:
+                a_ = (b"".join(SYNC["old"]), b"".join(SYNC["new"]), u)
+                SYNC["old"] = None
+                SYNC["new"] = []
+                threading.Thread(target=synccheck, args=a_, daemon=True).start()
+        if SYNC["refu"] != u:
+            SYNC["ref"].clear()
+            SYNC["refd"] = 0.0
+            SYNC["refu"] = u
+        SYNC["ref"].append((d, dur))
+        SYNC["refd"] += dur
+        while SYNC["ref"] and SYNC["refd"] - SYNC["ref"][0][1] >= SYNCD:
+            SYNC["refd"] -= SYNC["ref"].popleft()[1]
+
+def syncswitch(u):
+    with SL:
+        if SYNC["refu"] in TRUST and SYNC["refd"] >= SYNCD / 2 and u not in TRUST:
+            SYNC["old"] = [x[0] for x in SYNC["ref"]]
+            SYNC["oldu"] = SYNC["refu"]
+            SYNC["new"] = []
+            SYNC["newd"] = 0.0
+            SYNC["newu"] = u
+        else:
+            SYNC["old"] = None
+
+def synccheck(old, new, u):
+    a_ = "/tmp/hlsloop-sync-%d-a.ts" % os.getpid()
+    b_ = "/tmp/hlsloop-sync-%d-b.ts" % os.getpid()
+    r_ = {}
+    try:
+        with open(a_, "wb") as f:
+            f.write(old)
+        with open(b_, "wb") as f:
+            f.write(new)
+        c_ = sp.run(["nice", "-n", "10", sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "avcheck.py"), a_, b_, FF], capture_output=True, text=True, timeout=240)
+        r_ = json.loads(c_.stdout or "{}")
+    except Exception as x:
+        log("sync check: could not compare (%s)" % x)
+        return
+    finally:
+        for p_ in (a_, b_):
+            try:
+                os.remove(p_)
+            except Exception:
+                pass
+    o_ = r_.get("offset")
+    fl_ = feeds()
+    i_ = fl_.index(u) + 1 if u in fl_ else 0
+    if o_ is None:
+        log("sync check: no clear verdict for stream %d (%s)" % (i_, r_.get("why") or "no result"))
+        return
+    if abs(o_) < 2.0:
+        TRUST.add(u)
+        log("sync check: stream %d is in step with the previous stream" % i_)
+        return
+    log("sync check: stream %d of %d has its sound %.1fs %s its picture; leaving it for good [ref %s]" % (i_, len(fl_), abs(o_), "ahead of" if o_ < 0 else "behind", ref(u)))
+    SYNCBAD[0] = u
 
 def mark(u):
     b = fbad.get(u, [0, 0])
@@ -699,6 +772,7 @@ def handoff(why, depth=None, fl=None):
     inc("sw")
     was = stalled
     cur = nxt
+    syncswitch(nxt)
     gap = mono() - ost if was else gap + mono() - got if gap is not None else mono() - got if last is not None else None
     media = None
     last = None
@@ -1141,6 +1215,19 @@ if rstk:
     handoff("the previous process got stuck reading this feed")
 while not gone():
     rb = mono()
+    if SYNCBAD[0] is not None and SYNCBAD[0] != cur:
+        SYNCBAD[0] = None
+    if SYNCBAD[0] is not None and mono() - lpr >= 30:
+        # Leave the out-of-sync stream. It may already be gone from the channel's list, so add it back at the
+        # end of this one call: every other stream is then a candidate. If none answers, try again in 30 s.
+        u_ = cur
+        fl_ = feeds()
+        if u_ not in fl_:
+            fl_ = fl_ + [u_]
+        handoff("sound is off its picture on this stream", fl=fl_)
+        fbad[u_] = [mono() + 86400, 9]
+        if cur != u_:
+            SYNCBAD[0] = None
     try:
         r = s.get(media or cur, timeout=(5, 10))
         r.raise_for_status()
@@ -1325,6 +1412,7 @@ while not gone():
                 o = rpart[1] - rpart[1] % 188
                 rpart = None
             enq(["seg", d, q["d"] or tgt, n, p0, o])
+            synckeep(cur, d, q["d"] or tgt)
             dq.append((mono(), q["d"] or tgt))
             ns += 1
             last = n

@@ -159,6 +159,9 @@ export const api = {
   backupNow: () => post(routes.backups(), {}),
   backupRestore: (name) => post(`${routes.backup(name)}/restore`, {}),
   backupDelete: (name) => del(routes.backup(name)),
+  notifications: () => get("/api/notifications"),
+  notificationsRead: () => post("/api/notifications/read", {}),
+  notificationUndo: (id) => post(`/api/notifications/${encodeURIComponent(id)}/undo`, {}),
   network: (fresh = false) => get(routes.network() + (fresh ? "?refresh=1" : ""), { timeout: 15000 }),
   log: (since, limit) => get(routes.log(since, limit), { timeout: 8000 }),
 };

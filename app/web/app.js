@@ -1,7 +1,7 @@
 import { initPopovers } from "./popover.js";
 // coax web UI entry: router, theme, server health. Pages live in pages/*.js.
 import { api } from "./api.js";
-import { $, icon, esc, flag } from "./ui.js";
+import { $, icon, esc, flag, openModal, toast, toastError } from "./ui.js";
 
 const PAGES = [
   { id: "channels", label: "Channels", icon: "channels", load: () => import("./pages/channels.js") },
@@ -78,6 +78,46 @@ async function health() {
 }
 health();
 setInterval(health, 10000);
+
+// ---------- Notifications bell (feed health: removed and promoted streams) ----------
+let notes = { items: [], unread: 0 };
+async function pollNotes() {
+  try { notes = await api.notifications(); } catch { return; }
+  const n = $("#bell .bell-n");
+  n.hidden = !notes.unread;
+  n.textContent = notes.unread > 99 ? "99+" : String(notes.unread);
+  $("#bell").classList.toggle("has", !!notes.unread);
+}
+const NOTE_KIND = { desync: "Out of sync, removed", removed: "Kept failing, removed", promoted: "New main stream" };
+function notesHtml() {
+  if (!notes.items?.length) return `<p class="faint">Nothing yet. When coax removes a bad stream from a channel or makes a more reliable backup the main stream, it shows up here.</p>`;
+  return `<ol class="notes">${notes.items.map((x) => `<li class="note ${x.read ? "" : "unread"} ${x.undone ? "undone" : ""}">
+    <div class="note-head"><span class="badge ${x.kind === "promoted" ? "badge-ok" : "badge-warn"}">${esc(NOTE_KIND[x.kind] || x.kind)}</span><b>${esc(x.channel || "")}</b><span class="faint small">${esc(new Date(x.t * 1000).toLocaleString())}</span></div>
+    <div class="note-text">${esc(x.text)}</div>
+    ${x.undone ? `<div class="faint small">Undone</div>` : x.undo ? `<button class="btn btn-sm" data-undo="${esc(x.id)}">Undo</button>` : ""}</li>`).join("")}</ol>`;
+}
+async function openNotes() {
+  await pollNotes();
+  const m = openModal({ title: "Notifications", wide: true, body: notesHtml() });
+  m.body.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-undo]");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      await api.notificationUndo(b.dataset.undo);
+      toast("Undone", "The channel's streams are back the way they were.", "ok");
+      await pollNotes();
+      m.body.innerHTML = notesHtml();
+    } catch (err) { b.disabled = false; toastError("Could not undo", err); }
+  });
+  if (notes.unread) {
+    try { notes = await api.notificationsRead(); } catch {}
+    pollNotes();
+  }
+}
+$("#bell").addEventListener("click", openNotes);
+pollNotes();
+setInterval(pollNotes, 15000);
 
 // ---------- Public IP pill (lets users confirm they are behind their VPN) ----------
 export async function refreshNetwork(fresh = false) {

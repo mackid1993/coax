@@ -95,6 +95,12 @@ def main(argv=None):
     if hub is not None:
         hub.port = port
     app = servermod.App(store, hub)
+    try:
+        app.health = importlib.import_module("app.feedhealth").FeedHealth(store, os.path.dirname(os.path.abspath(path)))
+        if hub is not None:
+            hub.health = app.health
+    except Exception:  # noqa: BLE001 - coax streams without feed health
+        log.exception("feed health failed to start")
     app.dvr = start_dvr_sync(store)
     try:
         importlib.import_module("app.snapshots").start(store)

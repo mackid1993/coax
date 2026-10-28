@@ -299,6 +299,28 @@ The Status page marks a channel as *Unsteady feed* when its last 10-minute summa
 switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries are kept in
 `data/cache/history/`.
 
+
+### Bad streams are removed, reliable ones are promoted
+
+coax keeps a day of history for every stream of every channel and acts on it. Each change appears under the
+**bell** in the sidebar, with the channel, the stream, the reason and an **Undo**. A channel with only one stream
+is never changed.
+
+- **Sound off its picture.** Some feeds carry correct timestamps but sound that is seconds ahead of or behind the
+  picture, because the provider built the feed that way. After every switch to another stream, coax compares the
+  first 35 seconds of the new stream with the last 35 seconds of the stream it left, by their actual picture and
+  sound (scene changes and the rhythm of the audio), in a low-priority background process. If the new stream's
+  sound is 2 seconds or more off, coax leaves it for another stream and removes it from the channel. This needs
+  no second connection, so it works with a single line. The check runs on HLS streams.
+- **A backup that keeps failing** in 6 separate half hours of a day, plays well for less than 20 minutes, while
+  another stream of the channel plays well, is removed.
+- **An unreliable main stream.** When the main stream failed in 3 separate half hours of a day and a backup played
+  at least an hour without a single problem, that backup becomes the main stream and the old one moves to second
+  place. This happens at most once a day per channel.
+
+Failures within one half hour count once, so one bad evening at the provider does not remove a stream. History is
+kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
+
 ## HLS or MPEG-TS
 
 Xtream-style providers usually offer each channel two ways:

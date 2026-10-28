@@ -204,6 +204,7 @@ class App:
         self.refresh_results = {}   # provider id -> last result dict
         self.refreshing = set()
         self.dvr = None             # app.channels_dvr.Syncer, set by main (created on demand otherwise)
+        self.health = None          # app.feedhealth.FeedHealth, set by main
         self.automatch_job = None   # {id, state, done, total, phase, started, finished, result, error}
         self.automatch_lock = threading.Lock()
 
@@ -506,6 +507,9 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr/sync", "h_lineup_dvr_sync"),
         ("GET", r"/api/status", "h_status"),
         ("GET", r"/api/network", "h_network"),
+        ("GET", r"/api/notifications", "h_notes"),
+        ("POST", r"/api/notifications/read", "h_notes_read"),
+        ("POST", r"/api/notifications/([0-9]+)/undo", "h_note_undo"),
         ("GET", r"/api/backups", "h_backups"),
         ("POST", r"/api/backups", "h_backup_create"),
         ("POST", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)/restore", "h_backup_restore"),
@@ -1781,6 +1785,23 @@ class Handler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ network
     _net = {"at": 0.0, "data": None}
     _net_lock = threading.Lock()
+
+    def _feed_health(self):
+        if self.app.health is None:
+            raise ApiError(503, "feed health is not running")
+        return self.app.health
+
+    def h_notes(self):
+        return self._feed_health().list()
+
+    def h_notes_read(self):
+        return self._feed_health().mark_read()
+
+    def h_note_undo(self, note_id):
+        try:
+            return self._feed_health().undo(note_id)
+        except KeyError:
+            raise not_found("nothing to undo for notification %s" % note_id)
 
     def h_network(self):
         fresh = self.query.get("refresh") in ("1", "true")

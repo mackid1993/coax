@@ -692,3 +692,14 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
 #bList .backup-item [data-rm] { cursor: pointer; }
 #bList.reordering, #bList.reordering .backup-item { cursor: grabbing; }
 #bList .backup-item.dragging { opacity: .85; border-color: var(--accent); box-shadow: 0 6px 18px rgb(0 0 0 / .35); }
+
+/* Notifications bell */
+.bell { position: relative; }
+.bell svg { width: 18px; height: 18px; }
+.bell.has { color: var(--warn); }
+.bell-n { position: absolute; top: 1px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--bad); color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+.notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.note { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.note.unread { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.note.undone { opacity: .6; }
+.note-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
