@@ -998,6 +998,10 @@ class Hub:
                 if not same and not reuse:
                     self._drop_locked(s, new_key)
                 raise LookupError("this channel is not playing")
+            if same and s.line_id != line.get("id"):
+                # A no-video retune moved the session to another line meanwhile: the address was built for the
+                # old one. Nothing has changed yet; the user can press Switch again.
+                raise ValueError("the channel just moved to another line; try again")
             # The old engine may still be connected on the lines being given up: keep holding them until it
             # is dead (kill before release), so no other tune can open a second connection on them.
             if not same:

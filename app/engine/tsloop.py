@@ -495,6 +495,7 @@ if os.environ.get("COAX_NEWSTREAM"):
     # stream's failure clock or stuck flag, so the new stream is not judged by what the old one did.
     rg = 0.0
     rstk = False
+    rcur = None   # the hub's choice is what plays, not the old engine's last failover stream
 cur = rcur or src
 
 def save():

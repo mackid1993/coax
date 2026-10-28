@@ -696,6 +696,7 @@ if os.environ.get("COAX_NEWSTREAM"):
     seen.clear()
     rpart = None
     rstk = False   # the old stream's stuck flag must not send the new one straight to a backup
+    rcur = None    # nor its last failover stream: the hub's choice is what plays
 cur = src
 pend = bool(os.environ.get("COAX_NEWSTREAM"))   # a hand switch continues the output timeline like a failover
 fbad = {}
