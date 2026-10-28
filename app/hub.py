@@ -192,6 +192,8 @@ class Session:
         self.reserve_empty = False  # engine says video only arrives as fast as the provider sends it
         self.events = collections.deque(maxlen=60)  # what the engine corrected, newest last
         self.stream_no = 1          # which of the channel's streams is playing (1 = main)
+        self.fresh = False          # next engine starts a stream chosen by hand (no stream state carried over)
+        self.switch_msg = None      # why the engine is being restarted on another stream
         self.input_fmt = {}         # what the provider sends on the stream playing now ("video", "audio")
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
         self.cur_key = (provider.get("id"), str(stream.get("stream_id")))  # the stream playing now
@@ -221,6 +223,11 @@ class Session:
             env["COAX_RESTART"] = "1"   # resume from the previous engine's state even if it is a little old
         else:
             env.pop("COAX_RESTART", None)
+        if self.fresh:
+            env["COAX_NEWSTREAM"] = "1"
+        else:
+            env.pop("COAX_NEWSTREAM", None)
+        self.fresh = False
         self.spawns += 1
         self.spawned_at = time.monotonic()
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -456,6 +463,9 @@ class Session:
                 else:
                     log.warning("[%s] no video for %.0fs; retuning with a fresh engine", self.name, DEAD_TIMEOUT)
                     self.event("restart", "No video for %.0fs; retuned with a fresh connection" % DEAD_TIMEOUT, "warn")
+            elif self.switch_msg:
+                self.event("failover", self.switch_msg, "warn")
+                self.switch_msg = None
             else:
                 log.warning("[%s] engine exited (code %s); restarting it on the same line", self.name, code)
                 self.event("restart", "Engine stopped (code %s); restarted on the same line" % code, "warn")
@@ -531,6 +541,8 @@ class Hub:
     @staticmethod
     def _candidates(channel_cfg, providers):
         for stream in channel_cfg.get("streams") or []:
+            if stream.get("disabled"):
+                continue   # disabled by hand: never played, never a backup
             provider = providers.get(stream.get("provider"))
             if provider is not None and stream.get("stream_id") not in (None, ""):
                 yield stream, provider
@@ -848,8 +860,135 @@ class Hub:
         except (OSError, ValueError, TypeError):
             return None
 
+    def _feeds_view(self, cfg, s):
+        """Every stream of the session's channel for the card: which plays, which is disabled or blocked."""
+        try:
+            ch = next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(s.channel_id)), None) or {}
+            providers = self._providers(cfg)
+            try:
+                from app.providers import catalog as cat
+            except Exception:  # noqa: BLE001
+                cat = None
+            cur = (str(s.cur_key[0]), str(s.cur_key[1])) if s.cur_key else None
+            out = []
+            for ref in ch.get("streams") or []:
+                pid, sid = str(ref.get("provider")), str(ref.get("stream_id"))
+                p = providers.get(pid) or {}
+                info = {}
+                if cat is not None:
+                    try:
+                        info = cat.find_stream(pid, sid) or {}
+                    except Exception:  # noqa: BLE001
+                        info = {}
+                try:
+                    blocked = bool(p) and bool(self._blocked(s.channel_id, (ref, p)))
+                except Exception:  # noqa: BLE001
+                    blocked = False
+                out.append({"provider": pid, "provider_name": p.get("name") or pid, "stream_id": sid,
+                            "name": info.get("name", ""), "group": info.get("group", ""),
+                            "disabled": bool(ref.get("disabled")), "playing": (pid, sid) == cur, "blocked": blocked})
+            return out
+        except Exception:  # noqa: BLE001
+            return []
+
+    def switch(self, channel_id, instance, provider_id, stream_id, why=None):
+        """Move a playing session to another stream of its channel now (the Switch button)."""
+        provider_id, stream_id = str(provider_id), str(stream_id)
+        cfg = self._config()
+        ch = next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(channel_id)), None)
+        if ch is None:
+            raise LookupError("unknown channel")
+        refs = ch.get("streams") or []
+        i = next((k for k, r in enumerate(refs)
+                  if str(r.get("provider")) == provider_id and str(r.get("stream_id")) == stream_id), None)
+        if i is None:
+            raise LookupError("that stream is not on this channel")
+        if refs[i].get("disabled"):
+            raise ValueError("that stream is disabled")
+        provider = self._providers(cfg).get(provider_id)
+        if provider is None or not provider.get("enabled", True):
+            raise ValueError("that stream's provider is not enabled")
+        with self._lock:
+            s = next((x for x in self._sessions
+                      if str(x.channel_id) == str(channel_id) and x.instance == int(instance or 0)), None)
+            if s is None or s.closed:
+                raise LookupError("this channel is not playing")
+            same = provider_id == str(s.provider_id)
+            if same:
+                line = next((l for l in provider.get("lines") or [] if l.get("id") == s.line_id), None)
+            else:
+                line = next((l for l in self._lines(provider) if self._free_locked(provider, l)), None)
+                if line is not None:
+                    self._hold_locked(s, (provider_id, line.get("id")))
+            if line is None:
+                raise ValueError("no free line on that stream's provider")
+        try:
+            url = self._stream_url(provider, line, stream_id)
+        except Exception:  # noqa: BLE001
+            url = None
+        if not url:
+            if not same:
+                with self._lock:
+                    self._drop_locked(s, (provider_id, line.get("id")))
+            raise ValueError("could not build that stream's address")
+        try:
+            from app.providers import stream_format
+            fmt = stream_format(provider, refs[i]) or provider.get("format") or "hls"
+        except Exception:  # noqa: BLE001
+            fmt = provider.get("format") or "hls"
+        msg = why or "Switched to stream %s by hand" % stream_id
+        with self._lock:
+            if not same:
+                self._drop_locked(s, (s.provider_id, s.line_id))
+                s.provider_id, s.provider_name = provider_id, provider.get("name") or provider_id
+                s.line_id, s.line_name = line.get("id"), line.get("name") or line.get("id")
+            for key in list(s.extra_slots):
+                self._drop_locked(s, key)
+            s.extra_slots = []
+            s.fmt, s.url, s.stream_id = fmt, url, stream_id
+            s.cur_key, s.stream_no, s.input_fmt = (provider_id, stream_id), i + 1, {}
+            s.fresh = True
+            s.switch_msg = msg
+            proc = s.proc
+        self._remember(url, provider_id, line.get("id"), stream_id)
+        log.info("[%s] %s", s.name, msg)
+        if proc is not None:
+            self._kill(proc, close_stdout=False)
+        return msg
+
+    def feed_disabled(self, channel_id, provider_id, stream_id):
+        """A stream was disabled: a session playing it (or tuned to it) moves to an enabled stream at once."""
+        key = (str(provider_id), str(stream_id))
+        cfg = self._config()
+        ch = next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(channel_id)), None)
+        if ch is None:
+            return None
+        providers = self._providers(cfg)
+        with self._lock:
+            mine = [x for x in self._sessions if str(x.channel_id) == str(channel_id) and not x.closed]
+        said = []
+        for s in mine:
+            cur = (str(s.cur_key[0]), str(s.cur_key[1])) if s.cur_key else None
+            if key not in (cur, (str(s.provider_id), str(s.stream_id))):
+                continue
+            if cur and cur != key:
+                target = cur   # tuned to it but already on another stream: restart there so it cannot come back
+            else:
+                nxt = next(((st, p) for st, p in self._candidates(ch, providers) if p.get("enabled", True)
+                            and (str(p.get("id")), str(st.get("stream_id"))) != key), None)
+                if nxt is None:
+                    continue
+                target = (str(nxt[1].get("id")), str(nxt[0].get("stream_id")))
+            try:
+                said.append(self.switch(channel_id, s.instance, target[0], target[1],
+                                        "Stream %s was disabled; switched to stream %s" % (key[1], target[1])))
+            except (LookupError, ValueError) as exc:
+                log.warning("[%s] could not leave disabled stream %s: %s", s.name, key[1], exc)
+        return " ".join(said) or None
+
     def status(self):
         now = time.time()
+        cfg = self._config()
         with self._lock:
             sessions = list(self._sessions)
         out = []
@@ -869,6 +1008,7 @@ class Hub:
                           "empty": s.reserve_empty},
                 "stream_no": s.stream_no,
                 "input": s.input_fmt,
+                "feeds": self._feeds_view(cfg, s),
                 "degraded": s.degraded,
                 "events": list(s.events),
                 "engine_pid": proc.pid if proc is not None and proc.poll() is None else None,

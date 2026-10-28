@@ -535,3 +535,14 @@ class PlaceholderBlameTest(unittest.TestCase):
         self.assertEqual(seen, [(("p1", "a"), "placeholder")])
         self.assertEqual(s.cur_key, ("p1", "b"))
         s.close()
+
+
+class DisabledStreamTest(unittest.TestCase):
+    def test_disabled_streams_are_skipped_and_kept(self):
+        from app import hub as h, server
+        cls = next(v for v in vars(h).values() if isinstance(v, type) and hasattr(v, "_candidates"))
+        ch = {"streams": [{"provider": "p1", "stream_id": "1", "disabled": True}, {"provider": "p1", "stream_id": "2"}]}
+        self.assertEqual([st["stream_id"] for st, _ in cls._candidates(ch, {"p1": {"id": "p1"}})], ["2"])
+        refs = server.stream_refs(ch["streams"])
+        self.assertTrue(refs[0].get("disabled"))
+        self.assertNotIn("disabled", refs[1])

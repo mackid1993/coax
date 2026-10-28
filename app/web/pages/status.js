@@ -1,6 +1,6 @@
 // Status: live sessions with sparklines, line usage, refresh results, network, and the log tail. Polls every 3 s.
 import { api } from "../api.js";
-import { $, esc, flag, icon, logo, emptyState, fmtBytes, fmtRate, fmtDuration, fmtAgo, fmtInt, toastError } from "../ui.js";
+import { $, esc, flag, icon, logo, emptyState, fmtBytes, fmtRate, fmtDuration, fmtAgo, fmtInt, toast, toastError } from "../ui.js";
 import { refreshNetwork } from "../app.js";
 
 const POLL_MS = 3000;
@@ -24,6 +24,7 @@ export async function mount(el) {
       </div>
     </div>`;
   $("#follow", root).onchange = (e) => { follow = e.target.checked; if (follow) scrollLog(); };
+  if (!el._feedsBound) { el._feedsBound = true; el.addEventListener("click", onFeedClick); el.addEventListener("change", onFeedChange); }
   $("#netRefresh", root).onclick = async (e) => {
     const b = e.currentTarget; b.classList.add("loading");
     try { await refreshNetwork(true); } catch (err) { toastError("Could not check public IP", err); } finally { b.classList.remove("loading"); }
@@ -140,6 +141,7 @@ function cardInner(x, key) {
       </div>
       <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}${feedBadge(x)}${x.degraded ? `<span class="badge badge-warn" title="The last 10 minutes had repeated failovers or long gaps without video. coax is still recovering it on its own."><span class="dot"></span>Unsteady feed</span>` : ""}</div>
       ${fmtHtml(x)}
+      ${feedsHtml(x)}
       ${eventsHtml(x)}
       <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
       ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtDuration(c.connected > 1e9 ? Date.now() / 1000 - c.connected : c.connected)}</span>` : ""}</span>`).join("")}</div>` : ""}`;
@@ -156,6 +158,41 @@ function fmtHtml(x) {
   if (!f.video && !f.audio) return "";
   return `<div class="src-fmt" title="The format the provider sends, before coax touches it. With transcoding on, Channels DVR gets coax's re-encoded stream instead."><span class="badge">From provider</span>
     <div class="src-fmt-lines small num">${f.video ? `<div>${esc(f.video)}</div>` : ""}${f.audio ? `<div>${esc(f.audio)}</div>` : ""}</div></div>`;
+}
+function feedsHtml(x) {
+  const f = x.feeds || [];
+  if (!f.length) return "";
+  const at = (s) => `data-ch="${esc(x.channel_id)}" data-inst="${esc(x.instance || 0)}" data-p="${esc(s.provider)}" data-s="${esc(s.stream_id)}" data-n="${esc(s.name || "Stream " + s.stream_id)}" data-g="${esc(s.group || "")}" data-pn="${esc(s.provider_name)}"`;
+  return `<div class="feeds"><div class="stat-label">Streams for this channel</div>${f.map((s, i) => `<div class="feed${s.playing ? " playing" : ""}${s.disabled ? " off" : ""}">
+    <span class="ord num">${i + 1}</span>
+    <span class="f-main"><span class="ellip f-name">${esc(s.name || "Stream " + s.stream_id)}</span><span class="faint small ellip">${esc(s.provider_name)}${s.group ? ` · ${esc(s.group)}` : ""} · <span class="num">${esc(s.stream_id)}</span></span></span>
+    ${s.playing ? `<span class="badge badge-ok"><span class="dot pulse"></span>Playing now</span>` : ""}
+    ${s.disabled ? `<span class="badge badge-bad" title="Disabled by you: never played or used as a backup">Disabled</span>` : ""}
+    ${s.blocked && !s.disabled ? `<span class="badge badge-warn" title="Smart Standby blocked this stream for a while">Blocked</span>` : ""}
+    <button class="btn btn-sm" data-feed-switch ${at(s)} ${s.playing || s.disabled ? "disabled" : ""}>Switch</button>
+    <label class="f-off" title="A disabled stream is never played or used as a backup"><input type="checkbox" data-feed-off ${at(s)} ${s.disabled ? "checked" : ""}> Disable</label>
+  </div>`).join("")}</div>`;
+}
+async function onFeedClick(e) {
+  const b = e.target.closest("[data-feed-switch]");
+  if (!b || b.disabled) return;
+  b.disabled = true;
+  try {
+    await api.switchFeed(b.dataset.ch, { instance: Number(b.dataset.inst), provider: b.dataset.p, stream_id: b.dataset.s });
+    toast("Switching streams", `Switching to ${b.dataset.n} (stream ${b.dataset.s}, ${b.dataset.pn}${b.dataset.g ? `, group ${b.dataset.g}` : ""}).`, "ok", 5000);
+  } catch (err) { toastError("Could not switch streams", err); b.disabled = false; }
+  poll();
+}
+async function onFeedChange(e) {
+  const c = e.target.closest("[data-feed-off]");
+  if (!c) return;
+  const off = c.checked;
+  const what = `${c.dataset.n} (stream ${c.dataset.s}, ${c.dataset.pn}${c.dataset.g ? `, group ${c.dataset.g}` : ""})`;
+  try {
+    const r = await api.setFeedDisabled(c.dataset.ch, { provider: c.dataset.p, stream_id: c.dataset.s, disabled: off });
+    toast(off ? "Stream disabled" : "Stream enabled", off ? `Disabled ${what}. coax will not play it or use it as a backup.${r && r.switched ? " " + r.switched + "." : ""}` : `Enabled ${what} again.`, off ? "warn" : "ok", 8000);
+  } catch (err) { c.checked = !off; toastError("Could not change the stream", err); }
+  poll();
 }
 function feedBadge(x) {
   const n = Number(x.stream_no) || 1;

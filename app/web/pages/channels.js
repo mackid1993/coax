@@ -369,7 +369,7 @@ function currentGuide(c) {
 function backupsCell(c, p) {
   const b = backupsOf(c);
   const more = b.length > 2 ? `<span class="badge" data-pop="${esc(b.slice(2).map((s) => s.name || s.stream_id).join(" · "))}" data-pop-sub="More backups" data-pop-always>+${b.length - 2}</span>` : "";
-  const chips = b.slice(0, 2).map((s, i) => `<span class="bchip ${s.missing ? "missing" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Backup ${i + 1} · ${providerName(S.providers, s.provider)}${s.missing ? " · vanished from the provider" : ""}`)}" data-pop-always><span class="ord">${i + 1}</span><span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span></span>`).join("");
+  const chips = b.slice(0, 2).map((s, i) => `<span class="bchip ${s.missing ? "missing" : ""}${s.disabled ? " off" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Backup ${i + 1} · ${providerName(S.providers, s.provider)}${s.missing ? " · vanished from the provider" : ""}${s.disabled ? " · disabled" : ""}`)}" data-pop-always><span class="ord">${i + 1}</span><span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span></span>`).join("");
   const pend = (p?.backups || []).map((s, i) => `<label class="bchip pending ${s.checked ? "on" : ""}" data-pop="${esc(s.name || s.stream_id)}" data-pop-sub="${esc(`Suggested · ${providerName(S.providers, s.provider)} · ${pct(s.score)}%${s.reason ? " · " + s.reason : ""}`)}" data-pop-always>${checkHtml(s.checked, `data-bcheck="${i}" aria-label="Accept backup ${esc(s.name)}"`)}<span class="ellip">${esc(s.name || s.stream_id)}</span><span class="prov">${esc(providerName(S.providers, s.provider))}</span><span class="num small">${pct(s.score)}%</span></label>`).join("");
   const none = !b.length && !pend ? `<span class="faint">None</span>` : "";
   return `<div class="bchips"><button class="btn btn-sm edit-bk" data-act="streams" aria-label="Edit backup streams for ${esc(c.name)}" data-pop="Edit backups" data-pop-sub="Add, search, reorder or remove backup streams" data-pop-always>${icon("layers")}Backups</button>${chips}${more}${pend}${none}</div>`;
@@ -971,11 +971,13 @@ function streamsModal(c) {
   });
   const el = m.el;
   const draw = () => {
-    $("#bList", el).innerHTML = streams.length ? streams.map((s, i) => `<div class="backup-item ${i === 0 ? "primary" : ""} ${s.missing ? "missing" : ""}" data-i="${i}">
+    $("#bList", el).innerHTML = streams.length ? streams.map((s, i) => `<div class="backup-item ${i === 0 ? "primary" : ""} ${s.missing ? "missing" : ""} ${s.disabled ? "off" : ""}" data-i="${i}">
       <button class="drag-handle" data-bdrag aria-label="Move ${esc(s.name || s.stream_id)}, Alt plus arrow keys">${icon("grip")}</button>
       <span class="order">${i + 1}</span>
       <span style="flex:1;min-width:0"><span class="ellip" style="display:block;font-weight:560" data-pop="${esc(s.name || s.stream_id)}">${esc(s.name || s.stream_id)}</span><span class="faint small">${esc(providerName(S.providers, s.provider))} · <span class="num">${esc(s.stream_id)}</span>${s.missing ? ' · <span style="color:var(--bad)">vanished</span>' : ""}</span></span>
       ${i === 0 ? `<span class="badge badge-accent">Primary</span>` : ""}
+      ${s.disabled ? `<span class="badge badge-bad">Disabled</span>` : ""}
+      <label class="f-off" title="A disabled stream is never played or used as a backup"><input type="checkbox" data-boff="${i}" ${s.disabled ? "checked" : ""}> Disable</label>
       <button class="btn btn-ghost btn-sm btn-icon btn-danger" data-rm="${i}" aria-label="Remove">${icon("x")}</button></div>`).join("") : `<div class="faint small">No streams. Add one from the right.</div>`;
     const sg = $("#bSugg", el);
     if (sg) {
@@ -1061,9 +1063,11 @@ function streamsModal(c) {
   $("#bProv", el).addEventListener("change", search);
   $("#bAll", el).addEventListener("change", search);
   search();
+  el.addEventListener("change", (e) => { const t = e.target.closest("[data-boff]"); if (t) { streams[Number(t.dataset.boff)].disabled = t.checked; draw(); } });
   $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
     try {
-      const r = await api.updateChannel(c.id, { streams: streams.map((s) => ({ provider: s.provider, stream_id: String(s.stream_id) })) });
+      if (streams.length && streams.every((s) => s.disabled)) { toast("Keep one stream enabled", "A channel needs at least one stream that is not disabled.", "warn"); return; }
+      const r = await api.updateChannel(c.id, { streams: streams.map((s) => ({ provider: s.provider, stream_id: String(s.stream_id), ...(s.disabled ? { disabled: true } : {}) })) });
       Object.assign(chById(c.id) || c, r && r.id ? r : { streams });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.backups = []; if (!pp.guide?.cands?.length) S.pending.delete(c.id); }
       toast("Streams saved", c.name, "ok", 2500);

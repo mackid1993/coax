@@ -435,7 +435,10 @@ def stream_refs(value, what="streams"):
     for item in value:
         if not isinstance(item, dict) or not item.get("provider") or item.get("stream_id") in (None, ""):
             raise bad_request("each entry of %s needs provider and stream_id" % what)
-        refs.append({"provider": str(item["provider"]), "stream_id": str(item["stream_id"])})
+        ref = {"provider": str(item["provider"]), "stream_id": str(item["stream_id"])}
+        if item.get("disabled") is True:
+            ref["disabled"] = True   # never played and never used as a backup; stays listed
+        refs.append(ref)
     return refs
 
 
@@ -489,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
         ("PUT", r"/api/channels/(\d+)", "h_channel_update"),
         ("DELETE", r"/api/channels/(\d+)", "h_channel_delete"),
         ("POST", r"/api/channels/(\d+)/streams", "h_channel_attach"),
+        ("POST", r"/api/channels/(\d+)/feed", "h_channel_feed"),
+        ("POST", r"/api/channels/(\d+)/switch", "h_channel_switch"),
         ("GET", r"/api/gracenote/search", "h_gracenote_search"),
         ("GET", r"/api/gracenote/suggest", "h_gracenote_suggest"),
         ("POST", r"/api/gracenote/bulk-suggest", "h_gracenote_bulk_suggest"),
@@ -1301,6 +1306,50 @@ class Handler(BaseHTTPRequestHandler):
         numbers = self.app.store.update(mutate)
         return {"numbers": {str(k): v for k, v in numbers.items()}}
 
+    def h_channel_feed(self, channel_id):
+        """Disable or enable one stream of a channel. Disabling the stream that plays moves playback off it."""
+        channel_id = int(channel_id)
+        body = self._body_object()
+        pid, sid, off = str(body.get("provider") or ""), str(body.get("stream_id") or ""), bool(body.get("disabled"))
+
+        def mutate(cfg):
+            channel = find_channel(cfg, channel_id)
+            ref = next((r for r in channel["streams"] if r["provider"] == pid and r["stream_id"] == sid), None)
+            if ref is None:
+                raise bad_request("that stream is not on this channel")
+            if off and not any(not r.get("disabled") for r in channel["streams"] if r is not ref):
+                raise bad_request("keep at least one stream of the channel enabled")
+            if off:
+                ref["disabled"] = True
+            else:
+                ref.pop("disabled", None)
+            return channel
+        channel = self.app.store.update(mutate)
+        switched = None
+        hub = self.app.hub
+        if off and hub is not None and hasattr(hub, "feed_disabled"):
+            try:
+                switched = hub.feed_disabled(channel_id, pid, sid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not move playback off disabled stream %s: %s", sid, exc)
+        cfg = self.app.store.get()
+        view = self._channel_view(channel, cfg, self._lineup_map(cfg))
+        view["switched"] = switched
+        return view
+
+    def h_channel_switch(self, channel_id):
+        """Move a playing channel to another of its streams now."""
+        body = self._body_object()
+        hub = self.app.hub
+        if hub is None or not hasattr(hub, "switch"):
+            raise bad_request("nothing is playing")
+        try:
+            inst = int(body.get("instance") or 0)
+            text = hub.switch(int(channel_id), inst, str(body.get("provider") or ""), str(body.get("stream_id") or ""))
+        except (LookupError, ValueError, TypeError) as exc:
+            raise bad_request(str(exc))
+        return {"ok": True, "text": text}
+
     def h_channel_attach(self, channel_id):
         channel_id = int(channel_id)
         body = self._body_object()
@@ -1915,6 +1964,8 @@ def fallback_stream_urls(cfg, channel):
         return []
     urls = []
     for ref in channel["streams"]:
+        if ref.get("disabled"):
+            continue
         provider = providers.get(ref["provider"])
         if not provider or not provider["lines"]:
             continue

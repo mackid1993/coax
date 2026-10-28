@@ -316,7 +316,7 @@ def eofs(vk, av):
 def ffcmd():
     b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
     if not TRANSCODE:
-        return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+        return b + ["-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
     h = hwpick()
     fr = frs(TC_FPS)
     g = str(int(round(2 * TC_FPS)))
@@ -338,7 +338,7 @@ def ffcmd():
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
     af = "aresample=async=1:min_hard_comp=0.1" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-drop_changed:a", "1", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+    return b + ["-drop_changed:a", "1", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt
@@ -371,8 +371,25 @@ def remux(why=None, ofs=None):
 OWT = [mono()]
 NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
 
-import tsfix
-CT = tsfix.Cont(0)
+AQ = {"pid": None, "t0": 0.0, "a": None, "told": False}
+
+def silent(pid, b):
+    # -drop_changed drops audio frames whose format changes. If the provider's audio changes for good, the
+    # encoder would send video without sound, so it is restarted once to pick up the new format.
+    now = mono()
+    if AQ["pid"] != pid:
+        AQ.update(pid=pid, t0=now, a=None, told=False)
+    for j in range(0, len(b) - 187, 188):
+        if b[j] == 71 and b[j + 1] & 64:
+            af = b[j + 3] >> 4 & 3
+            o = j + (5 + b[j + 4] if af == 3 else 4)
+            if af & 1 and o + 4 <= j + 188 and b[o:o + 3] == b"\x00\x00\x01" and 192 <= b[o + 3] <= 223:
+                AQ["a"] = now
+                return False
+    if AQ["told"] or now - AQ["t0"] < 15 or now - (AQ["a"] or AQ["t0"]) < 10:
+        return False
+    AQ["told"] = True
+    return True
 
 def pump():
     global skf
@@ -414,19 +431,12 @@ def pump():
             elif more or p.poll() is None:
                 continue
         b = os.read(p.stdout.fileno(), 65536) if r else b""
-        if b and TRANSCODE:
-            # A restarted encoder continues the picture exactly where the previous one stopped.
-            b, g_ = CT.feed(p.pid, b, mono())
-            if CT.silent(p.pid, mono()):
-                log("output: the encoder has sent no audio for 10s while video flows; restarting it")
-                try:
-                    p.kill()
-                except Exception:
-                    pass
-            if g_:
-                log("encoder restart: shifted the new encoder's timestamps by %.2fs so the picture continues where it left off" % g_)
-            if not b:
-                continue
+        if b and TRANSCODE and silent(p.pid, b):
+            log("output: the encoder has sent no audio for 10s while video flows; restarting it")
+            try:
+                p.kill()
+            except Exception:
+                pass
         if not b:
             if more:
                 with fql:
@@ -436,8 +446,7 @@ def pump():
                 except Exception:
                     pass
                 shut.pop(p.pid, None)
-                t_ = CT.end(p.pid) if TRANSCODE else b""
-                b = t_ + b"\xff" * ((188 - (ob + len(t_)) % 188) % 188)
+                b = b"\xff" * ((188 - ob % 188) % 188)
             elif p.poll() is not None:
                 time.sleep(0.05)
             if not b:
@@ -655,6 +664,12 @@ def feeds():
     if src not in out and not any(XC.sub("/", src) == XC.sub("/", x) for x in out):
         out.append(src)
     return out
+if os.environ.get("COAX_NEWSTREAM"):
+    # The hub switched this channel to another stream by hand: keep the output clock, start the new stream fresh.
+    last = wlast = None
+    rseen = None
+    seen.clear()
+    rpart = None
 cur = src
 pend = False
 fbad = {}

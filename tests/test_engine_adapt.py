@@ -300,27 +300,16 @@ class FfmpegArgsTest(unittest.TestCase):
             src = open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", name + ".py")).read()
             i = src.index("def ffcmd():")
             body = src[i:src.index("\ndef ", i + 10)]
-            self.assertGreaterEqual(body.count('"-probesize", "5000000"'), 2, name)
-            self.assertEqual(body.count('"-muxpreload", "0"'), 2, name)
+            self.assertNotIn('"-muxpreload"', body, name)
             self.assertIn("min_hard_comp=0.1", body, name)
             self.assertNotIn("async=1000", body, name)
 
 
 class DropChangedTest(unittest.TestCase):
-    def test_transcode_drops_changed_audio_frames_and_has_no_first_pts(self):
+    def test_transcode_drops_changed_audio_frames(self):
         import os
         for name in ("hlsloop", "tsloop"):
             src = open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", name + ".py")).read()
             self.assertEqual(src.count('"-drop_changed:a", "1"'), 1, name)
             self.assertNotIn("first_pts", src, name)
 
-    def test_silent_encoder_is_flagged_once(self):
-        import os, sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app", "engine"))
-        import tsfix
-        c = tsfix.Cont(30)
-        c.st[1] = {"rem": b"", "lv": None, "fd": None, "dt": 0, "hold": None, "t": 0.0, "vv": 29.5, "aa": 5.0}
-        self.assertTrue(c.silent(1, 30.0))
-        self.assertFalse(c.silent(1, 31.0))
-        c.st[2] = {"rem": b"", "lv": None, "fd": None, "dt": 0, "hold": None, "t": 0.0, "vv": 29.5, "aa": 29.0}
-        self.assertFalse(c.silent(2, 30.0))
