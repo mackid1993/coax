@@ -38,6 +38,8 @@ INSTANT = {"desync", "placeholder"}
 REPEATED = {"frozen", "novideo"}
 REPEAT_COUNT = 3
 REPEAT_WINDOW = HOUR
+DEAD_REPEAT = 3             # a stream that died while another took over: blocked the 3rd time within 6 hours
+PROVEN_MINUTES = 10         # clean minutes that make a stream checked (as does a passed sync check)
 DEAD_CONFIRM = 600          # a "dead" stream is blocked if another stream of the channel takes over within 10 min
 SAME_KIND_GAP = 120
 BLOCKS = [12 * HOUR, DAY, 3 * DAY]
@@ -45,7 +47,7 @@ DESYNC_BLOCKS = [DAY, 3 * DAY]
 MAX_NOTES = 200
 
 TEXT = {"desync": "its sound was off its picture", "placeholder": "it showed an offline slate instead of the channel",
-        "dead": "it stopped working while another stream worked", "frozen": "it froze 3 times within an hour",
+        "dead": "it stopped working 3 times within 6 hours while another stream worked", "frozen": "it froze 3 times within an hour",
         "novideo": "it sent no video 3 times within an hour"}
 
 
@@ -105,7 +107,7 @@ class FeedHealth:
             rec["ev"] = [e for e in rec.get("ev", []) if now - e[0] < WEEK]
             rec["good"] = [g for g in rec.get("good", []) if now - g[0] < WEEK]
             rec["blocks"] = [b for b in rec.get("blocks", []) if now - b[0] < WEEK or b[1] > now]
-            if not rec["ev"] and not rec["good"] and not rec["blocks"]:
+            if not rec["ev"] and not rec["good"] and not rec["blocks"] and (rec.get("ok") is None or now - rec["ok"] >= WEEK):
                 del self.feeds[k]
         _save(self.path, {"feeds": self.feeds})
 
@@ -151,7 +153,13 @@ class FeedHealth:
         with self.lock:
             rec = self.feeds.get(self._k(ch, old)) or {}
             if any(k == "dead" and now - t < DEAD_CONFIRM for t, k in rec.get("ev", [])):
-                self._block(ch, old, "dead", "", now)
+                rec = self._rec(ch, old)
+                c = [t for t in rec.get("confirmed", []) if now - t < 6 * HOUR]
+                if not c or now - c[-1] >= DEAD_CONFIRM:
+                    c.append(now)
+                rec["confirmed"] = c
+                if len(c) >= DEAD_REPEAT:
+                    self._block(ch, old, "dead", "", now)
                 self._persist(now)
 
     def good(self, ch, key, minutes, now=None):
@@ -159,6 +167,18 @@ class FeedHealth:
         with self.lock:
             self._rec(ch, key)["good"].append([now, minutes])
             self._persist(now)
+
+    def verified(self, ch, key, now=None):
+        """The stream passed the sync check after a switch."""
+        now = now or time.time()
+        with self.lock:
+            self._rec(ch, key)["ok"] = now
+            self._persist(now)
+
+    def _proven(self, ch, key, now):
+        rec = self.feeds.get(self._k(ch, key)) or {}
+        ok = rec.get("ok")
+        return self._clean(ch, key, now) >= PROVEN_MINUTES or (ok is not None and now - ok < WEEK)
 
     # older callers
     def fail(self, ch, key, now=None):
@@ -202,10 +222,15 @@ class FeedHealth:
                 return None
             working = [k for k in keys if not self.is_blocked(ch, k, now)]
             blocked = sorted([k for k in keys if k not in working], key=lambda k: self.blocked_until(ch, k, now))
-            if working and keys[0] not in working:
-                best = min(working, key=lambda k: (-self._clean(ch, k, now), self._strikes(ch, k, now), keys.index(k)))
-                working = [best] + [k for k in working if k != best]
             new = working + blocked
+            if keys[0] not in working:
+                # Only a checked stream (passed the sync check, or played cleanly) may become the main stream.
+                proven = [k for k in working if self._proven(ch, k, now)]
+                if proven:
+                    best = min(proven, key=lambda k: (-self._clean(ch, k, now), self._strikes(ch, k, now), keys.index(k)))
+                    new = [best] + [k for k in working if k != best] + blocked
+                else:
+                    new = keys   # nothing checked to take over: keep the order; tuning skips the blocked stream
             done.update(old=keys, new=new, name=chan.get("name"))
             if new == keys:
                 return True
@@ -243,6 +268,21 @@ class FeedHealth:
         with self.lock:
             for n in self.notes:
                 n["read"] = True
+            _save(self.npath, self.notes)
+            return self.list()
+
+    def dismiss(self, nid):
+        with self.lock:
+            n0 = len(self.notes)
+            self.notes = [n for n in self.notes if n["id"] != str(nid)]
+            if len(self.notes) == n0:
+                raise KeyError(nid)
+            _save(self.npath, self.notes)
+            return self.list()
+
+    def clear(self):
+        with self.lock:
+            self.notes = []
             _save(self.npath, self.notes)
             return self.list()
 

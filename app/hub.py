@@ -562,8 +562,11 @@ class Hub:
             self._health("problem", session.channel_id, key, "dead")
 
     def _desync(self, session, ref, line):
-        """The engine found a stream whose sound is off its picture: feed health removes it."""
+        """Sync check result: a stream in step is checked; one whose sound is off its picture is blocked."""
         hit = self._refs.get(ref)
+        if hit is not None and "is in step" in line:
+            self._health("verified", session.channel_id, (hit[0], hit[2]))
+            return
         m = re.search(r"sound ([\d.]+)s (ahead of|behind)", line)
         if hit is None or m is None:
             return

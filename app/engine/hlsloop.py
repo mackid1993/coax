@@ -652,11 +652,7 @@ def synckeep(u, d, dur):
         if SYNC["old"] is not None and SYNC["newu"] == u:
             SYNC["new"].append(d)
             SYNC["newd"] += dur
-            if SYNC["newd"] >= SYNCD:
-                a_ = (b"".join(SYNC["old"]), b"".join(SYNC["new"]), u)
-                SYNC["old"] = None
-                SYNC["new"] = []
-                threading.Thread(target=synccheck, args=a_, daemon=True).start()
+            syncfire()
         if SYNC["refu"] != u:
             SYNC["ref"].clear()
             SYNC["refd"] = 0.0
@@ -674,6 +670,7 @@ def syncswitch(u):
             SYNC["new"] = []
             SYNC["newd"] = 0.0
             SYNC["newu"] = u
+            SYNC["pre"] = False
         else:
             SYNC["old"] = None
 
@@ -701,14 +698,45 @@ def synccheck(old, new, u):
     fl_ = feeds()
     i_ = fl_.index(u) + 1 if u in fl_ else 0
     if o_ is None:
-        log("sync check: no clear verdict for stream %d (%s)" % (i_, r_.get("why") or "no result"))
+        log("sync check: no clear verdict for stream %d (%s); it stays unchecked [ref %s]" % (i_, r_.get("why") or "no result", ref(u)))
         return
     if abs(o_) < 2.0:
         TRUST.add(u)
-        log("sync check: stream %d is in step with the previous stream" % i_)
+        log("sync check: stream %d is in step with the previous stream [ref %s]" % (i_, ref(u)))
         return
     log("sync check: stream %d of %d has its sound %.1fs %s its picture; leaving it for good [ref %s]" % (i_, len(fl_), abs(o_), "ahead of" if o_ < 0 else "behind", ref(u)))
     SYNCBAD[0] = u
+
+def syncfire():
+    if SYNC["old"] is not None and SYNC["newd"] >= SYNCD:
+        a_ = (b"".join(SYNC["old"]), b"".join(SYNC["new"]), SYNC["newu"])
+        SYNC["old"] = None
+        SYNC["new"] = []
+        threading.Thread(target=synccheck, args=a_, daemon=True).start()
+
+def syncpre(segs, new):
+    # A switch joins the new stream where the old one stopped, so the clips would not overlap. Fetch the new
+    # stream's segments just before the join point for the check only (they are not played): they cover the
+    # same moments as the end of the old stream, and the check has its verdict within seconds.
+    with SL:
+        if SYNC["old"] is None or SYNC["newu"] != cur or SYNC.get("pre"):
+            return
+        SYNC["pre"] = True
+    if not new or new[0] not in segs:
+        return
+    i = segs.index(new[0])
+    out, dur = [], 0.0
+    for q in segs[max(0, i - int(-(-SYNCD // max(tgt, 1)))):i]:
+        try:
+            out.append(fetch(q))
+            dur += q["d"] or tgt
+        except Exception:
+            pass
+    with SL:
+        if SYNC["old"] is not None and SYNC["newu"] == cur:
+            SYNC["new"] = out + SYNC["new"]
+            SYNC["newd"] += dur
+            syncfire()
 
 def mark(u):
     b = fbad.get(u, [0, 0])
@@ -1306,6 +1334,7 @@ while not gone():
         w = min(max(tgt / 2, 1), 5)
         if last is None:
             new = join(segs) if gap is None else segs[-max(1, min(len(segs), int(-(-gap // max(tgt, 1))))):]
+            syncpre(segs, new)
             lag = None
         elif segs[-1]["n"] < last:
             if not {q["p"].rsplit("/", 1)[-1] for q in segs} & {x.rsplit("/", 1)[-1] for x in seen} or last - segs[-1]["n"] > 50 or (lag is not None and mono() - lag > 4 * tgt):

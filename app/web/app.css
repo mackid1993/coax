@@ -706,3 +706,6 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
 
 .feed-note { cursor: help; }
 .pop-sub { white-space: pre-line; }
+
+.note-head { width: 100%; }
+.note-head .note-x { margin-left: auto; }

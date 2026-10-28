@@ -303,7 +303,8 @@ switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries 
 ### Bad streams are blocked, the best one plays first
 
 coax is meant to be left alone, so it fixes a channel's stream order itself, but only when a stream causes real
-trouble. Each fix appears under the **bell** in the sidebar, with an **Undo**. A channel with one stream is never
+trouble. Each fix appears under the **bell** in the sidebar, with an **Undo**; dismiss one with its **X**, or all of
+them with **Clear all**. A channel with one stream is never
 changed, and nothing is ever deleted from a channel.
 
 **Absorbed problems are ignored.** Stalls the reserve covers, catch-ups, refills and A/V holds are normal for
@@ -315,7 +316,7 @@ IPTV. coax rides them out and changes nothing.
 | --- | --- |
 | Sound off its picture (content check after every switch, HLS) | At once |
 | Offline slate from the provider instead of the channel | At once |
-| The stream stopped working and another stream of the channel took over | At once |
+| The stream stopped working and another stream of the channel took over | 3 times within 6 hours |
 | coax had to restart or retune it (frozen, or no video for 90 seconds) | 3 times within an hour |
 
 A stream that stops working while no other stream of the channel works is not blocked, since that is the
@@ -326,8 +327,15 @@ its picture: 24 hours, then 3 days. A blocked stream is not tuned and is tried l
 of a channel is blocked, coax still plays the least bad one.
 
 **The fix, once:** when a stream is blocked, it moves to the bottom of the channel's saved order. If it was the
-main stream, the working stream that has played cleanly the longest becomes the main stream (a stream that has
-never played ranks below one that has). Everything else keeps its place.
+main stream, a checked stream takes over: one that passed the sync check or has played at least 10 minutes
+cleanly, the one with the most clean time first. A stream that has not been checked never becomes the main
+stream; if none is checked, the order stays as it is and coax simply skips the blocked stream. Everything else
+keeps its place.
+
+**The sync check** runs right after every switch. The new stream joins where the old one stopped, so coax also
+fetches (but does not play) the new stream's previous 35 seconds, which cover the same moments as the end of the
+old stream. The two are compared by picture and sound, so the verdict comes within seconds. A stream with no clear
+verdict stays unchecked.
 
 **No trouble, no change.** When a block ends the stream stays where it is; coax does not move things back. The
 order changes again only at the next real problem.

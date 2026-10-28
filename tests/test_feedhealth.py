@@ -1,4 +1,4 @@
-"""Feed health: block bad streams, fix the order once on trouble, never rubber-band, never delete."""
+"""Feed health: block bad streams, only checked streams become main, never rubber-band, bell X / Clear all."""
 
 import copy
 import tempfile
@@ -42,37 +42,60 @@ class FeedHealthTest(unittest.TestCase):
         st = Store({"channels": [{"id": 5, "name": "Bravo", "streams": [{"provider": "p1", "stream_id": s} for s in sids]}]})
         return st, fh.FeedHealth(st, self.tmp.name)
 
-    def test_desync_backup_blocked_24h_and_moved_last_never_deleted(self):
+    def test_desync_backup_blocked_24h_and_moved_last(self):
         st, h = self.make("main", "b2", "b3")
         h.problem(5, K("b3"), "desync", "12 seconds ahead of its picture", now=1000)
         self.assertEqual(ids(st), ["main", "b2", "b3"])
         self.assertEqual(h.blocked_until(5, K("b3"), now=1000), 1000 + fh.DAY)
-        n = h.list()["items"][0]
-        self.assertEqual(n["kind"], "blocked")
-        self.assertIn("24 hours", n["text"])
+        self.assertIn("24 hours", h.list()["items"][0]["text"])
 
-    def test_bad_main_hands_over_to_proven_backup(self):
+    def test_bad_main_hands_over_to_checked_backup(self):
         st, h = self.make("main", "b2", "b3")
         h.good(5, K("b3"), 60, now=500)
         h.problem(5, K("main"), "placeholder", now=1000)
         self.assertEqual(ids(st), ["b3", "b2", "main"])
         self.assertEqual(h.list()["items"][0]["kind"], "promoted")
-        self.assertIn("12 hours", h.list()["items"][0]["text"])
 
-    def test_untested_backup_ranks_below_proven_one(self):
-        st, h = self.make("main", "untested", "proven")
-        h.good(5, K("proven"), 10, now=500)
-        h.problem(5, K("main"), "desync", now=1000)
-        self.assertEqual(ids(st)[0], "proven")
+    def test_sync_checked_stream_can_take_over(self):
+        st, h = self.make("main", "b2")
+        h.verified(5, K("b2"), now=900)
+        h.problem(5, K("main"), "placeholder", now=1000)
+        self.assertEqual(ids(st), ["b2", "main"])
+
+    def test_unchecked_stream_never_becomes_main(self):
+        st, h = self.make("main", "b2", "b3")
+        h.problem(5, K("main"), "placeholder", now=1000)
+        self.assertEqual(ids(st), ["main", "b2", "b3"])     # nothing checked: order kept
+        self.assertTrue(h.is_blocked(5, K("main"), now=1000))  # but main is skipped when tuning
+        self.assertEqual(h.list()["items"][0]["kind"], "blocked")
+
+    def test_one_dead_switch_does_not_block(self):
+        st, h = self.make("main", "b2")
+        h.good(5, K("b2"), 30, now=500)
+        h.problem(5, K("main"), "dead", now=1000)
+        h.switched(5, K("main"), K("b2"), now=1030)
+        self.assertEqual(ids(st), ["main", "b2"])
+        self.assertFalse(h.is_blocked(5, K("main"), now=1030))
+
+    def test_dead_three_times_in_six_hours_blocks(self):
+        st, h = self.make("main", "b2")
+        h.good(5, K("b2"), 30, now=500)
+        for i in range(3):
+            t = 1000 + i * H
+            h.problem(5, K("main"), "dead", now=t)
+            h.switched(5, K("main"), K("b2"), now=t + 30)
+        self.assertTrue(h.is_blocked(5, K("main"), now=1000 + 2 * H + 30))
+        self.assertEqual(ids(st), ["b2", "main"])
 
     def test_no_rubber_band_when_block_ends(self):
         st, h = self.make("main", "b2")
+        h.good(5, K("b2"), 30, now=500)
         h.problem(5, K("main"), "placeholder", now=1000)
         self.assertEqual(ids(st), ["b2", "main"])
         later = 1000 + 13 * H
         self.assertFalse(h.is_blocked(5, K("main"), now=later))
         h.good(5, K("main"), 500, now=later)
-        self.assertEqual(ids(st), ["b2", "main"])          # nothing moves without trouble
+        self.assertEqual(ids(st), ["b2", "main"])
 
     def test_absorbed_problems_ignored(self):
         st, h = self.make("main", "b2")
@@ -83,19 +106,10 @@ class FeedHealthTest(unittest.TestCase):
 
     def test_frozen_three_times_in_an_hour_blocks(self):
         st, h = self.make("main", "b2")
-        h.problem(5, K("main"), "frozen", now=1000)
-        h.problem(5, K("main"), "frozen", now=1000 + 600)
-        self.assertEqual(ids(st), ["main", "b2"])
-        h.problem(5, K("main"), "frozen", now=1000 + 1200)
+        h.good(5, K("b2"), 30, now=500)
+        for i in range(3):
+            h.problem(5, K("main"), "frozen", now=1000 + i * 600)
         self.assertEqual(ids(st), ["b2", "main"])
-
-    def test_dead_blocked_only_when_another_stream_takes_over(self):
-        st, h = self.make("main", "b2")
-        h.problem(5, K("main"), "dead", now=1000)
-        self.assertEqual(ids(st), ["main", "b2"])           # could be the network
-        h.switched(5, K("main"), K("b2"), now=1030)
-        self.assertEqual(ids(st), ["b2", "main"])
-        self.assertTrue(h.is_blocked(5, K("main"), now=1030))
 
     def test_repeat_offender_block_grows(self):
         st, h = self.make("main", "b2")
@@ -113,12 +127,28 @@ class FeedHealthTest(unittest.TestCase):
 
     def test_undo_restores_order_and_lifts_block(self):
         st, h = self.make("main", "b2")
+        h.good(5, K("b2"), 30, now=500)
         h.problem(5, K("main"), "placeholder", now=1000)
         h.undo(h.list()["items"][0]["id"])
         self.assertEqual(ids(st), ["main", "b2"])
         self.assertFalse(h.is_blocked(5, K("main")))
 
+    def test_dismiss_and_clear(self):
+        st, h = self.make("main", "b2", "b3")
+        h.problem(5, K("b2"), "placeholder", now=1000)
+        h.problem(5, K("b3"), "desync", now=1100)
+        items = h.list()["items"]
+        self.assertEqual(len(items), 2)
+        self.assertEqual(len(h.dismiss(items[0]["id"])["items"]), 1)
+        with self.assertRaises(KeyError):
+            h.dismiss("nope")
+        self.assertEqual(h.clear()["items"], [])
+        self.assertEqual(fh.FeedHealth(st, self.tmp.name).list()["items"], [])
+
     def test_state_persists(self):
         st, h = self.make("main", "b2")
         h.problem(5, K("b2"), "desync", now=1000)
-        self.assertTrue(fh.FeedHealth(st, self.tmp.name).is_blocked(5, K("b2"), now=1000))
+        h.verified(5, K("main"), now=1000)
+        h2 = fh.FeedHealth(st, self.tmp.name)
+        self.assertTrue(h2.is_blocked(5, K("b2"), now=1000))
+        self.assertTrue(h2._proven(5, K("main"), 1000))

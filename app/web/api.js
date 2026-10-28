@@ -162,6 +162,8 @@ export const api = {
   notifications: () => get("/api/notifications"),
   notificationsRead: () => post("/api/notifications/read", {}),
   notificationUndo: (id) => post(`/api/notifications/${encodeURIComponent(id)}/undo`, {}),
+  notificationDismiss: (id) => post(`/api/notifications/${encodeURIComponent(id)}/dismiss`, {}),
+  notificationsClear: () => post("/api/notifications/clear", {}),
   network: (fresh = false) => get(routes.network() + (fresh ? "?refresh=1" : ""), { timeout: 15000 }),
   log: (since, limit) => get(routes.log(since, limit), { timeout: 8000 }),
 };

@@ -509,6 +509,8 @@ class Handler(BaseHTTPRequestHandler):
         ("GET", r"/api/network", "h_network"),
         ("GET", r"/api/notifications", "h_notes"),
         ("POST", r"/api/notifications/read", "h_notes_read"),
+        ("POST", r"/api/notifications/clear", "h_notes_clear"),
+        ("POST", r"/api/notifications/([0-9]+)/dismiss", "h_note_dismiss"),
         ("POST", r"/api/notifications/([0-9]+)/undo", "h_note_undo"),
         ("GET", r"/api/backups", "h_backups"),
         ("POST", r"/api/backups", "h_backup_create"),
@@ -1796,6 +1798,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_notes_read(self):
         return self._feed_health().mark_read()
+
+    def h_notes_clear(self):
+        return self._feed_health().clear()
+
+    def h_note_dismiss(self, note_id):
+        try:
+            return self._feed_health().dismiss(note_id)
+        except KeyError:
+            raise not_found("no notification %s" % note_id)
 
     def h_note_undo(self, note_id):
         try:

@@ -93,14 +93,25 @@ const NOTE_KIND = { blocked: "Stream blocked", promoted: "New main stream", reor
 function notesHtml() {
   if (!notes.items?.length) return `<p class="faint">Nothing yet. When coax removes a bad stream from a channel or makes a more reliable backup the main stream, it shows up here.</p>`;
   return `<ol class="notes">${notes.items.map((x) => `<li class="note ${x.read ? "" : "unread"} ${x.undone ? "undone" : ""}">
-    <div class="note-head"><span class="badge ${x.kind === "promoted" ? "badge-ok" : "badge-warn"}">${esc(NOTE_KIND[x.kind] || x.kind)}</span><b>${esc(x.channel || "")}</b><span class="faint small">${esc(new Date(x.t * 1000).toLocaleString())}</span></div>
+    <div class="note-head"><span class="badge ${x.kind === "promoted" ? "badge-ok" : "badge-warn"}">${esc(NOTE_KIND[x.kind] || x.kind)}</span><b>${esc(x.channel || "")}</b><span class="faint small">${esc(new Date(x.t * 1000).toLocaleString())}</span><button class="btn btn-ghost btn-sm btn-icon note-x" data-dismiss="${esc(x.id)}" aria-label="Dismiss" title="Dismiss">${icon("x")}</button></div>
     <div class="note-text">${esc(x.text)}</div>
     ${x.undone ? `<div class="faint small">Undone</div>` : x.undo ? `<button class="btn btn-sm" data-undo="${esc(x.id)}">Undo</button>` : ""}</li>`).join("")}</ol>`;
 }
 async function openNotes() {
   await pollNotes();
-  const m = openModal({ title: "Notifications", wide: true, body: notesHtml() });
-  m.body.addEventListener("click", async (e) => {
+  const m = openModal({ title: "Notifications", wide: true, body: notesHtml(),
+    foot: `<button class="btn" data-clear>Clear all</button><button class="btn btn-primary" data-close>Close</button>` });
+  m.el.addEventListener("click", async (e) => {
+    const x = e.target.closest("[data-dismiss]");
+    const c = e.target.closest("[data-clear]");
+    if (x || c) {
+      try {
+        notes = x ? await api.notificationDismiss(x.dataset.dismiss) : await api.notificationsClear();
+        m.body.innerHTML = notesHtml();
+        pollNotes();
+      } catch (err) { toastError("Could not clear", err); }
+      return;
+    }
     const b = e.target.closest("[data-undo]");
     if (!b) return;
     b.disabled = true;
