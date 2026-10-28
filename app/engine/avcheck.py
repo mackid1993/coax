@@ -14,7 +14,7 @@ import math
 import subprocess
 
 RATE = 20          # signal samples per second
-MAXLAG = 40.0      # how far apart the two feeds may run, seconds
+MAXLAG = 90.0      # how far apart the two feeds may run, seconds
 MIN_OVERLAP = 12.0  # seconds of shared content needed for a verdict
 OUT_OF_SYNC = 2.0  # seconds; a smaller offset is left alone
 

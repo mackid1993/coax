@@ -378,3 +378,17 @@ class HubTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BlockedBackupTest(unittest.TestCase):
+    def test_blocked_stream_left_out_of_failover_list(self):
+        cfg = config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b"), ("p1", "c")])])
+        h, _ = make(cfg)
+
+        class Health:
+            def is_blocked(self, ch, key):
+                return key == ("p1", "c")
+        h.health = Health()
+        s = h.open("uuid-1", "ip", "ua")
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p1/l1/b"])
+        s.close()

@@ -643,6 +643,9 @@ lpr = -1000000000.0
 # in step (the tuned one, or one that passed this check) is used as the reference.
 SL = threading.Lock()
 SYNCD = 35.0
+REFD = 60.0
+SCANBAD = set()
+SCAN = {"t": -1e9, "busy": False}
 SYNC = {"ref": collections.deque(), "refd": 0.0, "refu": None, "old": None, "oldu": None, "new": [], "newd": 0.0, "newu": None}
 TRUST = {src}
 SYNCBAD = [None]
@@ -659,7 +662,7 @@ def synckeep(u, d, dur):
             SYNC["refu"] = u
         SYNC["ref"].append((d, dur))
         SYNC["refd"] += dur
-        while SYNC["ref"] and SYNC["refd"] - SYNC["ref"][0][1] >= SYNCD:
+        while SYNC["ref"] and SYNC["refd"] - SYNC["ref"][0][1] >= REFD:
             SYNC["refd"] -= SYNC["ref"].popleft()[1]
 
 def syncswitch(u):
@@ -675,8 +678,13 @@ def syncswitch(u):
             SYNC["old"] = None
 
 def synccheck(old, new, u):
-    a_ = "/tmp/hlsloop-sync-%d-a.ts" % os.getpid()
-    b_ = "/tmp/hlsloop-sync-%d-b.ts" % os.getpid()
+    r_ = avcmp(old, new)
+    if r_ is not None:
+        syncverdict(u, r_, True)
+
+def avcmp(old, new):
+    a_ = "/tmp/hlsloop-sync-%d-%d-a.ts" % (os.getpid(), threading.get_ident())
+    b_ = "/tmp/hlsloop-sync-%d-%d-b.ts" % (os.getpid(), threading.get_ident())
     r_ = {}
     try:
         with open(a_, "wb") as f:
@@ -687,13 +695,16 @@ def synccheck(old, new, u):
         r_ = json.loads(c_.stdout or "{}")
     except Exception as x:
         log("sync check: could not compare (%s)" % x)
-        return
+        return None
     finally:
         for p_ in (a_, b_):
             try:
                 os.remove(p_)
             except Exception:
                 pass
+    return r_
+
+def syncverdict(u, r_, leave):
     o_ = r_.get("offset")
     fl_ = feeds()
     i_ = fl_.index(u) + 1 if u in fl_ else 0
@@ -704,8 +715,83 @@ def synccheck(old, new, u):
         TRUST.add(u)
         log("sync check: stream %d is in step with the previous stream [ref %s]" % (i_, ref(u)))
         return
-    log("sync check: stream %d of %d has its sound %.1fs %s its picture; leaving it for good [ref %s]" % (i_, len(fl_), abs(o_), "ahead of" if o_ < 0 else "behind", ref(u)))
-    SYNCBAD[0] = u
+    log("sync check: stream %d of %d has its sound %.1fs %s its picture; %s [ref %s]" % (i_, len(fl_), abs(o_), "ahead of" if o_ < 0 else "behind", "leaving it for good" if leave else "not switching to it", ref(u)))
+    SCANBAD.add(u)
+    fbad[u] = [mono() + 86400, 9]
+    if leave:
+        SYNCBAD[0] = u
+
+def grabwin(w, u):
+    # The stream's current HLS window, newest REFD seconds, for the check only (not played).
+    r = w.get(u, timeout=(3, 5))
+    r.raise_for_status()
+    t = r.text
+    if "#EXT-X-STREAM-INF" in t:
+        v = [x.strip() for x in t.splitlines() if x.strip() and (not x.startswith("#"))]
+        r = w.get(up.urljoin(r.url, v[0]), timeout=(3, 5))
+        r.raise_for_status()
+        t = r.text
+    segs = []
+    du = 0.0
+    for x in t.splitlines():
+        x = x.strip()
+        if x.startswith("#EXTINF:"):
+            try:
+                du = float(x[8:].split(",")[0])
+            except Exception:
+                du = 0.0
+        elif x and (not x.startswith("#")):
+            segs.append((up.urljoin(r.url, x), du or tgt))
+            du = 0.0
+    out = []
+    tot = 0.0
+    for su, sd in reversed(segs):
+        if tot >= REFD:
+            break
+        g = w.get(su, timeout=(3, 10))
+        g.raise_for_status()
+        out.insert(0, g.content)
+        tot += sd
+    if not out:
+        raise ValueError("empty playlist")
+    return b"".join(out)
+
+def scan(why):
+    # Real trouble on the playing stream: check every other stream of the channel now, while the reserve
+    # plays, so a switch goes to a stream known to be in step. Problems the reserve absorbs never get here.
+    with SL:
+        if SCAN["busy"] or mono() - SCAN["t"] < 600 or SYNC["refu"] not in TRUST or SYNC["refd"] < 20:
+            return
+        SCAN["busy"] = True
+        SCAN["t"] = mono()
+        rd_ = b"".join((x[0] for x in SYNC["ref"]))
+    threading.Thread(target=scanrun, args=(why, rd_), daemon=True).start()
+
+def scanrun(why, rd_):
+    try:
+        fl_ = feeds()
+        c_ = [u for u in fl_ if u != cur and u not in TRUST and u not in SCANBAD]
+        if not c_:
+            return
+        log("trouble on this stream (%s); checking %d other stream(s) before any switch" % (why, len(c_)))
+        w = requests.Session()
+        w.headers["User-Agent"] = ua
+        try:
+            for u in c_:
+                try:
+                    d_ = grabwin(w, u)
+                except Exception as x:
+                    log("stream check: stream %d of %d is not answering (%s); not trying it again for %.0fs [ref %s]" % (fl_.index(u) + 1, len(fl_), x, mark(u), ref(u)))
+                    continue
+                r_ = avcmp(rd_, d_)
+                if r_ is not None:
+                    syncverdict(u, r_, False)
+        finally:
+            w.close()
+    except Exception as x:
+        log("stream check failed (%s)" % x)
+    finally:
+        SCAN["busy"] = False
 
 def syncfire():
     if SYNC["old"] is not None and SYNC["newd"] >= SYNCD:
@@ -782,6 +868,8 @@ def handoff(why, depth=None, fl=None):
         log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
     cand = [fl[(i0 + j) % len(fl)] for j in range(1, len(fl))]
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
+    pref = [u for u in cand if u in TRUST] + [u for u in cand if u not in TRUST and u not in SCANBAD]
+    cand = pref if pref else (cand if stalled and mono() - ost > 120 else [])
     for u in cand:
         if mono() - pt > 6:
             break
@@ -1067,6 +1155,7 @@ def stat():
             if ns and (not low) and (qs < 2):
                 low = True
                 log("reserve: empty, video now arrives only as fast as the provider publishes it")
+                scan("reserve empty")
             elif low and qs >= dp / 2:
                 low = False
                 log("reserve: refilled to %.0fs" % qs)
@@ -1365,6 +1454,7 @@ while not gone():
                 continue
         elif not new and mono() - fresh > 0.6 * cushlim():
             log("playlist stale %ds, re-resolving" % (mono() - fresh))
+            scan("playlist stalled")
             media = None
             fresh = mono()
             continue
@@ -1500,6 +1590,8 @@ while not gone():
         if not stalled:
             dl = max(0.5, min(dl, max(cushlim(), DEADT) - (mono() - got)))
         log("playlist error (%s); retry %d in %ds" % (e, err, dl))
+        if err >= 2:
+            scan("playlist errors")
         inc("pe")
         rb = mono() + dl
         time.sleep(dl)

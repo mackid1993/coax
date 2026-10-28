@@ -332,6 +332,18 @@ cleanly, the one with the most clean time first. A stream that has not been chec
 stream; if none is checked, the order stays as it is and coax simply skips the blocked stream. Everything else
 keeps its place.
 
+**Before a switch (HLS).** At the first real trouble on the playing stream (repeated playlist errors, a
+stalled playlist, or an empty reserve; not the stalls the reserve absorbs), coax checks every other stream of the
+channel right away, while the reserve keeps playing: it fetches each one's last minute (not played) and compares
+it by picture and sound with the last minute of the stream that was playing. Streams in step are switched to
+first; a stream whose sound is off its picture is blocked for 24 hours and never switched to, and a stream that
+does not answer is skipped. If no checked stream is left, coax holds on the current stream rather than switch to
+one found out of sync, and only falls back to it after 2 minutes with nothing else.
+
+**After a switch** the same check runs again on a stream that was not checked before. On MPEG-TS a stream cannot
+be fetched without connecting to it, so there is no content check: TS streams are judged by real failures only
+(the rules above), and a stream that fails is left quickly and blocked.
+
 **The sync check** runs right after every switch. The new stream joins where the old one stopped, so coax also
 fetches (but does not play) the new stream's previous 35 seconds, which cover the same moments as the end of the
 old stream. The two are compared by picture and sound, so the verdict comes within seconds. A stream with no clear

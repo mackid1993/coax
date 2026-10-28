@@ -751,6 +751,8 @@ class Hub:
             cands = sorted(self._candidates(channel_cfg, providers),
                            key=lambda sp: (self._blocked(channel_id, sp),
                                            self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
+            if any(not self._blocked(channel_id, sp) for sp in cands):
+                cands = [sp for sp in cands if not self._blocked(channel_id, sp)]
             for stream, provider in cands:
                 if not provider.get("enabled", True):
                     continue
