@@ -114,6 +114,7 @@ def main(argv=None):
     hub = start_hub(store)
     if hub is not None:
         hub.port = port
+        hub._config()   # learns the line logins now, so logs are masked from the first provider refresh
         try:
             importlib.import_module("app.providers.xtream").BUSY_LINES[0] = hub.busy_lines
         except Exception:  # noqa: BLE001 - catalog calls then use the first line

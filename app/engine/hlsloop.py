@@ -1150,6 +1150,8 @@ def writer():
                 with ql:
                     Q.popleft()
                 if it[0] == "remux":
+                    if len(it) > 4:
+                        AQ.update(ever=False, n=0, next=0.0)   # a new stream: the silent-audio guard judges it on its own
                     if it[3] is not None:
                         off = it[3]
                     if TRANSCODE:

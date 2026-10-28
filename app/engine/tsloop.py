@@ -957,6 +957,8 @@ def writer():
                 with ql:
                     Q.popleft()
                     nrx[0] -= 1
+                if len(it) > 4:
+                    AQ.update(ever=False, n=0, next=0.0)   # a new stream: the silent-audio guard judges it on its own
                 off = it[3]
                 if TRANSCODE:
                     # Restart the encoder on the new feed's first keyframe with the audio lead corrected,
@@ -1348,7 +1350,7 @@ def conn(r):
                     om = moff
                     moff = qend + max(0.1, pd + 0.02) - ts
                     why = "joining the backup stream (offset %.3fs, %.1fs behind its live edge)" % (qend + max(0.1, pd + 0.02) - ts, dif(hw, ts) if hw is not None else -1) if pend else "replaying %.0fs to keep playback going, keeping timestamps continuous" % -dif(ts, ref) if nowait and ref is not None else "provider skipped %.0fs, keeping timestamps continuous" % dif(ts, ref) if ref is not None and 0 < dif(ts, ref) < 600 else "stream timeline changed, keeping timestamps continuous"
-                    enq(["remux", why, 0, moff])
+                    enq(["remux", why, 0, moff] + (["new"] if pend else []))
                     sh = om - moff
                     le = {k: v + sh for k, v in le.items() if k != prim}
                     last = {}
