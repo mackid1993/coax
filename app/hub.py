@@ -166,6 +166,8 @@ EVENT_RULES = [
     (_r(r"sending keepalive packets"), "keepalive", "warn", "No new video; kept the connection alive"),
     (_r(r"video flowing again after ([\d.]+)s"), "keepalive", "ok", lambda m: "Video back after %ss" % m.group(1)),
     (_r(r"skipped segment"), "stall", "warn", "Skipped a broken segment"),
+    (_r(r"lost (\d+) segments that left"), "stall", "warn",
+     lambda m: "Lost %s segments the provider dropped before coax got them; timeline kept continuous" % m.group(1)),
     (_r(r"recording: (.+) extended by (\d+)s"), "recording", "ok",
      lambda m: "Recording %s extended by %ss" % (m.group(1)[:40], m.group(2))),
     (_r(r"viewer buffer: (\d+) viewers"), "viewers", "info", lambda m: "%s viewers; new viewer given a head start" % m.group(1)),

@@ -699,6 +699,7 @@ if os.environ.get("COAX_NEWSTREAM"):
     rcur = None    # nor its last failover stream: the hub's choice is what plays
 cur = src
 pend = bool(os.environ.get("COAX_NEWSTREAM"))   # a hand switch continues the output timeline like a failover
+plost = False   # the pending continuation is over lost video on the same stream, not a new stream
 fbad = {}
 lpr = -1000000000.0
 def mark(u):
@@ -723,7 +724,7 @@ def probe(u):
         return False
 
 def handoff(why, depth=None, fl=None):
-    global stalled, got, cur, media, last, lag, pend, rseen, bad, gap, fst, lsw, lpr, ost
+    global stalled, got, cur, media, last, lag, pend, rseen, bad, gap, fst, lsw, lpr, ost, plost
     fl = fl or feeds()
     if len(fl) < 2:
         if not stalled:
@@ -770,6 +771,7 @@ def handoff(why, depth=None, fl=None):
     seen.clear()
     bad.clear()
     pend = True
+    plost = False
     stalled = False
     got = mono()
     if depth:
@@ -1342,6 +1344,7 @@ while not gone():
                 new = segs[k_[-1] + 1:] if k_ else segs[-max(2, min(len(segs), int(-(-(mono() - got) // max(tgt, 1))))):]
                 lag = None
                 pend = True
+                plost = False
                 last = last if new else segs[-1]["n"]
             else:
                 if lag is None:
@@ -1354,6 +1357,12 @@ while not gone():
             new = [q for q in segs if q["n"] > last]
             lag = None
             gap = None
+            if new and hasseq and new[0]["n"] > last + 1:
+                # Segments left the playlist before they could be fetched (a long outage): that video is gone.
+                # Continue the output timeline across the hole, as a switch does, instead of a frozen picture.
+                log("lost %d segments that left the provider playlist; keeping timestamps continuous" % (new[0]["n"] - last - 1))
+                pend = True
+                plost = True
         lim = max(cushlim(), DEADT)
         if new:
             fresh = mono()
@@ -1389,6 +1398,8 @@ while not gone():
                 if n in bad and sum((o["n"] > n for o in new)) >= 2:
                     log("skipped segment %d" % n)
                     last = n
+                    pend = True   # its video is gone: continue the output timeline across the hole
+                    plost = True
                     continue
                 bad.add(n)
                 media = None
@@ -1423,9 +1434,10 @@ while not gone():
                 log("audio and video back in step; rejoining smoothly")
             if pend and p0 is not None:
                 pend = False
+                lost, plost = plost, False
                 if qend is not None:
                     moff = qend - p0
-                    enq(["remux", "continuing on the new stream timeline seamlessly (offset %.1fs)" % moff, 0, moff])
+                    enq(["remux", ("keeping timestamps continuous across lost video (offset %.1fs)" if lost else "continuing on the new stream timeline seamlessly (offset %.1fs)") % moff, 0, moff] + ([] if lost else ["new"]))
                     sig = None
                     cmap = None
             g = tsig(d)
