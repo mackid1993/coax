@@ -627,10 +627,15 @@ def feeds():
     m = XC.search(src)
     if m:
         urls = [XC.sub("/%s/%s/%s/" % (mm.group(1), m.group(2), m.group(3)), u, count=1) if (mm := XC.search(u)) and up.urlsplit(u).netloc == up.urlsplit(src).netloc else u for u in urls]
-    out = [src]
+    # The playing stream first (the engine's position), then coax's order: best first, blocked streams left
+    # out. The tuned stream is added at the end only if coax left it out, so it is never forced to the front.
+    here = globals().get("cur") or src
+    out = [here]
     for u in urls:
-        if u not in out and XC.sub("/", u) != XC.sub("/", src):
+        if u not in out and XC.sub("/", u) != XC.sub("/", here):
             out.append(u)
+    if src not in out and not any(XC.sub("/", src) == XC.sub("/", x) for x in out):
+        out.append(src)
     return out
 cur = src
 pend = False
@@ -756,6 +761,10 @@ def grabwin(w, u):
         raise ValueError("empty playlist")
     return b"".join(out)
 
+def lineof(u):
+    m = XC.search(u or "")
+    return (up.urlsplit(u).netloc, m.group(2), m.group(3)) if m else (up.urlsplit(u or "").netloc,)
+
 def scan(why):
     # Real trouble on the playing stream: check every other stream of the channel now, while the reserve
     # plays, so a switch goes to a stream known to be in step. Problems the reserve absorbs never get here.
@@ -770,7 +779,8 @@ def scan(why):
 def scanrun(why, rd_):
     try:
         fl_ = feeds()
-        c_ = [u for u in fl_ if u != cur and u not in TRUST and u not in SCANBAD]
+        # Only streams on other lines: a second connection on the line in use can be refused (HTTP 509).
+        c_ = [u for u in fl_ if u != cur and u not in TRUST and u not in SCANBAD and lineof(u) != lineof(cur)]
         if not c_:
             return
         log("trouble on this stream (%s); checking %d other stream(s) before any switch" % (why, len(c_)))
@@ -781,7 +791,7 @@ def scanrun(why, rd_):
                 try:
                     d_ = grabwin(w, u)
                 except Exception as x:
-                    log("stream check: stream %d of %d is not answering (%s); not trying it again for %.0fs [ref %s]" % (fl_.index(u) + 1, len(fl_), x, mark(u), ref(u)))
+                    log("stream check: could not fetch stream %d of %d for the check (%s)" % (fl_.index(u) + 1, len(fl_), x))
                     continue
                 r_ = avcmp(rd_, d_)
                 if r_ is not None:
@@ -868,7 +878,8 @@ def handoff(why, depth=None, fl=None):
         log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
     cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
-    pref = [u for u in cand if u in TRUST] + [u for u in cand if u not in TRUST and u not in SCANBAD]
+    # coax's order (best first), skipping streams found out of sync; checked streams keep their place.
+    pref = [u for u in cand if u not in SCANBAD]
     cand = pref if pref else (cand if stalled and mono() - ost > 120 else [])
     for u in cand:
         if mono() - pt > 6:

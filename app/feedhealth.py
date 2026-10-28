@@ -46,9 +46,10 @@ BLOCKS = [12 * HOUR, DAY, 3 * DAY]
 DESYNC_BLOCKS = [DAY, 3 * DAY]
 MAX_NOTES = 200
 
-TEXT = {"desync": "its sound was off its picture", "placeholder": "it showed an offline slate instead of the channel",
-        "dead": "it stopped working 3 times within 6 hours while another stream worked", "frozen": "it froze 3 times within an hour",
-        "novideo": "it sent no video 3 times within an hour"}
+TEXT = {"desync": "its audio was out of sync with the video",
+        "placeholder": "the provider showed an offline screen instead of the channel",
+        "dead": "it stopped working 3 times in 6 hours while another stream was working",
+        "frozen": "it froze 3 times in an hour", "novideo": "it sent no video 3 times in an hour"}
 
 
 def _load(path, default):
@@ -73,6 +74,19 @@ def _save(path, data):
 
 def _key(stream):
     return (str(stream.get("provider")), str(stream.get("stream_id")))
+
+
+def _name(store, key):
+    """'stream 174571 (Trex)' using the provider's name."""
+    try:
+        p = next((x for x in store.get().get("providers") or [] if str(x.get("id")) == key[0]), None)
+        return "stream %s (%s)" % (key[1], (p or {}).get("name") or key[0])
+    except Exception:  # noqa: BLE001
+        return "stream %s" % key[1]
+
+
+def _cap(text):
+    return text[:1].upper() + text[1:]
 
 
 def _hours(seconds):
@@ -219,11 +233,12 @@ class FeedHealth:
             return
         keys, order = done["old"], done["new"]
         if order[0] != keys[0]:
-            text = ("Made stream %s %s the main stream: the main stream had connection trouble and this one is "
-                    "stable. The order stays like this until the next trouble." % new)
+            text = ("%s is now the main stream. The previous main stream had connection problems, and this one has "
+                    "been stable. coax will keep this order until another problem occurs."
+                    % _cap(_name(self.store, new)))
         else:
-            text = ("Moved stream %s %s ahead of stream %s %s: that one had connection trouble and this one is "
-                    "stable." % (new[0], new[1], old[0], old[1]))
+            text = ("Moved %s ahead of %s because the second one had connection problems and the first has been "
+                    "stable." % (_name(self.store, new), _name(self.store, old)))
         log.warning("[%s] %s", done["name"], text)
         self._note("promoted" if order[0] != keys[0] else "reordered", ch, done["name"], new, text,
                    {"order": [list(k) for k in keys]}, now)
@@ -309,10 +324,13 @@ class FeedHealth:
         if not self.store.update(mutate):
             return
         old, new = done["old"], done["new"]
-        text = "Blocked stream %s %s for %s because %s%s." % (bad[0], bad[1], _hours(dur), TEXT.get(kind, kind),
-                                                              " (%s)" % detail if detail else "")
+        why = TEXT.get(kind, kind)
+        if kind == "desync" and detail:
+            why = "its audio was %s" % detail.replace("its picture", "the video")
+        text = "Blocked %s for %s because %s." % (_name(self.store, bad), _hours(dur), why)
+        text = text[0].upper() + text[1:]
         if new[0] != old[0]:
-            text += " Stream %s %s is now the main stream." % (new[0][0], new[0][1])
+            text += " %s is now the main stream." % _cap(_name(self.store, new[0]))
         log.warning("[%s] %s", done["name"], text)
         self._note("promoted" if new[0] != old[0] else "blocked", ch, done["name"], bad, text,
                    {"order": [list(k) for k in old]}, now)
@@ -367,12 +385,16 @@ class FeedHealth:
                 if chan is None:
                     return None
                 streams = chan.get("streams") or []
-                if sorted(order) == sorted(_key(s) for s in streams):
-                    by = {_key(s): s for s in streams}
-                    chan["streams"] = [by[k] for k in order]
+                if sorted(order) != sorted(_key(s) for s in streams):
+                    return "changed"
+                by = {_key(s): s for s in streams}
+                chan["streams"] = [by[k] for k in order]
                 return True
-            if not self.store.update(mutate):
+            r = self.store.update(mutate)
+            if not r:
                 raise KeyError(nid)
+            if r == "changed":
+                raise ValueError("the channel's streams have changed since then, so the old order cannot be restored")
             rec = self.feeds.get(self._k(note["channel_id"], (note["provider"], note["stream_id"])))
             if rec:
                 now = time.time()

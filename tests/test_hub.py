@@ -424,3 +424,33 @@ class TimelineTest(unittest.TestCase):
         s._watch("[hlsloop stream] output: no video to send for 2s, sending keepalive packets so the stream stays open")
         self.assertEqual([e["kind"] for e in s.events], ["keepalive"])
         s.close()
+
+
+class ClientGoneTest(unittest.TestCase):
+    def test_dvr_leaving_before_video_releases_the_line(self):
+        hubmod.RESTART_DELAY = 0.05
+        h, eng = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]), "--nulls-only")
+        s = h.open("uuid-1", "ip", "ua")
+        gone = {"v": False}
+        s.client_gone = lambda: gone["v"]
+        r = Reader(s)
+        r.start()
+        self.assertTrue(wait_for(lambda: eng.count() >= 1, 5))
+        gone["v"] = True
+        self.assertTrue(r.finished.wait(10))
+        self.assertEqual(h.line_status()[0]["used"], 0)
+
+    def test_move_line_resets_backup_slot_and_position(self):
+        cfg = config([provider("p1", 1, 1), provider("p2", 1)], [channel(1, [("p1", "a"), ("p2", "b")])])
+        h, _ = make(cfg)
+        s = h.open("uuid-1", "ip", "ua")
+        h.backup_urls(1)
+        ref_b = sorted(hubmod.url_refs("fake://p2/l1/b"))[0]
+        s._watch("[hlsloop stream] stalled; switching to stream 2 of 2 [ref %s]" % ref_b)
+        self.assertEqual(s.extra_slots, [("p2", "l1")])
+        self.assertTrue(h._move_line(s))
+        self.assertEqual(s.extra_slots, [])
+        self.assertEqual(s.cur_key, ("p1", "a"))
+        used = {(l["provider_id"], l["line_id"]): l["used"] for l in h.line_status()}
+        self.assertEqual(used[("p2", "l1")], 0)
+        s.close()

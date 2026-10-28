@@ -198,6 +198,7 @@ class Session:
         self.dead_retunes = 0       # retunes in a row without real video
         self.spawns = 0
         self._pos = 0               # bytes sent mod 188, so injected null packets stay aligned
+        self.client_gone = None     # set by the server: callable, True once the DVR closed the connection
         self.had_video = False      # real video has reached the DVR at least once
         self.spawned_at = time.monotonic()
         self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
@@ -365,6 +366,7 @@ class Session:
             why = None
             started = time.monotonic()
             last_byte = last_video = None
+            last_gone_check = 0.0
             try:
                 fd = proc.stdout.fileno()
                 while True:
@@ -374,6 +376,8 @@ class Session:
                         break
                     now = time.monotonic()
                     if not ready:
+                        if self._dvr_left():
+                            return
                         if last_video is not None and now - last_byte >= STALL_TIMEOUT:
                             why = "frozen"
                             break
@@ -392,6 +396,10 @@ class Session:
                     if not chunk:
                         break
                     last_byte = now
+                    if (last_video is None or now - last_video >= 1.0) and now - last_gone_check >= 1.0:
+                        last_gone_check = now
+                        if not _has_video(chunk, self._pos) and self._dvr_left():
+                            return
                     if (last_video is None or now - last_video >= 1.0) and _has_video(chunk, self._pos):
                         last_video = now
                         self.had_video = True
@@ -456,9 +464,20 @@ class Session:
                 if left <= 0 or self.closed:
                     break
                 time.sleep(min(1.0, left))
+                if self._dvr_left():
+                    return
                 ka = self._keepalive() if left >= 1.0 and not self.closed else b""
                 if ka:
                     yield ka
+
+    def _dvr_left(self):
+        check = self.client_gone
+        if check is None:
+            return False
+        try:
+            return bool(check())
+        except Exception:  # noqa: BLE001
+            return False
 
     def close(self):
         """Kill the engine, then release the slot. Safe to call more than once."""
@@ -668,6 +687,13 @@ class Hub:
             return False
         session.url = url
         self._remember(url, session.provider_id, session.line_id, session.stream_id)
+        # The new engine starts on the session's own stream; any backup it had switched to is gone.
+        with self._lock:
+            for key in list(session.extra_slots):
+                self._drop_locked(session, key)
+            session.extra_slots = []
+        session.cur_key = (session.provider_id, session.stream_id)
+        session.stream_no = 1
         return True
 
     def _history(self, session, line):
@@ -823,7 +849,7 @@ class Hub:
             up = max(now - s.started_at, 0.001)
             proc = s.proc
             out.append({
-                "channel_id": s.channel_id, "uuid": s.uuid, "channel": s.name, "state": "running",
+                "channel_id": s.channel_id, "uuid": s.uuid, "instance": s.instance, "channel": s.name, "state": "running",
                 "provider_id": s.provider_id, "provider": s.provider_name,
                 "line_id": s.line_id, "line": s.line_name, "stream_id": s.stream_id,
                 "uptime": round(now - s.started_at, 1), "bytes": s.bytes_out,

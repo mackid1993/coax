@@ -12,6 +12,7 @@ import email.utils
 import importlib
 import inspect
 import json
+import select
 import socket
 import logging
 import os
@@ -735,6 +736,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.flush()
+            session.client_gone = self._client_gone
             for chunk in session.iter_bytes():
                 if not chunk:
                     continue
@@ -751,6 +753,16 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 log.exception("error closing session for %s", uuid)
             log.debug("stream %s to %s ended after %d bytes", uuid, self.client_address[0], sent)
+
+    def _client_gone(self):
+        """True when the DVR has closed its end. Used while coax has nothing to send yet."""
+        try:
+            r, _, _ = select.select([self.connection], [], [], 0)
+            if not r:
+                return False
+            return self.connection.recv(1, socket.MSG_PEEK) == b""
+        except (OSError, ValueError):
+            return True
 
     def h_internal_streams(self, channel_id):
         channel_id = int(channel_id)
@@ -1618,17 +1630,24 @@ class Handler(BaseHTTPRequestHandler):
             streams = stream_refs(entry["streams"], "channel %s streams" % cid) if "streams" in entry else None
             if streams is not None and len({(r["provider"], r["stream_id"]) for r in streams}) != len(streams):
                 raise bad_request("channel %s: a stream is listed twice" % cid)
-            changes.append((cid, guide, streams))
+            add = stream_refs(entry["add_streams"], "channel %s add_streams" % cid) if "add_streams" in entry else None
+            changes.append((cid, guide, streams, add))
         if len({c[0] for c in changes}) != len(changes):
             raise bad_request("a channel is listed twice")
 
         def mutate(cfg):
-            for cid, guide, streams in changes:
+            for cid, guide, streams, add in changes:
                 channel = find_channel(cfg, cid)
                 if guide is not None:
                     channel["guide"].update(guide)
                 if streams is not None:
                     channel["streams"] = streams
+                if add:
+                    have = {(s["provider"], str(s["stream_id"])) for s in channel["streams"]}
+                    for r in add:
+                        if (r["provider"], str(r["stream_id"])) not in have:
+                            channel["streams"].append(r)
+                            have.add((r["provider"], str(r["stream_id"])))
             return [c[0] for c in changes]
         updated = self.app.store.update(mutate)   # validated and saved in one atomic write
         log.info("applied guide and backup choices to %d channels", len(updated))
@@ -1811,6 +1830,8 @@ class Handler(BaseHTTPRequestHandler):
     def h_note_undo(self, note_id):
         try:
             return self._feed_health().undo(note_id)
+        except ValueError as exc:
+            raise ApiError(409, str(exc))
         except KeyError:
             raise not_found("nothing to undo for notification %s" % note_id)
 

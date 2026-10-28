@@ -501,10 +501,15 @@ def feeds(quiet=False):
     m = XC.search(src)
     if m:
         urls = [XC.sub("/%s/%s/%s/" % (mm.group(1), m.group(2), m.group(3)), u, count=1) if (mm := XC.search(u)) and up.urlsplit(u).netloc == up.urlsplit(src).netloc else u for u in urls]
-    out = [src]
+    # The playing stream first (the engine's position), then coax's order: best first, blocked streams left
+    # out. The tuned stream is added at the end only if coax left it out, so it is never forced to the front.
+    here = globals().get("cur") or src
+    out = [here]
     for u in urls:
-        if u not in out and XC.sub("/", u) != XC.sub("/", src):
+        if u not in out and XC.sub("/", u) != XC.sub("/", here):
             out.append(u)
+    if src not in out and not any(XC.sub("/", src) == XC.sub("/", x) for x in out):
+        out.append(src)
     return out
 stalled = False
 pend = False

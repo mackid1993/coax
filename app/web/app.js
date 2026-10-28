@@ -120,7 +120,7 @@ async function openNotes() {
       toast("Undone", "The channel's streams are back the way they were.", "ok");
       await pollNotes();
       m.body.innerHTML = notesHtml();
-    } catch (err) { b.disabled = false; toastError("Could not undo", err); }
+    } catch (err) { b.disabled = false; toastError("Could not undo", err); await pollNotes(); m.body.innerHTML = notesHtml(); }
   });
   if (notes.unread) {
     try { notes = await api.notificationsRead(); } catch {}

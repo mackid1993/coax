@@ -33,7 +33,7 @@ export async function mount(el) {
   try { S.cat.open = localStorage.getItem("coax.catalog") !== "0"; } catch {}
   renderFrame();
   await reload();
-  S.amSeen = "";
+  try { S.amSeen = sessionStorage.getItem("coax.amSeen") || ""; } catch { S.amSeen = ""; }
   offerUnsaved();
   watchAutoMatch();
   loadCatalogGroups().then(() => loadCatalog());
@@ -44,7 +44,7 @@ function startAutosave() {
   const mins = Number(S?.config?.autosave_minutes ?? 2);
   if (!mins) return;
   autoTimer = setInterval(async () => {
-    if (!S || S.saving || !pendingCheckedCount()) return;
+    if (!S || S.saving || !pendingCheckedCount() || document.querySelector(".modal-backdrop")) return;
     S.saving = true;
     try { await acceptChecked(true); } finally { if (S) S.saving = false; }
   }, mins * 60000);
@@ -96,6 +96,7 @@ const hasGuide = (c) => {
 // Like the original matcher: Matched (sure, pre-checked) needs nothing; Review (only weaker candidates)
 // and Unmatched (nothing found) need you. A guide you saved yourself is never second-guessed.
 function guideStatus(c) {
+  if (hasGuide(c)) return "ok";
   const p = S.pending.get(c.id);
   const st = p?.guide?.status;
   if (p?.guide?.cands?.length) {
@@ -635,6 +636,7 @@ function watchAutoMatch() {
       try { full = await api.automatchJob(true); } catch (e) { toastError("Auto-match failed", e); return; }
       if (!S) return;
       S.amSeen = j.id;
+      try { sessionStorage.setItem("coax.amSeen", j.id); } catch {}
       applyAutoMatch(full.ids || [], full.result || {});
     }
   };
@@ -705,12 +707,13 @@ async function acceptChecked(auto = false) {
     const entry = { id };
     if (p.guide?.checked && p.guide.cands?.length) entry.guide = guideFromCandidate(c, p.guide.cands[p.guide.idx]);
     const add = (p.backups || []).filter((b) => b.checked).map((b) => ({ provider: b.provider, stream_id: String(b.stream_id) }));
-    if (add.length) entry.streams = [...(c.streams || []).map((s) => ({ provider: s.provider, stream_id: s.stream_id })), ...add];
-    if (entry.guide || entry.streams) out.push(entry);
+    if (add.length) entry.add_streams = add;
+    if (entry.guide || entry.add_streams) out.push(entry);
   }
   if (!out.length) return;
   // Keep a copy in the browser until the save succeeds, so nothing is lost to an error or a reload.
   try { localStorage.setItem("coax.unsaved", JSON.stringify({ at: Date.now(), entries: out })); } catch {}
+  const st = S;
   const saved = [];
   let failed = [];
   try {
@@ -720,21 +723,23 @@ async function acceptChecked(auto = false) {
     // The all-at-once save failed: save channel by channel so one bad channel can't block the rest.
     for (const x of out) {
       try {
-        await api.updateChannel(x.id, { ...(x.guide ? { guide: x.guide } : {}), ...(x.streams ? { streams: x.streams } : {}) });
+        await api.applyChannels([x]);
         saved.push(x);
       } catch (err) { failed.push({ x, err }); }
     }
   }
-  for (const x of saved) S.pending.delete(x.id);
+  if (!failed.length) { try { localStorage.removeItem("coax.unsaved"); } catch {} }
+  for (const x of saved) st.pending.delete(x.id);
+  if (S !== st) return;
   if (failed.length) {
     try { localStorage.setItem("coax.unsaved", JSON.stringify({ at: Date.now(), entries: failed.map((f) => f.x) })); } catch {}
     const names = failed.slice(0, 3).map((f) => chById(f.x.id)?.name || `#${f.x.id}`).join(", ");
     toast(`${saved.length} saved, ${failed.length} not saved`,
       `Not saved: ${names}${failed.length > 3 ? ` and ${failed.length - 3} more` : ""}. They stay checked, so press Save again, or use Download unsaved to keep a copy. Reason: ${failed[0].err?.message || "unknown"}`, "warn", 15000);
-    renderFrame();
+    if (saved.length) await reload();
+    else renderFrame();
     return;
   }
-  try { localStorage.removeItem("coax.unsaved"); } catch {}
   // Drop remaining suggestions on channels we just saved only if nothing is left unchecked.
   toast(auto ? "Autosaved" : "Saved", `${out.length} channel${out.length === 1 ? "" : "s"} updated`, "ok", auto ? 2500 : undefined);
   if (S.filter === "pending" && !S.pending.size) S.filter = "all";
@@ -754,8 +759,11 @@ async function offerUnsaved() {
   let n = 0;
   const left = [];
   for (const x of saved.entries) {
-    try { await api.updateChannel(x.id, { ...(x.guide ? { guide: x.guide } : {}), ...(x.streams ? { streams: x.streams } : {}) }); n++; }
-    catch { left.push(x); }
+    try {
+      if (x.add_streams || x.guide) await api.applyChannels([x]);
+      else if (x.streams) await api.updateChannel(x.id, { streams: x.streams });
+      n++;
+    } catch (err) { if (err?.status !== 404) left.push(x); }
   }
   try { left.length ? localStorage.setItem("coax.unsaved", JSON.stringify({ at: saved.at, entries: left })) : localStorage.removeItem("coax.unsaved"); } catch {}
   toast(left.length ? `${n} saved, ${left.length} still not saved` : "Saved", left.length ? "They will be offered again next time." : `${n} channel${n === 1 ? "" : "s"} restored`, left.length ? "warn" : "ok");
@@ -905,7 +913,7 @@ function guideModal(c) {
       g.reviewed = $("#gLeft", el).checked;
       g.mode = g.station_id && g.xmltv_id ? "both" : g.station_id ? "gracenote" : g.xmltv_id ? "xmltv" : "none";
       const r = await api.updateChannel(c.id, { guide: g });
-      Object.assign(c, r && typeof r === "object" && r.id ? r : { guide: g });
+      Object.assign(chById(c.id) || c, r && typeof r === "object" && r.id ? r : { guide: g });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.guide = null; if (!pp.backups?.length) S.pending.delete(c.id); }
       toast("Guide saved", c.name, "ok", 1500);
       m.close();
@@ -1056,7 +1064,7 @@ function streamsModal(c) {
   $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
     try {
       const r = await api.updateChannel(c.id, { streams: streams.map((s) => ({ provider: s.provider, stream_id: String(s.stream_id) })) });
-      Object.assign(c, r && r.id ? r : { streams });
+      Object.assign(chById(c.id) || c, r && r.id ? r : { streams });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.backups = []; if (!pp.guide?.cands?.length) S.pending.delete(c.id); }
       toast("Streams saved", c.name, "ok", 2500);
       m.close();

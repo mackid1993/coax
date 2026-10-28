@@ -60,7 +60,7 @@ async function poll() {
   const sessions = s.sessions || [];
   const now = Date.now();
   for (const x of sessions) {
-    const key = x.uuid || x.channel_id;
+    const key = skey(x);
     let rate = Number(x.bitrate_bps) || 0;
     const prev = lastBytes.get(key);
     if (!rate && prev && x.bytes != null) rate = ((x.bytes - prev.b) * 8) / Math.max(0.5, (now - prev.t) / 1000);
@@ -71,7 +71,7 @@ async function poll() {
     history.set(key, h);
   }
   const viewers = sessions.reduce((a, x) => a + (x.clients || []).length, 0);
-  const total = sessions.reduce((a, x) => a + (Number(x.bitrate_bps) || (history.get(x.uuid || x.channel_id) || []).slice(-1)[0] || 0), 0);
+  const total = sessions.reduce((a, x) => a + (Number(x.bitrate_bps) || (history.get(skey(x)) || []).slice(-1)[0] || 0), 0);
   const lines = s.lines || [];
   const used = lines.reduce((a, l) => a + (l.used || 0), 0);
   const cap = lines.some((l) => !l.max) ? "∞" : lines.reduce((a, l) => a + (l.max || 0), 0);
@@ -98,7 +98,7 @@ function drawSessions(sessions) {
   if (!el.querySelector(".session-card")) el.innerHTML = "";
   const keep = new Set();
   for (const x of sessions) {
-    const key = String(x.uuid || x.channel_id);
+    const key = skey(x);
     keep.add(key);
     const inner = cardInner(x, key);
     let card = el.querySelector(`.session-card[data-key="${CSS.escape(key)}"]`);
@@ -119,6 +119,7 @@ function drawSessions(sessions) {
   for (const card of [...el.querySelectorAll(".session-card")]) if (!keep.has(card.dataset.key)) card.remove();
 }
 const openEvents = new Map();
+function skey(x) { return `${x.uuid || x.channel_id}~${x.instance || 0}`; }
 function cardInner(x, key) {
   {
     const h = history.get(key) || [];

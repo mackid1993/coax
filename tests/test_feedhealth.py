@@ -224,3 +224,38 @@ class RankTest(unittest.TestCase):
         self.assertEqual(order[0], "b")          # proven clean
         self.assertEqual(order[-1], "c")         # sound off its picture is the worst
         self.assertLess(order.index("d"), order.index("a"))   # untested above a frozen one
+
+
+class WordingAndUndoTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def make(self, *sids):
+        st = Store({"providers": [{"id": "p1", "name": "Trex"}],
+                    "channels": [{"id": 5, "name": "Bravo", "streams": [{"provider": "p1", "stream_id": s} for s in sids]}]})
+        return st, fh.FeedHealth(st, self.tmp.name)
+
+    def test_messages_use_provider_name_and_plain_english(self):
+        st, h = self.make("main", "b2", "b3")
+        h.problem(5, K("b3"), "desync", "11.6 seconds ahead of its picture", now=1000)
+        t = h.list()["items"][0]["text"]
+        self.assertEqual(t, "Blocked stream b3 (Trex) for 24 hours because its audio was 11.6 seconds ahead of the video.")
+        h.verified(5, K("b2"), now=1100)
+        h.problem(5, K("main"), "dead", now=1200)
+        h.switched(5, K("main"), K("b2"), now=1210)
+        t = h.list()["items"][0]["text"]
+        self.assertIn("Stream b2 (Trex) is now the main stream.", t)
+        self.assertIn("until another problem occurs", t)
+        self.assertNotIn("p1", t)
+
+    def test_undo_refuses_when_streams_changed(self):
+        st, h = self.make("main", "b2")
+        h.good(5, K("b2"), 30, now=500)
+        h.problem(5, K("main"), "placeholder", now=1000)
+        st.cfg["channels"][0]["streams"].append({"provider": "p1", "stream_id": "new"})
+        with self.assertRaises(ValueError):
+            h.undo(h.list()["items"][0]["id"])
+        self.assertFalse(h.list()["items"][0]["undone"])
