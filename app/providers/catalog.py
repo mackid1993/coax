@@ -5,6 +5,7 @@ Cache file: {data_dir}/cache/catalog-<provider_id>.json
    "streams": [{"stream_id", "name", "group", "logo", "tvg_id", "url"?, "format"?}]}
 """
 
+import collections
 import datetime
 import json
 import logging
@@ -145,10 +146,23 @@ def diff(previous, current, selected_groups=()):
     # Streams whose id changed but whose URL did not (for example the switch from URL-hash ids
     # to stable M3U ids) are the same stream, not one removal plus one addition.
     new_by_url = {s["url"]: sid for sid, s in new.items() if s.get("url")}
+    # Also by the URL without its token or credential parts, for playlists whose URLs change every refresh;
+    # only where that URL is unique in the whole old and the whole new catalog (a playlist that keeps the stream's
+    # identity in the query, like play.php?id=N, normalizes every stream to the same URL and never pairs).
+    from .m3u import normalized_url
+    old_norm = collections.Counter(normalized_url(s["url"]) for s in old.values() if s.get("url"))
+    new_norm = collections.Counter(normalized_url(s["url"]) for s in new.values() if s.get("url"))
+    new_by_norm = {normalized_url(s["url"]): sid for sid, s in new.items() if s.get("url") and sid not in old}
     renamed = {}
     for sid, s in old.items():
-        if sid not in new and s.get("url") in new_by_url and new_by_url[s["url"]] not in old:
+        if sid in new or not s.get("url"):
+            continue
+        if s["url"] in new_by_url and new_by_url[s["url"]] not in old:
             renamed[sid] = new_by_url[s["url"]]
+            continue
+        norm = normalized_url(s["url"])
+        if old_norm[norm] == 1 and new_norm[norm] == 1 and norm in new_by_norm:
+            renamed[sid] = new_by_norm[norm]
     renamed_to = set(renamed.values())
     added = [sid for sid in new if sid not in old and sid not in renamed_to]
     removed = [sid for sid in old if sid not in new and sid not in renamed]

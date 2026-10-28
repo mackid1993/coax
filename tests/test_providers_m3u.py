@@ -369,3 +369,21 @@ class HlsFirstTests(unittest.TestCase):
         self.assertEqual(providers.stream_format(hls, plain), "ts")      # no HLS form: only TS can play it
         self.assertEqual(providers.stream_format(ts, playlist), "hls")   # a playlist is always HLS
         self.assertEqual(providers.stream_format({}, {"url": "http://h/x.mp4"}), "")
+
+
+class TokenRenameTests(unittest.TestCase):
+    def test_vanished_id_pairs_with_new_one_by_url_without_token(self):
+        old = {"streams": [{"stream_id": "T", "url": "http://h1/one.ts?token=aaa"}]}
+        new = {"streams": [{"stream_id": "U", "url": "http://h1/one.ts?token=bbb"},
+                           {"stream_id": "V", "url": "http://h2/two.ts?token=bbb"}]}
+        report = catalog.diff(old, new)
+        self.assertEqual(report["renamed"], {"T": "U"})
+        self.assertEqual(report["removed"], [])
+
+    def test_query_identity_urls_never_pair(self):
+        old = {"streams": [{"stream_id": "a", "url": "http://h/play.php?id=1&token=x"},
+                           {"stream_id": "b", "url": "http://h/play.php?id=2&token=x"}]}
+        new = {"streams": [{"stream_id": "a", "url": "http://h/play.php?id=1&token=y"},
+                           {"stream_id": "d", "url": "http://h/play.php?id=4&token=y"}]}
+        report = catalog.diff(old, new)
+        self.assertEqual((report["renamed"], report["removed"], report["added"]), ({}, ["b"], ["d"]))
