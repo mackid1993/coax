@@ -870,7 +870,7 @@ class Hub:
                 "stream_no": s.stream_no,
                 "input": s.input_fmt,
                 "degraded": s.degraded,
-                "events": list(s.events)[-25:],
+                "events": list(s.events),
                 "engine_pid": proc.pid if proc is not None and proc.poll() is None else None,
                 "clients": [{"ip": s.client_ip, "user_agent": s.user_agent,
                              "connected": round(now - s.started_at, 1), "bytes": s.bytes_out}],

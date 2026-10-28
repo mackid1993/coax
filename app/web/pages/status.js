@@ -111,7 +111,11 @@ function drawSessions(sessions) {
     if (card._html === inner) continue;
     const det = card.querySelector("details.events");
     if (det) openEvents.set(key, det.open);
+    const ol = card.querySelector("details.events ol");
+    const top = ol ? ol.scrollTop : 0;
     card.innerHTML = inner;
+    const ol2 = card.querySelector("details.events ol");
+    if (ol2 && top) ol2.scrollTop = top;
     card._html = inner;
     const det2 = card.querySelector("details.events");
     if (det2 && openEvents.has(key)) det2.open = openEvents.get(key);
