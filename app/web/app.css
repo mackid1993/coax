@@ -684,6 +684,11 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
 .lineup-head { align-items: flex-start; gap: 10px; }
 .lineup-title { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
 .lineup-title h3 { font-size: 16px; margin: 0; }
+.lineup-pills { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
+.lineup-pills [data-dvr-badge] { display: contents; }
+.lineup-card { display: flex; flex-direction: column; }
+.lineup-card > .card-body { flex: 1; }
+.lineup-card [data-dvr] { margin-top: auto; }
 .lineup-head > .row { flex: none; }
 .lineup-card .btn { white-space: nowrap; }
 

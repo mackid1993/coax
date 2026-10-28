@@ -94,7 +94,7 @@ function render() {
         ? `In the DVR add a custom M3U source with the playlist URL. Station IDs map the guide automatically.`
         : `Add a custom M3U source with the playlist URL, and set its XMLTV guide URL for channels without a station ID.`;
     return `<article class="card lineup-card" data-id="${esc(l.id)}">
-      <div class="card-head lineup-head"><div class="lineup-title"><h3 class="ellip" data-pop="${esc(l.name)}">${esc(l.name)}</h3><div class="row" style="gap:6px;flex-wrap:wrap"><span class="badge ${guideBadge(g)}">${esc(g)}</span><span data-dvr-badge>${dvr[l.id]?.in_dvr ? `<span class="badge badge-ok"><span class="dot"></span>In Channels DVR</span>` : ""}</span></div></div>
+      <div class="card-head lineup-head"><div class="lineup-title"><h3 class="ellip" data-pop="${esc(l.name)}">${esc(l.name)}</h3><div class="lineup-pills"><span class="badge ${guideBadge(g)}">${esc(g)}</span><span data-dvr-badge>${dvr[l.id]?.in_dvr ? `<span class="badge badge-ok"><span class="dot"></span>In Channels DVR</span>` : ""}</span></div></div>
         <div class="row"><button class="btn btn-ghost btn-sm btn-icon" data-act="edit" aria-label="Edit ${esc(l.name)}">${icon("edit")}</button><button class="btn btn-ghost btn-sm btn-icon btn-danger" data-act="delete" aria-label="Delete ${esc(l.name)}">${icon("trash")}</button></div></div>
       <div class="card-body stack" style="gap:12px">
         <div class="row" style="gap:24px"><div><div class="stat-label">Channels</div><div class="stat-value">${fmtInt(n)}</div></div><div><div class="stat-label">Enabled</div><div class="stat-value">${fmtInt(enabled)}</div></div><div><div class="stat-label">Id</div><div class="stat-value" style="font-size:14px;margin-top:5px">${esc(l.id)}</div></div></div>
