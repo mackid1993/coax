@@ -316,7 +316,7 @@ def eofs(vk, av):
 def ffcmd():
     b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
     if not TRANSCODE:
-        return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+        return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
     h = hwpick()
     fr = frs(TC_FPS)
     g = str(int(round(2 * TC_FPS)))
@@ -338,7 +338,7 @@ def ffcmd():
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
     af = "aresample=async=1:min_hard_comp=0.1:first_pts=0" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt
