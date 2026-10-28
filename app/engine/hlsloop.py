@@ -316,7 +316,7 @@ def eofs(vk, av):
 def ffcmd():
     b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
     if not TRANSCODE:
-        return b + ["-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
+        return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
     h = hwpick()
     fr = frs(TC_FPS)
     g = str(int(round(2 * TC_FPS)))
@@ -337,8 +337,8 @@ def ffcmd():
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "h264_nvenc", "-preset", "p4"] + rc + ["-bf", "0"]
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
-    af = "aresample=async=1000" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
+    af = "aresample=async=1:min_hard_comp=0.1:first_pts=0" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
+    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt
@@ -502,6 +502,7 @@ def tsig(d):
     return None
 PSK = None
 nsk = 0
+PHG = [None, False]   # first offline placeholder seen on this stream, and whether it was logged
 
 def pts0(d):
     global PSK
@@ -1377,11 +1378,24 @@ while not gone():
             continue
         if "#EXT-X-ENDLIST" in L:
             ph += 1
+            if PHG[0] is None:
+                PHG[0] = mono()
+            if not stalled and mono() - PHG[0] < 15 and Qs[0] + max(wlead, 0.0) > 30:
+                if not PHG[1]:
+                    PHG[1] = True
+                    log("provider is serving an offline placeholder; reserve %.0fs, retrying this stream for up to 15s before any switch" % Qs[0])
+                rb = mono() + 2
+                time.sleep(2)
+                continue
+            PHG[0] = None
+            PHG[1] = False
             handoff("provider is serving an offline placeholder")
             z = 5 if stalled else 0
             rb = mono() + z
             time.sleep(z)
             continue
+        PHG[0] = None
+        PHG[1] = False
         media = r.url
         seq = 0
         hasseq = False

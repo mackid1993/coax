@@ -291,3 +291,16 @@ class ViewerBufferMatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FfmpegArgsTest(unittest.TestCase):
+    def test_both_paths_probe_long_and_add_no_mux_delay(self):
+        import os
+        for name in ("hlsloop", "tsloop"):
+            src = open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", name + ".py")).read()
+            i = src.index("def ffcmd():")
+            body = src[i:src.index("\ndef ", i + 10)]
+            self.assertGreaterEqual(body.count('"-probesize", "5000000"'), 2, name)
+            self.assertEqual(body.count('"-muxpreload", "0"'), 2, name)
+            self.assertIn("min_hard_comp=0.1", body, name)
+            self.assertNotIn("async=1000", body, name)
