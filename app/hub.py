@@ -53,6 +53,7 @@ RESTART_WINDOW = 600.0     # restarts within this window make the next one wait 
 RESTART_DELAY = 1.0        # first restart delay; doubles per recent restart
 BACKOFF_MAX = 15.0
 STOP_TIMEOUT = 3.0
+STARTUP_GRACE = 15.0      # keepalive within this long of an engine start is startup, not a correction
 STALL_TIMEOUT = 25.0       # no bytes at all from an engine that already sent video: frozen
 DEAD_TIMEOUT = 90.0        # bytes but no real video for this long: retune
 LINE_COOLDOWN = 5.0        # a line released this recently is used last
@@ -198,6 +199,7 @@ class Session:
         self.spawns = 0
         self._pos = 0               # bytes sent mod 188, so injected null packets stay aligned
         self.had_video = False      # real video has reached the DVR at least once
+        self.spawned_at = time.monotonic()
         self.instance = 0           # 0 for the first session of this channel, 1 for a second one, ...
         self.proc = None
         self.closed = False
@@ -218,6 +220,7 @@ class Session:
         else:
             env.pop("COAX_RESTART", None)
         self.spawns += 1
+        self.spawned_at = time.monotonic()
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, start_new_session=True, bufsize=0, env=env)
         threading.Thread(target=self._pump_stderr, args=(proc,), daemon=True,
@@ -251,7 +254,11 @@ class Session:
                     text = fmt(m) if callable(fmt) else fmt
                 except Exception:  # noqa: BLE001
                     text = line
-                self.event(kind, text, level)
+                # The timeline lists corrections only: the transcode state has its own pill, and a short gap
+                # while a freshly started engine gets its first video out is startup, not a correction.
+                startup = kind == "keepalive" and time.monotonic() - self.spawned_at < STARTUP_GRACE
+                if kind != "transcode" and not startup:
+                    self.event(kind, text, level)
                 if kind == "failover":
                     try:
                         self.stream_no = int(m.group(1))

@@ -409,3 +409,18 @@ class RankedFailoverTest(unittest.TestCase):
         s = hub.open("uuid-1", "ip", "ua")
         self.assertEqual(hub.backup_urls(1), ["fake://p1/l1/a", "fake://p1/l1/c", "fake://p1/l1/b"])
         s.close()
+
+
+class TimelineTest(unittest.TestCase):
+    def test_startup_keepalive_and_transcode_not_listed(self):
+        h, _ = make(config([provider("p1", 1)], [channel(1, [("p1", "a")])]))
+        s = h.open("uuid-1", "ip", "ua")
+        s._watch("[hlsloop stream] transcoding with Intel/AMD graphics (VAAPI)")
+        s._watch("[hlsloop stream] output: no video to send for 2s, sending keepalive packets so the stream stays open")
+        s._watch("[hlsloop stream] output: video flowing again after 2.5s without video")
+        self.assertEqual(list(s.events), [])
+        self.assertEqual(s.encoder, "Intel/AMD graphics (VAAPI)")
+        s.spawned_at -= 60
+        s._watch("[hlsloop stream] output: no video to send for 2s, sending keepalive packets so the stream stays open")
+        self.assertEqual([e["kind"] for e in s.events], ["keepalive"])
+        s.close()
