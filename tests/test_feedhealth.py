@@ -284,3 +284,26 @@ class UnblockTest(unittest.TestCase):
         self.assertTrue(h.unblock(5, ("p", "a"), now=1002))
         self.assertIsNone(h.block_info(5, ("p", "a"), now=1003))
         self.assertFalse(h.unblock(5, ("p", "a"), now=1004))
+
+
+class DisabledStreamHealthTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_disabled_stream_never_becomes_main_and_lone_stream_is_not_blocked(self):
+        st = Store({"channels": [{"id": 5, "name": "Bravo", "streams": [
+            {"provider": "p1", "stream_id": "main"}, {"provider": "p1", "stream_id": "off", "disabled": True},
+            {"provider": "p1", "stream_id": "b3"}]}]})
+        h = fh.FeedHealth(st, self.tmp.name)
+        h.good(5, K("off"), 600, now=400)
+        h.good(5, K("b3"), 60, now=500)
+        h.problem(5, K("main"), "placeholder", now=1000)
+        self.assertEqual(ids(st), ["b3", "main", "off"])
+        one = Store({"channels": [{"id": 6, "name": "Solo", "streams": [
+            {"provider": "p1", "stream_id": "only"}, {"provider": "p1", "stream_id": "off", "disabled": True}]}]})
+        h2 = fh.FeedHealth(one, self.tmp.name)
+        h2.problem(6, K("only"), "placeholder", now=1000)
+        self.assertFalse(h2.is_blocked(6, K("only"), now=1000))

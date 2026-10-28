@@ -240,6 +240,8 @@ class FeedHealth:
             keys = [_key(s) for s in streams]
             if old not in keys or new not in keys or keys.index(new) < keys.index(old):
                 return None
+            if any(s.get("disabled") for s in streams if _key(s) == new):
+                return None   # disabled by hand since: never promoted
             i = keys.index(old)
             order = [k for k in keys if k != new]
             order.insert(i, new)
@@ -302,7 +304,8 @@ class FeedHealth:
     def _block(self, ch, key, kind, detail, now):
         try:
             chan = self._channel(self.store.get(), ch)
-            if chan is None or len(chan.get("streams") or []) < 2:
+            # Blocking only moves playback to another stream, so a channel with one enabled stream is left alone.
+            if chan is None or len([s for s in chan.get("streams") or [] if not s.get("disabled")]) < 2:
                 return
             if self.is_blocked(ch, key, now):
                 return
@@ -326,15 +329,17 @@ class FeedHealth:
             keys = [_key(s) for s in streams]
             if bad not in keys:
                 return None
-            working = [k for k in keys if not self.is_blocked(ch, k, now)]
-            blocked = sorted([k for k in keys if k not in working], key=lambda k: self.blocked_until(ch, k, now))
-            new = working + blocked
+            off = {_key(s) for s in streams if s.get("disabled")}   # disabled by hand: never the main stream
+            working = [k for k in keys if not self.is_blocked(ch, k, now) and k not in off]
+            blocked = sorted([k for k in keys if k not in working and k not in off],
+                             key=lambda k: self.blocked_until(ch, k, now))
+            new = working + blocked + [k for k in keys if k in off]
             if keys[0] not in working:
                 # Only a checked stream (passed the sync check, or played cleanly) may become the main stream.
                 proven = [k for k in working if self._proven(ch, k, now)]
                 if proven:
                     best = min(proven, key=lambda k: (-self._clean(ch, k, now), self._strikes(ch, k, now), keys.index(k)))
-                    new = [best] + [k for k in working if k != best] + blocked
+                    new = [best] + [k for k in working if k != best] + blocked + [k for k in keys if k in off]
                 else:
                     new = keys   # nothing checked to take over: keep the order; tuning skips the blocked stream
             done.update(old=keys, new=new, name=chan.get("name"))
