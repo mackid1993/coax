@@ -953,7 +953,7 @@ class Hub:
         self._remember(url, provider_id, line.get("id"), stream_id)
         log.info("[%s] %s", s.name, msg)
         if proc is not None:
-            self._kill(proc, close_stdout=False)
+            s._kill(proc, close_stdout=False)   # the copy loop restarts the engine on the new stream
         return msg
 
     def feed_disabled(self, channel_id, provider_id, stream_id):
