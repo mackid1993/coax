@@ -80,7 +80,6 @@ CHANNELS_DVR, TRANSCODE, COAX_PORT = load_settings()
 TCP = {"1080p60": (1080, 59.94, "6M"), "1080p30": (1080, 29.97, "4.5M"), "720p60": (720, 59.94, "4.5M"), "720p30": (720, 29.97, "3M"), "1080p50": (1080, 50, "6M"), "1080p25": (1080, 25, "4.5M"), "720p50": (720, 50, "4.5M"), "720p25": (720, 25, "3M")}
 TC_HEIGHT, TC_FPS, TC_VBITRATE = TCP.get(str(TRANSCODE).lower().strip(), (0, 0, ""))
 TRANSCODE = TC_HEIGHT > 0
-TC_LEAD = 8.0
 try:
     import requests
 except ImportError:
@@ -303,6 +302,7 @@ def remux(why=None):
             old.stdin.close()
         except Exception:
             pass
+OWT = [mono()]   # last time the encoder's output reached the DVR
 NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
 
 AQ = {"pid": None, "t0": 0.0, "a": None, "told": False, "ever": False, "n": 0, "next": 0.0}
@@ -395,6 +395,7 @@ def pump():
                 n = os.write(1, b)
                 b = b[n:]
                 ob += n
+                OWT[0] = mono()
             lw = mono()
             kag = False
             if kas is not None:
@@ -956,7 +957,9 @@ def writer():
             ce = min(max(min(CL + xb + (RXL if rx else 0.0), clcap(), max(ce, lead + qs - STALL - RLOW)), ce - 0.01 * (now - tc)), ce + (RXR if rx else RAMP) * (now - tc) + max(xb - pxb, 0.0))
             tc = now
             pxb = xb
-            if cd > 0 and lead >= ce and (qs <= QMAX + 30):
+            # A GPU encoder holds a few seconds of video: pacing counts what goes in, so while its output is
+            # silent keep feeding it (within the player lead cap), or the DVR starves while the reserve is full.
+            if cd > 0 and lead >= ce and (qs <= QMAX + 30) and (not (TRANSCODE and qs > 2 and (mono() - OWT[0] > 0.7) and (lead < clcap()))):
                 time.sleep(0.02)
                 continue
             if TRANSCODE and i == 0 and (mono() - fst > 90):
@@ -976,6 +979,8 @@ def writer():
                     it[6] = i + 1
                     it[7] = en
                     it[8] = max(ca, it[8])
+                    with ql:
+                        Qs[0] -= cd   # video dropped while waiting for a keyframe is gone from the reserve too
                     continue
             put(d[it[7]:en])
             it[6] = i + 1
@@ -1018,6 +1023,7 @@ warned = set()
 cc = {}
 sticky = None
 usest = False
+ste = 0.0   # when the connection the redirect ticket belongs to ended
 
 def budget():
     now = mono()
@@ -1297,7 +1303,9 @@ def conn(r):
                 if ki is None:
                     if not fin and len(pre) < 30000 and (mono() - t0 < STALL + 2):
                         continue
-                    ki = 0
+                    # No keyframe found (some codecs do not mark them): start at the first video PES, never at a
+                    # packet without timestamps.
+                    ki = next((i for i, p in enumerate(pre) if (p[1] & 31) << 8 | p[2] == prim and pests(p)), 0)
                 tt = None
                 if nowait and hw is not None:
                     tt = hw - max(min(RES - Qs[0] - max(wlead, 0.0), 10.0), 3.0)
@@ -1411,7 +1419,7 @@ if rstk:
 while not gone():
     rb = mono()
     try:
-        url = sticky if usest and sticky else cur
+        url = sticky if usest and sticky and mono() - ste < 3 else cur   # the ticket only works right away
         usest = False
         rto = STALL if stalled and Qs[0] <= RLOW or Qs[0] <= 0 else max(4.0, min(STALL, Qs[0] - RLOW))
         if prr and prr[0] == url:
@@ -1478,6 +1486,7 @@ while not gone():
         if gone():
             break
         usest = sticky is not None and err == 0
+        ste = mono()
         if e0 is None:
             e0 = mono()
         if "fresh burst" in str(e):
@@ -1503,7 +1512,8 @@ while not gone():
                 e0 = None
                 continue
         err += 1
-        short = 0
+        if str(e) != "stream ended":   # the provider closing a short connection is what `short` counts
+            short = 0
         rs = getattr(e, "response", None)
         c = getattr(rs, "status_code", 0)
         ra = rs.headers.get("Retry-After", "") if rs is not None else ""
