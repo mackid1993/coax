@@ -682,8 +682,8 @@ def fmtnote(u, d, dur):
             f = fmtprobe.describe(FF, bytes(d), dur)
             if f:
                 log("provider format: " + json.dumps(f, ensure_ascii=False))
-        except Exception:
-            pass
+        except Exception as x:
+            log("could not read the provider format (%s)" % x)
     threading.Thread(target=go, daemon=True).start()
 
 def enq(it):

@@ -320,6 +320,7 @@ def _pes_packet(stream_id):
     head = b"\x47\x41\x00\x10" + b"\x00\x00\x01" + bytes([stream_id]) + b"\x00\x00\x80\x00\x00"
     return head + b"\xff" * (188 - len(head))
 
+
 class SilentAudioGuardTest(unittest.TestCase):
     """The guard restarts an encoder that lost its sound, but never every 15 s and never for a feed with no sound."""
 
@@ -355,3 +356,48 @@ class SilentAudioGuardTest(unittest.TestCase):
         for name in ENGINES:
             src = engine_source(name)
             self.assertIn("old.pid not in SK", src[src.index("def remux("):], name)
+
+
+class DownloadDeadlineTest(unittest.TestCase):
+    """hlsloop reads every playlist and segment within an overall deadline and always closes the response."""
+
+    class Resp:
+        def __init__(self, chunks, clock, step):
+            self.chunks, self.clock, self.step, self.closed = chunks, clock, step, False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, size):
+            for c in self.chunks:
+                self.clock[0] += self.step
+                yield c
+
+        def close(self):
+            self.closed = True
+
+    def grab(self):
+        clock = [0.0]
+        ns = {"mono": lambda: clock[0]}
+        extract("hlsloop", ("grab",), ns)
+        return ns["grab"], clock
+
+    def test_trickling_body_hits_the_deadline_and_closes(self):
+        grab, clock = self.grab()
+        r = self.Resp([b"x" * 100] * 1000, clock, 1.0)
+        with self.assertRaises(ValueError):
+            grab(r, 30)
+        self.assertTrue(r.closed)
+
+    def test_live_ts_body_where_a_playlist_was_expected_stops_at_the_cap(self):
+        grab, clock = self.grab()
+        r = self.Resp(iter(lambda: b"G" * 65536, None), clock, 0.0)
+        with self.assertRaises(ValueError):
+            grab(r, 30, 2000000)
+        self.assertTrue(r.closed)
+
+    def test_normal_body(self):
+        grab, clock = self.grab()
+        r = self.Resp([b"#EXTM3U\n", b"seg.ts\n"], clock, 0.01)
+        self.assertEqual(grab(r, 30, 2000000), b"#EXTM3U\nseg.ts\n")
+        self.assertTrue(r.closed)

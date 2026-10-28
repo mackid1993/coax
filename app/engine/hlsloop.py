@@ -573,11 +573,29 @@ def tsok(q, d):
         raise ValueError("segment is not MPEG-TS (%d bytes)" % len(d))
     return d
 
+MH = [0]   # master playlist hops in a row
+
+def grab(r, lim, cap=0):
+    # Read a response body within an overall deadline (the read timeout only limits each pause), so a provider
+    # trickling bytes cannot hold the fetch loop while the reserve drains, and a live MPEG-TS body sent where a
+    # playlist was expected cannot be read forever. Always closes the response, so no connection lingers.
+    try:
+        r.raise_for_status()
+        end = mono() + lim
+        b = bytearray()
+        for c in r.iter_content(65536):
+            b += c
+            if cap and len(b) > cap:
+                raise ValueError("response is not an m3u8 playlist (%d+ bytes)" % len(b))
+            if mono() > end:
+                raise ValueError("download still unfinished after %ds" % lim)
+        return bytes(b)
+    finally:
+        r.close()
+
 def fetch(q):
     h = {"Range": "bytes=%d-%d" % (q["b"][1], q["b"][1] + q["b"][0] - 1)} if q["b"] else {}
-    r = s.get(q["u"], headers=h, timeout=(3, 5))
-    r.raise_for_status()
-    d = r.content
+    d = grab(s.get(q["u"], headers=h, timeout=(3, 5), stream=True), max(3 * tgt, 30))
     k = q["k"]
     if not k:
         return tsok(q, d)
@@ -589,6 +607,8 @@ def fetch(q):
     if k[1] not in keys:
         kr = s.get(k[1], timeout=(3, 5))
         kr.raise_for_status()
+        if len(keys) > 50:   # providers that rotate the key every segment
+            keys.clear()
         keys[k[1]] = kr.content
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     iv = int(k[2], 16).to_bytes(16, "big") if k[2] else q["s"].to_bytes(16, "big")
@@ -685,18 +705,16 @@ def mark(u):
 
 def probe(u):
     try:
-        r = s.get(u, timeout=(2, 3))
-        r.raise_for_status()
-        t = r.text
+        r = s.get(u, timeout=(2, 3), stream=True)
+        t = grab(r, 6, 2000000).decode("utf-8", "replace")
         if "#EXTM3U" not in t:
             return False
         if "#EXT-X-STREAM-INF" in t:
             v = [l.strip() for l in t.splitlines() if l.strip() and (not l.startswith("#"))]
             if not v:
                 return False
-            r = s.get(up.urljoin(r.url, v[0]), timeout=(2, 3))
-            r.raise_for_status()
-            t = r.text
+            r = s.get(up.urljoin(r.url, v[0]), timeout=(2, 3), stream=True)
+            t = grab(r, 6, 2000000).decode("utf-8", "replace")
         return "#EXTINF" in t and "#EXT-X-ENDLIST" not in t
     except Exception:
         return False
@@ -1065,8 +1083,8 @@ def fmtnote(u, d, dur):
             f = fmtprobe.describe(FF, bytes(d), dur)
             if f:
                 log("provider format: " + json.dumps(f, ensure_ascii=False))
-        except Exception:
-            pass
+        except Exception as x:
+            log("could not read the provider format (%s)" % x)
     threading.Thread(target=go, daemon=True).start()
 
 def enq(it):
@@ -1204,15 +1222,20 @@ if rstk:
 while not gone():
     rb = mono()
     try:
-        r = s.get(media or cur, timeout=(5, 10))
-        r.raise_for_status()
-        L = [x.strip() for x in r.text.splitlines() if x.strip()]
+        r = s.get(media or cur, timeout=(5, 10), stream=True)
+        L = [x.strip() for x in grab(r, 30, 2000000).decode("utf-8", "replace").splitlines() if x.strip()]
         if not L or not L[0].startswith("#EXTM3U"):
             raise ValueError("response is not an m3u8 playlist")
         v = [(int(m.group(1)) if (m := bw.search(x)) else 0, L[i + 1]) for i, x in enumerate(L[:-1]) if x.startswith("#EXT-X-STREAM-INF")]
         if v:
+            MH[0] += 1
+            if MH[0] > 3:   # a master playlist that never leads to a media playlist
+                MH[0] = 0
+                media = None
+                raise ValueError("master playlist does not lead to a media playlist")
             media = up.urljoin(r.url, max(v)[1])
             continue
+        MH[0] = 0
         if "#EXT-X-ENDLIST" in L:
             ph += 1
             if PHG[0] is None:
