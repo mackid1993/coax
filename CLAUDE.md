@@ -1,7 +1,7 @@
 # CLAUDE.md: the full history of coax, and every lesson learned
 
 This is the project's memory. Read it before changing anything. It covers everything from the first Gracenote
-matcher (2026-10-19) through the Dispatcharr stream profiles to coax 1.0.5 (2026-10-28): what was built, what
+matcher (2026-10-19) through the Dispatcharr stream profiles to coax 1.0.5-4 (2026-10-28): what was built, what
 failed, why it failed, how it was fixed, and the rules the owner set along the way. Most of these rules exist
 because a mistake was made once. Do not make it twice.
 
@@ -458,10 +458,17 @@ Repo `mackid1993/coax` (public, MIT), all built on 2026-10-27 (EDT).
 - **1.0.4-1 to 1.0.4-7:** sync check and Smart Standby fixes (1.0.4-1), then six engine guesses at the HE-AAC
   desync (4.7). **1.0.5:** stream list with Switch and Disable on the Status card; 1.0.4 probe and mux changes
   removed. **1.0.5-2:** Switch and Disable actually stop the playing engine (4.7).
+- **1.0.5-3:** the sound-against-picture sync check is gone (it blocked a good backup); the Blocked pill shows
+  time left and the reason and unblocks on click; logs and the timeline name streams by id (4.8).
+  **1.0.5-4:** the tune card's stream list is back (1.0.5-3 reused a variable and the list came back empty) (4.8).
 
 ### 4.4 The Bravo case and Smart Standby
 Bravo has three streams: main `45446`, backup `174571`, backup `2151823`. During an outage coax landed on `2151823`
 and the audio was about 10 s ahead. The owner needed it fixed fast.
+
+> **Correction (1.0.5-3):** the sync check described here (`avcheck.py`, checking backups before a switch,
+> leaving an out-of-sync stream after a switch, out-of-sync blocks of 24 h and 3 days, "proven" by a passed
+> check) was removed entirely in 1.0.5-3. coax no longer detects or blocks for sound off its picture. See 4.8.
 - coax's output timestamps and the feed's own timestamps were in step (0.04 s and 0.005 s). The feed itself carries
   sound about 11 to 12 s ahead of its picture: **content desync**, invisible to timestamp checks. It is also a
   different source (two audio languages, DVB subtitles).
@@ -623,6 +630,9 @@ in either engine.
   unambiguous.
 
 #### 4.6.5 False sync block
+> **Correction (1.0.5-3):** the whole check below, chromaprint version included, was removed in 1.0.5-3 after
+> it blocked a good backup. See 4.8.
+
 - **What happened:** the content sync check (`app/engine/avcheck.py`) cross-correlated a sound-energy envelope
   with a picture-change signal over +/-90 s. On real feeds it produced noise readings such as 65.9 s, -50 s and
   +63 s. A single such reading blocked a good stream for 24 h and caused feed hopping.
@@ -662,7 +672,8 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 #### 4.7.1 What happened, in order
 - **1.0.4-1** (`2f6c483`): the sync check's sign was wrong (sound and picture lags were subtracted where they
   should be added); a sync verdict now needs a second agreeing reading (the later half of the clip, same sign,
-  within 1.5 s); tsloop short connections only hand off when reserve plus lead is 15 s or less and no longer
+  within 1.5 s; corrected in 4.8: that reading used the same reference clip, so it was not independent, and the
+  whole check was removed in 1.0.5-3); tsloop short connections only hand off when reserve plus lead is 15 s or less and no longer
   report an offline placeholder; the hub's own restarts (`frozen`, `novideo`) never block a stream on their
   own (ranking only); a move to another line keeps the stream that is playing instead of going back to the
   channel's first stream.
@@ -728,6 +739,7 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
   +/-3 s on in-sync channels over 20 s windows and could not separate the bad feed (about 1 s off) from good
   ones. Not shipped.
 - Two-feed comparison (`avcheck.py`) only works when the feeds overlap in content, and it judges at 2 s.
+  (Corrected in 1.0.5-3: it also falsely blocked a good backup, and it was removed. See 4.8.)
 - ML options (Synchformer, SyncNet) were rejected by the owner.
 - A desynced feed is rare, so the owner chose a manual Switch and Disable.
 
@@ -739,6 +751,99 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 - Do not revert releases the owner says are good; iterate forward.
 - After adding a method call, check that the object has that method (`Hub._kill` did not exist; only the session
   has `_kill`). A test that only exercises the idle path will not catch it.
+
+### 4.8 1.0.5-3 and 1.0.5-4: sync check removed, Blocked pill, stream ids in logs
+Afternoon of 2026-10-28 (EDT). This section corrects every earlier statement that coax checks a stream's sound
+against its picture, blocks for it, or leaves a stream for it: since 1.0.5-3 it does none of that.
+
+#### 4.8.1 The false block that ended the sync check
+- At 09:39 the main stream of a channel stalled (playlist stale, reserve empty, 36 s with no new video). The
+  engine compared the new stream with the last minute of the stream that was failing, read 12.4 s off, and
+  blocked a good backup.
+- The "second agreeing reading" from 1.0.4-1 was compared against the same bad reference clip, so it was not
+  independent. A bad reference produces two agreeing wrong readings.
+- The owner switched to the blocked stream by hand and it played in sync.
+- Together with the earlier findings (4.7.4: the single-stream onset method gave +/-3 s of noise; VLC proved the
+  bad Comedy Central backup was off at the provider itself), the decision: **coax does not detect or block for
+  sound off its picture.** The owner uses Switch and Disable on the Status page.
+
+#### 4.8.2 What 1.0.5-3 removed, and what Smart Standby does now
+- Removed: `app/engine/avcheck.py`; in hlsloop and tsloop `synckeep`, `syncswitch`, `synccheck`, `avcmp`,
+  `syncverdict`, `grabwin`, `lineof`, `scan`, `scanrun`, `syncfire`, `syncpre`, `synctmp_clean`, the `SYNC`,
+  `SL`, `TRUST`, `SCANBAD` and `SYNCBAD` state, and the loop that left an out-of-sync stream after a switch; in
+  the hub `_desync` and the two sync-check `avsync` `EVENT_RULES` (the A/V timestamp rules stay).
+- Smart Standby still blocks at once for an offline placeholder, and blocks `dead` (confirmed by `switched()`)
+  on repeats. `frozen` and `novideo` only lower the rank. Nothing blocks for sound off its picture.
+- `TEXT` and `RANK_W` in `feedhealth.py` still contain `desync` entries, and `verified()` still exists. Nothing
+  produces them any more (harmless). In practice a stream is "proven" by 10+ clean minutes.
+- Backups are still tried in score order, and each is confirmed answering before a switch, in both engines.
+
+#### 4.8.3 The Blocked pill (1.0.5-3)
+- On the tune card a blocked stream shows a purple dashed badge `Blocked · 23h 12m` (time left). The hover
+  popover gives the reason (the `feedhealth` `TEXT` for the block kind) and "Click to unblock it now".
+- Click: `POST /api/channels/<id>/unblock {provider, stream_id}` -> `Hub.unblock` -> `FeedHealth.unblock`, which
+  ends the stream's blocks, clears its strikes and persists; the hub also clears `hub._bad` for it. `Hub.unblock`
+  raises LookupError if the stream is not blocked.
+- `FeedHealth.block_info(ch, key)` returns `{until, kind, why}` or None. `Hub._feeds_view` adds `blocked`,
+  `blocked_until` and `block_why` to each stream.
+
+#### 4.8.4 Stream ids in logs and the timeline (1.0.5-3)
+- Engine lines say `stream N of M`: the position in the engine's working list, which starts with the playing
+  stream and leaves disabled streams out. So "stream 1 of 2" is not the channel's first stream, and that
+  confused the owner.
+- `Hub._label` rewrites `stream N of M` to `stream <id>` using the line's `[ref]` hash, both in the logged line
+  and in the timeline text. A failover reads "Switched to stream <id>".
+
+#### 4.8.5 1.0.5-4: the empty stream list
+- **Bug:** in 1.0.5-3 `_feeds_view` reused the variable `info` for `block_info`, overwriting the catalog info
+  (name, group). `info.get` on None raised, the broad `except` returned `[]`, and the tune card showed no
+  streams at all.
+- **Fix:** a separate variable `blk`; the `except` now logs with `log.exception`; `FeedsViewTest` in
+  `tests/test_hub.py` covers order, playing, blocked and disabled. Before building, the function was run inside
+  the live container against the real config. 284 tests.
+
+#### 4.8.6 README (docs only)
+- Smart Standby rewritten: no picture or sound check; backups tried in score order once confirmed answering;
+  blocking only for the offline slate and repeated failures; a "What Smart Standby cannot see" part.
+- Status page: the Blocked pill, and that out-of-sync feeds are built that way by the provider, play the same in
+  VLC, tend to stay bad, so disable them.
+- The "Offline placeholders and failover" table was checked row by row against both engines:
+  - HLS ended playlist: waits on the reserve; an offline placeholder only after 60 s.
+  - TS redirect to `black.*`: switches and blocks at once.
+  - TS short connections: switch only when the reserve is low; no block.
+  - No new video for 60 s, sooner when the reserve is nearly empty (HLS about three segments, TS about 8 s).
+  - A/V timestamps more than 3 s apart (`pts0` / `PSK` in hlsloop): keeps playing up to 30 s while trying the
+    next stream, then switches. TS: passed over at connect.
+  - Slow feed: HLS below 0.75x while the reserve drains, TS below 0.85x with the reserve nearly empty; 5 minutes.
+  - Sound off its picture: not detected.
+- The first pass changed one word in one row and called the table fixed. The owner called that dishonest.
+
+#### 4.8.7 Research: who causes a multi-second desync
+- No hard numbers were found, but the community consensus: a multi-second offset on a single channel that also
+  shows in VLC is the provider's stream. Reports persist for days. Providers fix it only when it is reported
+  (they restart that channel). A stuck re-encode is the likely cause.
+- A proxy can cause desync too (a Dispatcharr issue about an AAC timestamp-discontinuity loop in a remux), so
+  test in VLC first.
+- This supports manual Disable over automatic detection.
+
+#### 4.8.8 Operations
+- An overnight read-only monitor ran as a throwaway container `coaxmon` on Apollo (`--network host`, reads the
+  coax `/api/status` every 30 s, stops itself after 10 h, output in `/tmp/coaxmon`).
+- A monitor on Gemini failed with "No route to host" to Apollo while plain curl worked. Run monitors next to
+  coax.
+- The owner keeps the bad Comedy Central backup (`2151800`) disabled. Real stream ids never go in the README.
+
+#### 4.8.9 Lessons
+- A comparison is only as good as its reference. Comparing against the stream that is failing judges the wrong
+  stream, and a second reading against the same reference is not a second opinion.
+- When a check cannot tell good feeds from bad, remove it; a false block is worse than no check.
+- Never build a Status or card change after only a syntax check. Run the changed function against the live
+  config (or a test that exercises it) first.
+- Never let a broad `except` silently return empty data; log it.
+- Do not reuse a variable name for a different kind of value in the same block.
+- When the owner points at a README row, verify every row of that section against the code before saying it is
+  fixed.
+- Run monitors on the host next to coax.
 
 ---
 
@@ -782,8 +887,10 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 28. Keepalive must be gated on real liveness, or it hides a wedged process.
 29. Timestamps can be right while content is wrong. Only a cross-feed content comparison catches it, and the clips
     must overlap. A feed off by itself (about 1 s, no overlapping partner) is not caught at all; that is what
-    Disable is for.
+    Disable is for. (Corrected in 1.0.5-3: the cross-feed comparison falsely blocked a good backup and was
+    removed; coax detects no sound-off-picture at all. Disable is the only answer.)
 30. On HLS, check backups before switching; never show a known-bad stream; never promote an unchecked stream.
+    (Since 1.0.5-3 "check" means confirm the backup answers; there is no sound or picture check.)
 31. A test that blocks a stream looks exactly like a real fault; one failure must not block.
 32. Act only on real trouble; move once; never rubber-band.
 33. Restarting an encoder at a switch or refill must wait for a keyframe and correct the audio lead.
@@ -822,7 +929,8 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 56. An ended playlist after proxy errors is usually a hiccup; wait on the reserve, and only a full minute of
     it counts as an offline placeholder.
 57. A content check must say "no verdict" when the match is not clear. One noisy reading must never block.
-    Align sound by fingerprint first, then search the picture only near it.
+    Align sound by fingerprint first, then search the picture only near it. (Withdrawn in 1.0.5-3: the check
+    was removed; see lesson 64.)
 58. Checks decide in seconds at tune time; no multi-minute measurement runs.
 
 ### Feed vs coax (1.0.5)
@@ -833,6 +941,16 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 62. Single-feed desync detection without ML was not reliable (+/-3 s noise); the answer is manual Switch and
     Disable, not another heuristic.
 63. Check that the object you call a method on actually has it (`Hub._kill` did not exist).
+
+### Checks, cards and docs (1.0.5-3, 1.0.5-4)
+64. A comparison is only as good as its reference. Against the failing stream it judges the wrong stream, and a
+    second reading against the same reference is not independent. A check that cannot tell good feeds from bad
+    is removed, not tuned.
+65. Never build a Status or card change after only a syntax check; run the changed function against the live
+    config or a test that exercises it.
+66. Never let a broad `except` silently return empty data; log it. Never reuse a variable for a different value.
+67. When the owner points at one README row, verify the whole section against the code before calling it fixed.
+68. Run monitors on the host next to coax, not across the network.
 
 ---
 
@@ -856,7 +974,8 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
   joining device; keepalive after 2 s (HLS) / 3 s (TS); frozen 25 s; no video 90 s; backoff to 15 s; line cooldown
   5 s; refill 3% below half reserve for 75 s (HLS) / 60 s (TS), until three quarters; A/V timestamp hold 3 s;
   content sync verdict at 2 s; Smart Standby blocks 12 h / 24 h / 3 days (desync 24 h / 3 days); proven after a
-  passed check or 10 clean minutes; recording extension delay + 45 s, max 3 min.
+  passed check or 10 clean minutes; recording extension delay + 45 s, max 3 min. (Since 1.0.5-3: no sync
+  verdict and no desync blocks; proven means 10 clean minutes.)
 - **coax ffmpeg (1.0.5):** input `-dts_delta_threshold 86400 -fflags +discardcorrupt -probesize 1000000
   -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s); passthrough `-i pipe:0 -map 0:v? -map 0:a?
   -c copy -copyts`; transcode `-drop_changed:a 1 -i pipe:0 -map 0:v:0? -map 0:a:0?`, audio
@@ -866,7 +985,7 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
   -muxpreload 0`; removed.)
 - **Ended playlist (HLS):** wait while reserve above 15 s and not stalled; offline placeholder (blocks) only
   after 60 s.
-- **Sync check (1.0.4):** chromaprint raw, `HOP = 4096/3/11025` s, sound bit error <= 0.30 with runner-up
+- **Sync check (1.0.4, removed in 1.0.5-3):** chromaprint raw, `HOP = 4096/3/11025` s, sound bit error <= 0.30 with runner-up
   margin >= 0.08; picture within `PICWIN = 40` s, correlation >= 0.45 with margin >= 0.15; `MAXLAG` 90 s,
   `MIN_OVERLAP` 12 s, out of sync at 2 s. HE-AAC backup: -0.1 s in 3.7 s (picture 0.93 vs 0.37, sound bit
   error 0.09). Old envelope method: noise readings 65.9 s, -50 s, +63 s.
@@ -883,6 +1002,13 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 - **Comedy Central:** HE-AAC backup `2151800` (about 1 s off at the provider), disabled.
 - **Single-feed detection (onset correlation):** +/-3 s noise on in-sync channels over 20 s windows; not
   shipped.
+- **False block that ended the sync check (1.0.5-3):** main stalled (playlist stale, reserve empty, 36 s no
+  video); the new stream read 12.4 s off against the failing stream's last minute; it played in sync.
+- **Failover thresholds (README table, checked against both engines):** ended playlist placeholder after 60 s
+  (HLS); `black.*` redirect blocks at once (TS); no new video 60 s, sooner near an empty reserve (HLS about
+  three segments, TS about 8 s); A/V timestamps over 3 s apart (HLS up to 30 s before switching, TS passed over
+  at connect); slow feed HLS below 0.75x, TS below 0.85x, 5 minutes.
+- **Tests:** 284 after 1.0.5-4.
 
 ---
 
@@ -892,7 +1018,8 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
   tests).
 - Auto-match does not search by call sign when the call sign is only in parentheses in the name (out-of-market
   locals such as KSHB): name cleanup strips it.
-- The MPEG-TS content sync check only has a verdict when the old and new clips overlap.
+- (Closed in 1.0.5-3.) The MPEG-TS content sync check only had a verdict when the clips overlapped; the check
+  was removed in both engines.
 - Two Channels DVR clients on the same coax channel use two provider slots (ah4c model).
 - The transcode audio filter (now `aresample=async=1:min_hard_comp=0.1` with `-drop_changed:a 1` and the
   silent-audio guard) has not had a 10+ minute live watch on a healthy HE-AAC feed yet.
@@ -902,7 +1029,10 @@ Morning of 2026-10-28 (EDT). This section corrects 4.6.2: the 1.0.4 "HE-AAC fix"
 - A health check at tune time, every ~30 minutes and on failover was discussed and deferred (not built).
 - (Closed in 1.0.5.) "Which of the two HE-AAC settings did the work": neither did; the feed was bad at the
   provider, and both settings were removed.
-- No automatic detection of a single feed whose sound is off its picture; handled by hand with Disable.
+- No automatic detection of a feed whose sound is off its picture (single or cross-feed, since 1.0.5-3);
+  handled by hand with Disable. This is a decision, not a gap to fill.
+- `desync` entries in `feedhealth` `TEXT`/`RANK_W` and `verified()` have no producer; harmless, could be
+  cleaned up.
 
 ---
 
@@ -2448,15 +2578,15 @@ Times are UTC as logged (EDT = UTC-4). Hosts: Gemini (dev box, repo at `~/src/co
 - 23:28 README First run step 8 now describes one-click Add to Channels DVR and auto-sync, commit `8bb896d`.
 - 23:42 **1.0.1-2**, digest `sha256:7de4fa40…` (246 tests): daily cleanup at startup and every 24 h (tmp engine state not written 24 h, temp and recording-job files older than 24 h, caches for deleted providers/sources/lineups older than a day, history of deleted channels, history and Gracenote indexes older than 30 days). README transcoding rewrite ("Turn transcoding on", `1080p60` recommended, `off` default) and full "Why 3%" restored, commits `5cfffa5`, `ca10408`. Cleanup README section `5381a5c`. Keyframe wording fix `69a61ad`.
 - 00:12 **1.0.1-3**, commit `490af9a`: backup switch with transcoding restarts encoder like a refill (drop until first keyframe, correct audio lead). Did not fix Bravo (cause was content desync in the feed).
-- 01:12 **1.0.2**, commit `41f1e49` (253 tests): content-based A/V sync check after switches (HLS), 35 s reference vs 35 s new, low-priority comparer; 2 s or more off means leave, 24 h block, removal from channel list, bell. Feed health in `data/cache/feedhealth.json` (24 h, half-hour bucketing; remove backup after 6 bad half hours etc.; promote after main failed 3 half hours). Bell in sidebar, `data/notifications.json`, `/api/notifications`.
+- 01:12 **1.0.2**, commit `41f1e49` (253 tests): content-based A/V sync check after switches (HLS), 35 s reference vs 35 s new, low-priority comparer; 2 s or more off means leave, 24 h block, removal from channel list, bell (sync check removed in 1.0.5-3). Feed health in `data/cache/feedhealth.json` (24 h, half-hour bucketing; remove backup after 6 bad half hours etc.; promote after main failed 3 half hours). Bell in sidebar, `data/notifications.json`, `/api/notifications`.
 - 01:25 **1.0.2-1**: HLS engine writes live reserve to its per-second state file so the Status pill shows reserve immediately.
 - 01:36 **1.0.2-3**, commit `bf1925f` (257 tests): weighted strikes (sync 10; dead/slate/novideo 3; frozen/AV timestamps 2; stall/dropped video 1), half-life 6 h, immediate demotion, channel notes. (No 1.0.2-2 mentioned.)
 - 01:53 **1.0.2-4**, commit `21de231` (257 tests, 11 new): absorbed problems ignored; block 12 h then 24 h then 3 days (sync 24 h then 3 days); no deletion; one-time reorder, no rubber-banding; bell only.
 - 02:06 **1.0.2-5**, commit `59be5dd` (260 tests): only a checked stream (passed sync or 10 clean minutes) can become main; fetch new stream's previous 35 s for overlap; dead-while-others-work block only after 3 times in 6 h; bell X and Clear all.
-- 02:24 **1.0.2-6**, commit `36c5423` (261 tests): at first real trouble (repeated playlist errors, stale playlist, empty reserve) check all other streams before switching; in sync first, out of sync blocked 24 h, not answering skipped; stay on current up to 2 min rather than switch to a bad one. Simulation: backup 2 in sync (15 s), backup 3 10.4 s off (9 s), total 28 s.
+- 02:24 **1.0.2-6**, commit `36c5423` (261 tests): at first real trouble (repeated playlist errors, stale playlist, empty reserve) check all other streams before switching; in sync first, out of sync blocked 24 h, not answering skipped; stay on current up to 2 min rather than switch to a bad one (removed in 1.0.5-3). Simulation: backup 2 in sync (15 s), backup 3 10.4 s off (9 s), total 28 s.
 - 02:30 **1.0.2-7**, commit `ee7fe29` (266 tests): stable stream after trouble moves ahead in saved order and stays.
 - 02:31 README "Smart Standby" section, commit `bc8d98f`; HLS vs TS table rows.
-- 02:46 **1.0.2-8**, commit `e81ab17`, run 40622665032: failover ordered by score in both engines (sync worst, blocked last); TS switch-and-watch check. README `0936af0` with TS caveat (backup 3 no verdict, ~35 min apart in live position). HLS warning box near top, commit `b796fc4` ("source" wording).
+- 02:46 **1.0.2-8**, commit `e81ab17`, run 40622665032: failover ordered by score in both engines (sync worst, blocked last); TS switch-and-watch check (removed in 1.0.5-3). README `0936af0` with TS caveat (backup 3 no verdict, ~35 min apart in live position). HLS warning box near top, commit `b796fc4` ("source" wording).
 - 02:55 Live Bravo test passed on 1.0.2-8: main blocked 10:53:28 PM EDT; backup 2 in sync 10:53:50; backup 3 11.6 s ahead blocked 24 h at 10:53:56 without switching; switched to backup 2 at 10:54:27 and promoted.
 - 02:59 **1.0.2-9**, commit `ebd112f` (269 tests), run 40623906122: timeline drops "Transcoding with…" line and keepalive gaps in first 15 s after engine start. Changelog `coax-1.0.2-changelog.md` on Artemis Desktop, indented one level under "**coax 1.0.2** (October 27, 2026)".
 - 03:30 **1.0.3**, commit `f577f5a` (273 tests): 4 backend + 9 UI bug fixes (section 3), bell wording rewritten with provider name.
@@ -2475,7 +2605,7 @@ Times are UTC as logged (EDT = UTC-4). Hosts: Gemini (dev box, repo at `~/src/co
 - Region setting only for Gracenote; backups restricted to selected groups (not country prefixes).
 - Startup time limit / give up on dead channels rejected by owner; instead retry forever (IBO Player model).
 - Smart Standby final model: owner picks streams, coax picks order; only act on real visible trouble; absorbed stalls ignored; block for long periods, never delete; promote only proven streams; move once, no rubber-banding; bell only; one scored loop for HLS (check before switch, unseen) and TS (switch and watch, seen briefly).
-- Single-feed content desync detection judged infeasible (only lip-sync models like SyncNet); reference from the last good stream used instead. Timestamp desync is already detected per feed.
+- Single-feed content desync detection judged infeasible (only lip-sync models like SyncNet); reference from the last good stream used instead (that reference falsely blocked a good backup; removed in 1.0.5-3, A.11). Timestamp desync is already detected per feed.
 - Third unconfirmed issue (gap in reference clip) left unfixed after test showed it fails safe (no verdict).
 - Engine memory measured 78 MB live (CNN), so no change.
 - 1.0.1-x numbering for hotfixes to keep 1.0.1 tag intact; 1.0.2 for significant change.
@@ -2565,7 +2695,7 @@ Times are UTC as logged (EDT = UTC-4). Hosts: Gemini (dev box, repo at `~/src/co
 - Agents drop owner requirements (latest tag, wg0.conf, README omissions); verify agent output against owner instructions.
 - Read-only list requests must not reserve resources (backup_urls 503 bug).
 - Hardware acceleration must cover decode, deinterlace, scale, not just encode.
-- Content A/V desync is invisible to timestamps; needs a reference from a trusted stream covering the same moments.
+- Content A/V desync is invisible to timestamps; needs a reference from a trusted stream covering the same moments. (Corrected in 1.0.5-3: the reference can itself be the failing stream; coax no longer checks.)
 - Test-induced failures (firewall blocks) look like real stream faults; only proven streams may be promoted.
 - Check before switch on HLS; reference windows must overlap; store measurements.
 - Server validation must ignore unknown fields rather than reject a whole save.
@@ -2639,7 +2769,7 @@ Times are EDT, evening of 10-27 into the morning of 10-28. Summary in section 4.
 - An ended playlist is not an offline placeholder until it has lasted 60 s; while the reserve is above 15 s the
   engine stays on the stream.
 - The sync check must give no verdict on unclear matches; a verdict needs a clear sound fingerprint match and a
-  clear picture match near it.
+  clear picture match near it. (The check was removed in 1.0.5-3. See A.11.)
 - No long measurement runs: checks decide in seconds at tune time.
 - A periodic health check (tune time, every ~30 min, on failover) was discussed and deferred.
 
@@ -2699,7 +2829,7 @@ Times are EDT, morning of 10-28. Summary in section 4.7.
 
 #### 1) Timeline of work
 - 05:31 `84e6422` docs for 1.0.4. 06:14 `2e048cf` credentials masked in all logs; From provider format line.
-- 06:22 `2f6c483` **1.0.4-1** (sync sign, second reading, tsloop short connections, hub restarts never block,
+- 06:22 `2f6c483` **1.0.4-1** (sync sign, second reading (not independent; removed in 1.0.5-3), tsloop short connections, hub restarts never block,
   line move keeps the stream). 06:24 `70342c4` corrections list scroll and full list.
 - 06:39 `685c6bf` **1.0.4-2** (`tsfix.py` restart timestamp shift). 06:52 `887227c` **1.0.4-3** (`kstart.py`
   keyframe start), reverted in `463776d`. 06:59 `6bbbf23` **1.0.4-4** (default mux delay, keyframe start
@@ -2742,3 +2872,58 @@ Times are EDT, morning of 10-28. Summary in section 4.7.
   provider.
 - Onset correlation: +/-3 s noise on in-sync channels, 20 s windows.
 - Tests: 282.
+
+### A.11 Oct 28: 1.0.5-3 and 1.0.5-4 (sync check removed, Blocked pill, stream ids in logs, README table)
+
+Times are EDT, 10-28. Summary in section 4.8.
+
+#### 1) Timeline of work
+- 09:39 a good backup was blocked as out of sync (12.4 s) after the main stream stalled (playlist stale, reserve
+  empty, 36 s no video); the check compared it with the failing stream's last minute. The owner switched to it
+  by hand: in sync.
+- Research (web): a multi-second offset on one channel that also shows in VLC is the provider's stream; reports
+  last days; providers fix it when told; a proxy can also cause it, so test in VLC first.
+- 14:14 `8a7a108` **1.0.5-3**: sync check removed from both engines and the hub, `avcheck.py` deleted; Blocked
+  pill with time left, reason and click to unblock; `Hub._label` names streams by id in logs and the timeline.
+- 14:19 `e4ad4ee` README: Smart Standby rewritten, Blocked pill, disable out-of-sync feeds by hand.
+- 14:22 `74f49b3` README: failover table, first correction (ended playlist, TS short connections, sound off
+  picture not detected).
+- 14:25 `2bc9caa` **1.0.5-4**: tune card stream list back (`info` overwritten by `block_info`); `log.exception`;
+  `FeedsViewTest`. Run in the live container against the real config before the build.
+- 14:29 `f382327` README: every row of the failover table checked against both engines (A/V timestamp row,
+  slow-feed thresholds per format, early switch near an empty reserve).
+- Overnight: read-only `coaxmon` container on Apollo polling `/api/status` every 30 s for 10 h.
+
+#### 2) Decisions and why
+- No sound-against-picture detection at all: no method separated good feeds from bad, and the two-feed method
+  judged against a failing reference. Switch and Disable by hand.
+- Keep blocking only for the offline placeholder (instant) and confirmed repeated `dead`; `frozen`/`novideo`
+  rank only.
+- Name streams by id everywhere the owner reads them; engine list positions mean nothing to him.
+- Leave the unused `desync` entries in `feedhealth` (no producer, harmless).
+
+#### 3) Failures, bugs and wrong turns
+- The second agreeing reading (1.0.4-1) shared the bad reference clip, so it confirmed a false reading.
+- 1.0.5-3 shipped with `_feeds_view` overwriting `info`; the broad `except` hid it and the card was empty.
+  Built after only a syntax check.
+- The first README table fix changed one word and was presented as fixed; the owner called it dishonest.
+- A monitor on Gemini got "No route to host" to Apollo while curl worked.
+
+#### 4) Owner rules and preferences
+- Out-of-sync feeds are disabled by hand; coax should not guess.
+- When he points at a README row, check the whole section against the code.
+- Never put real stream ids in the README.
+
+#### 5) Lessons learned / never repeat
+- A second reading against the same reference is not independent.
+- Run a changed card or Status function against the live config or a test before building.
+- Never let a broad `except` return empty data silently.
+- Verify every row, not the one pointed at.
+- Run monitors next to coax.
+
+#### 6) Measurements and facts
+- False reading: 12.4 s off after 36 s with no video on the failing main stream.
+- Removed: `avcheck.py` (140 lines); 1.0.5-3 net about 400 lines fewer.
+- Blocked pill text: `Blocked · <h>h <m>m`; endpoint `POST /api/channels/<id>/unblock`.
+- Tests: 284 (FeedsViewTest added in 1.0.5-4).
+- Disabled by the owner: Comedy Central backup `2151800`.
