@@ -604,6 +604,16 @@ def synccheck(old, new, u):
             f.write(new)
         c_ = sp.run(["nice", "-n", "10", sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "avcheck.py"), a_, b_, FF], capture_output=True, text=True, timeout=240)
         r_ = json.loads(c_.stdout or "{}")
+        o1 = r_.get("offset")
+        if o1 is not None and abs(o1) >= 2.0:
+            # One reading never blocks a stream: the later half of the new clip must give the same answer.
+            h_ = len(new) // 2 // 188 * 188
+            with open(b_, "wb") as f:
+                f.write(new[h_:])
+            c2 = sp.run(c_.args, capture_output=True, text=True, timeout=240)
+            o2 = json.loads(c2.stdout or "{}").get("offset")
+            if o2 is None or (o2 < 0) != (o1 < 0) or abs(o2 - o1) > 1.5:
+                r_ = {"offset": None, "why": "a second reading did not agree (%.1fs, then %s)" % (o1, "none" if o2 is None else "%.1fs" % o2)}
     except Exception as x:
         log("sync check: could not compare (%s)" % x)
         return
@@ -1520,10 +1530,10 @@ while not gone():
             short += 1
         else:
             short = 0
-        if short >= 3:
+        if short >= 3 and Qs[0] + max(wlead, 0.0) <= 15:
             short = 0
             ph += 1
-            handoff("stream keeps ending after a few seconds (offline placeholder?)")
+            handoff("stream keeps ending after a few seconds and the reserve ran low")
             dl_ = 5 if stalled else 0
             rb = mono() + dl_
             time.sleep(dl_)
@@ -1558,6 +1568,7 @@ while not gone():
                 e0 = None
                 continue
         err += 1
+        short = 0
         rs = getattr(e, "response", None)
         c = getattr(rs, "status_code", 0)
         ra = rs.headers.get("Retry-After", "") if rs is not None else ""

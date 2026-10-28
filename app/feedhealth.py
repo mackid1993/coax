@@ -154,10 +154,9 @@ class FeedHealth:
             rec["ev"].append([now, kind])
             if kind in INSTANT:
                 self._block(ch, key, kind, detail, now)
-            elif kind in REPEATED:
-                n = sum(1 for t, k in rec["ev"] if k in REPEATED and now - t < REPEAT_WINDOW)
-                if n >= REPEAT_COUNT:
-                    self._block(ch, key, kind, detail, now)
+            # REPEATED kinds (frozen, novideo) are recorded for ranking only. They come from the hub's own
+            # retunes, which also happen when every stream is down, so they never block a stream on their own;
+            # a stream that dies while another takes over is blocked through switched() instead.
             self._persist(now)
 
     def switched(self, ch, old, new, now=None):

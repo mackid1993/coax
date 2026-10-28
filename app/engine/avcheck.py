@@ -119,12 +119,12 @@ def offset(ref_path, cand_path, ff="ffmpeg"):
         out["why"] = "sound does not match clearly"
         out["sound"] = (None, round(err, 2), round(err2, 2))
         return out
-    snd = (ca - ra) - t
+    snd = (ca - ra) + t
     # Then the picture, searched only near where the sound says the program is, so an unrelated scene that
     # happens to look alike far away cannot win.
-    exp = int(round((t - (ca - ra) + (cv - rv)) * RATE))   # picture lag that would mean "in sync"
+    exp = int(round((t + (ca - ra) - (cv - rv)) * RATE))   # picture lag that would mean "in sync"
     kv, pv, sv, nv = _xcorr(_picture(ff, ref_path), _picture(ff, cand_path), int(PICWIN * RATE), exp)
-    pic = (cv - rv) - kv / RATE   # how much later the cand picture is stamped for the same content
+    pic = (cv - rv) + kv / RATE   # how much later the cand picture is stamped for the same content
     out.update(picture=(round(pic, 2), round(pv, 2), round(sv, 2)), sound=(round(snd, 2), round(err, 2), round(err2, 2)),
                overlap=round(nv / RATE, 1))
     if pv < 0.45 or pv - sv < 0.15:

@@ -699,6 +699,16 @@ def avcmp(old, new):
             f.write(new)
         c_ = sp.run(["nice", "-n", "10", sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "avcheck.py"), a_, b_, FF], capture_output=True, text=True, timeout=240)
         r_ = json.loads(c_.stdout or "{}")
+        o1 = r_.get("offset")
+        if o1 is not None and abs(o1) >= 2.0:
+            # One reading never blocks a stream: the later half of the new clip must give the same answer.
+            h_ = len(new) // 2 // 188 * 188
+            with open(b_, "wb") as f:
+                f.write(new[h_:])
+            c2 = sp.run(c_.args, capture_output=True, text=True, timeout=240)
+            o2 = json.loads(c2.stdout or "{}").get("offset")
+            if o2 is None or (o2 < 0) != (o1 < 0) or abs(o2 - o1) > 1.5:
+                r_ = {"offset": None, "why": "a second reading did not agree (%.1fs, then %s)" % (o1, "none" if o2 is None else "%.1fs" % o2)}
     except Exception as x:
         log("sync check: could not compare (%s)" % x)
         return None

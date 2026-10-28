@@ -104,12 +104,14 @@ class FeedHealthTest(unittest.TestCase):
         self.assertEqual(ids(st), ["main", "b2"])
         self.assertFalse(h.is_blocked(5, K("main"), now=4000))
 
-    def test_frozen_three_times_in_an_hour_blocks(self):
+    def test_hub_restarts_alone_never_block(self):
+        # Freezes come from the hub's own retunes, which also happen when every stream is down.
         st, h = self.make("main", "b2")
         h.good(5, K("b2"), 30, now=500)
         for i in range(3):
             h.problem(5, K("main"), "frozen", now=1000 + i * 600)
-        self.assertEqual(ids(st), ["b2", "main"])
+        self.assertEqual(ids(st), ["main", "b2"])
+        self.assertFalse(h.is_blocked(5, K("main"), now=3000))
 
     def test_repeat_offender_block_grows(self):
         st, h = self.make("main", "b2")

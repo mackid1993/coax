@@ -684,7 +684,8 @@ class Hub:
             old_line = (session.line_id, session.line_name)
             session.line_id, session.line_name = new.get("id"), new.get("name") or new.get("id")
         try:
-            url = self._stream_url(provider, new, session.stream_id)
+            sid_ = session.cur_key[1] if session.cur_key and session.cur_key[0] == session.provider_id else session.stream_id
+            url = self._stream_url(provider, new, sid_)
         except Exception:  # noqa: BLE001
             url = None
         if not url:
@@ -694,14 +695,13 @@ class Hub:
                 self._hold_locked(session, old)
             return False
         session.url = url
-        self._remember(url, session.provider_id, session.line_id, session.stream_id)
-        # The new engine starts on the session's own stream; any backup it had switched to is gone.
+        self._remember(url, session.provider_id, session.line_id, sid_)
+        # The new engine starts on the stream that was playing, so a move to another line never rubber-bands.
         with self._lock:
             for key in list(session.extra_slots):
                 self._drop_locked(session, key)
             session.extra_slots = []
-        session.cur_key = (session.provider_id, session.stream_id)
-        session.stream_no = 1
+        session.cur_key = (session.provider_id, sid_)
         return True
 
     def _history(self, session, line):

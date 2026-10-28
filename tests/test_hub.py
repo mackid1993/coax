@@ -461,7 +461,7 @@ class FrozenFeedBlockedEndToEnd(unittest.TestCase):
     and on the third within an hour the stream is blocked, the proven backup becomes main, and the bell
     says so. Fake engine, temp folder, no provider."""
 
-    def test_three_freezes_block_main_and_promote_backup(self):
+    def test_three_freezes_do_not_block_main(self):
         import copy
         import tempfile
         from app import feedhealth as fh
@@ -503,12 +503,10 @@ class FrozenFeedBlockedEndToEnd(unittest.TestCase):
         r = Reader(s)
         r.start()
         order = lambda: [x["stream_id"] for x in cfg["channels"][0]["streams"]]
-        self.assertTrue(wait_for(lambda: order() == ["b2", "main"], 30), "order is %s" % order())
-        self.assertTrue(health.is_blocked(1, ("p1", "main"), now=clock[0]))
-        self.assertFalse(health.is_blocked(1, ("p1", "b2"), now=clock[0]))
-        self.assertGreaterEqual(eng.count(), 3)
-        texts = [n["text"] for n in health.list()["items"]]
-        self.assertTrue(any("main" in t and "Blocked" in t for t in texts), texts)
+        # Hub restarts are recovery attempts: they never block or reorder on their own.
+        self.assertTrue(wait_for(lambda: eng.count() >= 3, 30))
+        self.assertEqual(order(), ["main", "b2"])
+        self.assertFalse(health.is_blocked(1, ("p1", "main"), now=clock[0]))
         s.close()
 
 
