@@ -195,6 +195,11 @@ class BasicRoutes(ApiTestCase):
         status, body, _ = self.request("DELETE", "/api/config")
         self.assertEqual(status, 405)
 
+    def test_version_is_the_stamped_one(self):
+        import app
+        status, body, _ = self.request("GET", "/api/version")
+        self.assertEqual((status, body), (200, {"version": app.VERSION}))
+
     def test_static_files(self):
         web = servermod.WEB_DIR
         created = []

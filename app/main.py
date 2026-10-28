@@ -51,6 +51,11 @@ def setup_logging():
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
+def app_version():
+    from app import VERSION
+    return VERSION
+
+
 def start_hub(store):
     try:
         hub_module = importlib.import_module("app.hub")
@@ -155,7 +160,7 @@ def main(argv=None):
     signal.signal(signal.SIGINT, stop)
 
     start_scheduler(store, app.on_refresh)
-    log.info("coax listening on port %d (config %s)", port, path)
+    log.info("coax %s listening on port %d (config %s)", app_version(), port, path)
     try:
         httpd.serve_forever(poll_interval=0.5)
     finally:

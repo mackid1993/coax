@@ -177,6 +177,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .nav .nav-badge { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-3); }
 .nav a[aria-current="page"] .nav-badge { color: var(--accent); }
 .sidebar-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 6px 0; border-top: 1px solid var(--border); }
+.build-ver { padding: 8px 6px 0; font-size: 11px; color: var(--text-3); text-align: center; letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.build-ver:empty { display: none; }
 .pulse-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
 .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); box-shadow: 0 0 0 0 transparent; }
 .pulse-row.ok .pulse-dot { background: var(--ok); animation: pulse 2.4s infinite; }
@@ -603,6 +605,7 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
   .brand .brand-icon { display: block; height: 38px; }
   .nav a { justify-content: center; padding: 11px; }
   .sidebar-foot { flex-direction: column; }
+  .build-ver { font-size: 9.5px; padding: 6px 0 0; }
   .main { padding: 22px 20px 56px; }
   .grid-2, .form-grid { grid-template-columns: 1fr; }
   .line-row, .line-row.m3u { grid-template-columns: 1fr 1fr; }

@@ -576,6 +576,7 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/lineups/([A-Za-z0-9_-]+)/dvr/sync", "h_lineup_dvr_sync"),
         ("GET", r"/api/status", "h_status"),
         ("GET", r"/api/network", "h_network"),
+        ("GET", r"/api/version", "h_version"),
         ("GET", r"/api/notifications", "h_notes"),
         ("POST", r"/api/notifications/read", "h_notes_read"),
         ("POST", r"/api/notifications/clear", "h_notes_clear"),
@@ -1952,6 +1953,10 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(409, str(exc))
         except KeyError:
             raise not_found("nothing to undo for notification %s" % note_id)
+
+    def h_version(self):
+        from app import VERSION
+        return {"version": VERSION}
 
     def h_network(self):
         fresh = self.query.get("refresh") in ("1", "true")

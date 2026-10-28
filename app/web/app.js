@@ -153,6 +153,12 @@ export async function refreshNetwork(fresh = false) {
   }
 }
 $("#netPill").addEventListener("click", () => refreshNetwork(true).catch(() => {}));
+
+// ---------- Version (stamped into each build by scripts/stamp-version.sh) ----------
+api.version().then((v) => {
+  const el = $("#buildVer");
+  if (v?.version) { el.textContent = `v${v.version}`; el.title = `coax ${v.version}`; }
+}).catch(() => {});
 refreshNetwork().catch(() => {});
 setInterval(() => refreshNetwork().catch(() => {}), 300000);
 

@@ -76,6 +76,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # The version shown in the web UI (and logged at start): the version input, else <tag>-<commit>.
+      - name: Stamp the version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          v="${VERSION#v}"
+          [ -n "$v" ] || v="${TAG:-dev}-$(git rev-parse --short HEAD)"
+          scripts/stamp-version.sh "$v"
+          echo "Stamped version: $v" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -104,6 +117,7 @@ jobs:
           curl -fsS http://127.0.0.1:7780/healthz
           curl -fsS http://127.0.0.1:7780/ | grep -qi "coax"
           curl -fsS http://127.0.0.1:7780/api/config >/dev/null
+          curl -fsS http://127.0.0.1:7780/api/version | grep -qF "\"$(cat app/VERSION)\""
           docker exec coax ffmpeg -hide_banner -encoders | grep -E "h264_(vaapi|nvenc)"
           docker exec coax python -c "import cryptography, requests; print('python deps ok')"
           test -f data/config.json

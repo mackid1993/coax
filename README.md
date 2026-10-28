@@ -1072,6 +1072,7 @@ coax is meant to be frozen. Updating is a deliberate step:
 3. On `TAG=latest`, just pull. If you froze a version, change `TAG` in `.env`, for example
    `1.0.3` to `1.1.0`.
 4. `docker compose pull && docker compose up -d` (add `-f docker-compose.vpn.yml` for the VPN setup).
+5. Check the version at the bottom of the sidebar in the web UI (or the first lines of `docker logs coax`).
 
 Gluetun is deliberately not pinned: it is your VPN and firewall, so `docker compose pull` keeps its security fixes current.
 
@@ -1188,9 +1189,13 @@ Common lines:
 ## Building from source
 
 ```sh
-docker build -t coax:local .
+scripts/build-image.sh 1.0.6-1       # stamps the version and builds coax:1.0.6-1
 python -m unittest discover tests    # tests run on Python 3.11 or newer
 ```
+
+`scripts/stamp-version.sh <version>` writes the version into `app/VERSION`; `scripts/build-image.sh` runs it
+and then `docker build`. Without a version it stamps `dev-<commit>`, and a plain `docker build` without a stamp
+shows `dev`. The version appears at the bottom of the sidebar in the web UI and in the first log lines.
 
 Every build input is pinned: the `python:3.13-slim-trixie` base image by digest, Debian packages from a fixed
 [snapshot.debian.org](https://snapshot.debian.org/) date (`DEBIAN_SNAPSHOT` in the Dockerfile), Python
