@@ -23,8 +23,8 @@ Everything you set lives in one folder, `./data`.
 > [!IMPORTANT]
 > **coax is built for HLS. Use a source that offers HLS.** Most of what keeps playback smooth depends on it:
 > refetching missed video, a full one-minute reserve, and [Smart Standby](#smart-standby) checking every backup
-> before switching so a bad one is never shown. coax supports MPEG-TS and every effort has been made to make it
-> work well, but on TS these recovery features are heavily reduced: the reserve is about 20 seconds, video lost
+> before switching so a bad one it detects is never shown. coax supports MPEG-TS and every effort has been
+> made to make it work well, but on TS these recovery features are heavily reduced: the reserve is about 20 seconds, video lost
 > in an outage is gone, and a bad backup can only be judged after viewers have seen it. If your source only
 > offers MPEG-TS, you are better off finding one that offers HLS than relying on coax to make up for it. See
 > [HLS or MPEG-TS](#hls-or-mpeg-ts) for the full comparison.
@@ -69,7 +69,7 @@ Channel names, providers and logos below are made up for the demo.
   suggested matches (same name, call sign, or provider guide ID).
 - **Tuner sharing**: a second viewer of the same channel shares the running stream and uses no extra line.
 - **Smart Standby**: at the first real trouble coax checks every backup by picture and sound before switching,
-  never switches to a bad one, blocks bad streams for a while (never deletes them), and moves the stream that
+  never switches to one it finds bad, blocks bad streams for a while (never deletes them), and moves the stream that
   proves stable to the top of the channel. Changes appear under the bell with Undo. See [Smart Standby](#smart-standby).
 - **Never gives up on a stream.** While Channels DVR is connected, coax keeps recovering: a frozen engine is
   restarted, a stream with no video is retuned (alternating to another free line of the provider when there is one),
@@ -83,7 +83,8 @@ Channel names, providers and logos below are made up for the demo.
 - **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
   (VAAPI), NVIDIA (NVENC), or the CPU.
 - **Optional VPN** for all provider traffic using Gluetun.
-- A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log.
+- A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
+  channel lists all its streams, with **Switch** to move to another one now and **Disable** to stop using one.
 
 **User agent.** coax always identifies itself to providers as `TiviMate/5.1.6 (Android 12)`. This is
 hard-coded and the same for every provider; it is not a setting.
@@ -634,6 +635,18 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
 
 The *Status* page shows live sessions, viewers, which line each channel holds, refresh results, and the log.
 
+Each playing channel's card lists every stream of the channel in its saved order, with its name, provider,
+group and stream id (hover a cut-off name to see it in full). The stream playing is marked *Playing now*;
+*Blocked* means Smart Standby is resting it, and *Disabled* means you turned it off.
+
+- **Switch** moves playback to that stream right away.
+- **Disable** turns a stream off without removing it: it stays listed (dimmed), but coax never tunes it, never
+  uses it as a backup and never moves it up. Disabling the stream that is playing moves the channel to the
+  next enabled stream at once. Untick it to use the stream again. One stream of each channel always stays
+  enabled. The same checkbox is in the channel's stream editor on the *Channels* page.
+
+Use these when a stream is bad in a way coax cannot see, for example sound slightly off the picture.
+
 ## Settings reference
 
 | Setting | What it does |
@@ -688,8 +701,9 @@ last resort.
 | Far slower than real time (below 0.75x) for 5 minutes | Switches to the next stream. A merely slow feed never triggers a switch. |
 | No backup on the channel | Keeps retrying the same feed until the provider comes back. |
 
-- **Order.** Backups are tried in the order the channel's streams are saved on the *Channels* page. A stream
-  that failed recently, on any channel, is tried last, both for a new tune and for failover. A failed feed
+- **Order.** Backups are tried in the order the channel's streams are saved on the *Channels* page.
+  Disabled streams are skipped. A stream that failed recently, on any channel, is tried last, both for a new
+  tune and for failover. A failed feed
   is left alone for 1, 2, 4, 8, then 10 minutes, so a channel whose feeds are all down waits instead of
   hopping between dead feeds.
 - **Before switching,** coax checks that the backup answers with a real stream, not the placeholder. Once on
@@ -788,7 +802,7 @@ one, and falls back to it only after 2 minutes with nothing else to play.
 | Sound off its picture | At once: 24 hours, then 3 days |
 | Offline slate from the provider instead of the channel | At once: 12 hours, then 24 hours, then 3 days |
 | It stopped working while another stream of the channel worked | The 3rd time within 6 hours: same ladder |
-| coax had to restart or retune it (frozen, or no video for 90 seconds) | The 3rd time within an hour: same ladder |
+| coax had to restart or retune it (frozen, or no video for 90 seconds) | Never on its own; it only lowers the stream's score |
 
 The ladder climbs when a stream keeps causing trouble within a week. A stream that stops working while every
 other stream of the channel is down too is not blocked, since that is the provider or the network. If every
@@ -809,6 +823,10 @@ never changed.
 
 **After a switch** the same check runs on a stream that had not been checked yet, comparing it with the end of
 the stream it replaced, so a bad stream that slipped through is caught within seconds and left.
+
+**What the check cannot see.** It compares two streams showing the same moments. A stream whose sound is off
+on its own, by less than about 2 seconds or with no other stream to compare against, is not caught. Use
+**Disable** on the Status page for it (see [First run](#first-run)).
 
 **On MPEG-TS** a stream cannot be looked at without playing it, so coax switches to the best-ranked backup and
 watches it: its first 25 seconds are compared, by picture and sound, with the end of the stream it left. If its
@@ -842,7 +860,7 @@ coax reads from the provider differs.
 | Delay behind live | about 60 s | about 20 s |
 | Recording extension past the scheduled end | about 105 s | about 65 to 80 s |
 | [Smart Standby](#smart-standby): backups checked before a switch | Yes: every backup is checked by picture and sound before coax switches, so it never switches to a bad one | No: coax switches to the best-ranked backup, checks it while it plays, and moves on if it is bad |
-| Smart Standby: sound off its picture | Caught before the switch; never shown | Usually caught after the switch and left within about half a minute; seen briefly. Missed when the clips do not line up |
+| Smart Standby: sound off its picture | Caught before the switch when another stream shows the same moments | Usually caught after the switch and left within about half a minute; seen briefly. Missed when the clips do not line up |
 | Smart Standby: blocking, reordering, new main stream | Yes | Yes, from real failures only |
 | Log prefix | `[hlsloop stream]` | `[tsloop stream]` |
 
@@ -1170,8 +1188,8 @@ Common lines:
   drop frames until you tune again. Transcoding hides this.
 - **A drained reserve** only comes back on a retune unless transcoding is on (MPEG-TS can also top it up with
   a fresh connection).
-- **A bad feed that keeps running,** for example audio slightly out of sync. coax cannot detect it; put
-  another stream first for that channel.
+- **A bad feed that keeps running,** for example audio slightly out of sync. coax cannot detect it on its
+  own; press **Switch** on another stream of the channel on the Status page, and **Disable** the bad one.
 - **Problems after coax,** such as a device's Wi-Fi dropping out for longer than its head start.
 - **Connection limits.** Providers often count a stream as active for a short time after the last request,
   so a failover or retune can briefly look like two connections. If every connection on your account is

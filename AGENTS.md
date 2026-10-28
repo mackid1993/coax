@@ -32,6 +32,7 @@ app/
     hlsloop.py       stream engine for HLS input (one process per Session)
     tsloop.py        stream engine for MPEG-TS input
     avcheck.py       content sync check: is a feed's sound off its picture compared with another feed?
+    fmtprobe.py      reads the provider's format (codecs, resolution, frame rate, bitrates) for the Status card
   guide/
     gracenote.py     station search and matching through Channels DVR's Gracenote data; region lineup index
     xmltv.py         download, parse and merge XMLTV sources; picker ids (every display name kept)
@@ -50,7 +51,8 @@ scripts/make_logo.py brand asset generator
 `/data/config.json` (mode 0600, holds passwords) is the only source of truth for settings. Keys: `server`
 (port, base_url), `channels_dvr.url`, `transcode` (`off` or a preset like `1080p60`), `providers` (each with
 `lines`, `groups`, `format` hls|ts, `max_streams`), `channels` (id, uuid, number, name, group, logo, enabled,
-`streams` = ordered list of `{provider, stream_id}`, `guide` = mode/station_id/xmltv_id/...), `lineups`
+`streams` = ordered list of `{provider, stream_id}`, optionally `"disabled": true`, `guide` =
+mode/station_id/xmltv_id/...), `lineups`
 (id, name, guide source, channel ids, sort, start_number, DVR options), `xmltv_sources`, `gracenote.regions`,
 `backups`, `autosave_minutes`, `timezone`.
 
@@ -66,15 +68,17 @@ Gracenote index, `feedhealth.json`, `history/<channel>.jsonl`, recording job fil
 1. Channels DVR reads `/output/m3u/<lineup>.m3u` (stream URLs `/stream/<uuid>.ts`, Gracenote ids, logos) and
    `/output/xmltv/<lineup>.xml`.
 2. A tune hits `/stream/<uuid>.ts` (`server.h_stream`). `Hub.open()` picks the channel's streams in order
-   (blocked streams last), takes the first line with a free slot (per-line and provider-wide limits; a line
-   released in the last 5 s is used last) and returns a `Session`, or 503.
+   (`Hub._candidates` skips disabled refs; blocked streams last), takes the first line with a free slot
+   (per-line and provider-wide limits; a line released in the last 5 s is used last) and returns a `Session`, or 503.
 3. `Session.iter_bytes()` spawns the engine (`hlsloop.py` or `tsloop.py <url> <ua> <channel_id>`, environment
-   `COAX_PORT`, `COAX_SESSION`, `COAX_RESTART`) and copies its stdout to the socket, flushing every chunk.
+   `COAX_PORT`, `COAX_SESSION`, `COAX_RESTART`, `COAX_NEWSTREAM` after a hand switch) and copies its stdout to the
+   socket, flushing every chunk.
 4. The engine logs to stderr. `Session._watch` parses those lines into the Status timeline, the speed/transcode
    pills, history, and Smart Standby signals.
 5. The engine calls back into coax on 127.0.0.1 only: `/internal/channels/<id>/streams` (failover list, from
-   `Hub.backup_urls`: playing stream first, then by Smart Standby rank, blocked streams left out while any other
-   remains) and `/internal/channels/<id>` (uuid for the DVR viewer buffer).
+   `Hub.backup_urls`: playing stream first, then by Smart Standby rank, disabled streams never, blocked streams
+   left out while any other remains; `server.fallback_stream_urls` also skips disabled streams) and
+   `/internal/channels/<id>` (uuid for the DVR viewer buffer).
 6. On disconnect, `Session.close()` kills the engine's whole process group, reaps it, then releases the slot.
 
 ## The hub (app/hub.py)
@@ -92,7 +96,19 @@ own while the DVR is connected:
 - Engine log lines carry `[ref xxxxxxxx]` (md5 of the stream URL). The hub maps refs back to (provider, line,
   stream) to follow switches (`_follow`: holds another provider's line in `extra_slots`), mark failures
   (`_note_bad`), and report sync verdicts (`_desync`).
-- Status for the UI: `Hub.status()` (live reserve read from the engine state file), `line_status()`.
+- Status for the UI: `Hub.status()` (live reserve read from the engine state file; `feeds` per session lists
+  every stream of the channel with playing/disabled/blocked), `line_status()`.
+- **Switch and Disable (manual).** `POST /api/channels/<id>/switch {instance, provider, stream_id}` calls
+  `Hub.switch(channel_id, instance, provider, stream_id)`: it updates the session (`url`, `fmt`, `cur_key`,
+  `stream_no`, and the line and slots when the provider changes), sets `fresh`, then stops the engine with the
+  session's `_kill` (the hub has no `_kill`; calling it was the 1.0.5-2 bug). The copy loop respawns the engine
+  with `COAX_NEWSTREAM=1`: hlsloop keeps the output clock (`-output_ts_offset`) but drops the old stream's
+  segment state. `POST /api/channels/<id>/feed {provider, stream_id, disabled}` sets or clears `disabled` on
+  the ref (400 if it would leave no enabled stream) and calls `Hub.feed_disabled`, which switches
+  any session playing that stream to the next enabled candidate at once.
+- **Credentials in logs.** `app/main.py` `_Redact` is a logging filter on the console and the Logs page buffer;
+  it runs `hub._redact`, which masks usernames and passwords in URL paths and queries. Every log record goes
+  through it.
 - **Engine log wording is an API.** `PROBLEMS` in `hub.py` (for example `r"offline placeholder"` ->
   `placeholder`, an instant block) matches any engine line containing the phrase, informational or not, and
   so do the Status timeline patterns. Grep them before adding or rewording an engine log line; an
@@ -112,18 +128,25 @@ threads). `hlsloop.py` is the recommended path.
   Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
   `scale_vaapi`, `h264_vaapi`; NVIDIA CUDA decode, `bwdif_cuda`, `scale_cuda`, `h264_nvenc`), falling back to CPU
   decode (`GPUDEC`) if GPU decode fails; audio always AAC 48 kHz stereo 192k.
-- **ffmpeg flags that must stay** (pinned by `FfmpegArgsTest` in `tests/test_engine_adapt.py`):
-  - `-probesize 5000000 -analyzeduration 5000000` right before `-i pipe:0`, both modes. HE-AAC (SBR) only
-    shows its real format after decoding; a 1 s probe made ffmpeg mux before it understood the audio and the
-    sound was visibly out of lip sync on the TV while every timestamp check said in sync.
-  - `-muxdelay 0 -muxpreload 0` right before `-f mpegts pipe:1`, both modes (part of the same fix; which of
-    the two did the work is not isolated, keep both).
+- **ffmpeg flags** (pinned by `FfmpegArgsTest` and `DropChangedTest` in `tests/test_engine_adapt.py`):
+  - Probe: the base `-probesize 1000000 -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s). The
+    1.0.4 5 s probe and `-muxdelay 0 -muxpreload 0` were removed in 1.0.5: they were believed to fix an HE-AAC
+    lip-sync problem, but that feed was out of sync at the provider itself (see CLAUDE.md 4.7). The test
+    asserts no `-muxpreload` in `ffcmd()`. The restart timestamp shift (`tsfix.py`) and the keyframe-start
+    filter are gone too.
   - `-dts_delta_threshold 86400`: never let ffmpeg rewrite timestamps after a jump (a 10 s audio dropout
     became a permanent offset); the engine continues the timeline itself.
-  - Transcode audio `aresample=async=1:min_hard_comp=0.1:first_pts=0` (plus `atempo` in a refill): corrects
-    only real gaps above 0.1 s. Never `async=1000`, which stretches audio to fit timestamps (5 s off offline).
+  - Transcode audio `aresample=async=1:min_hard_comp=0.1` (plus `atempo` in a refill): corrects only real gaps
+    above 0.1 s. Never `async=1000`, which stretches audio to fit timestamps (5 s off offline). No `first_pts`:
+    when an audio parameter change makes ffmpeg rebuild the filter, `first_pts=0` inserts silence.
+  - Transcode input `-drop_changed:a 1` (right before `-i pipe:0`): audio frames whose parameters change are
+    dropped instead of rebuilding the filter. Guard: `silent(pid, b)` in both engines; if a transcode encoder
+    sends video but no audio for 10 s, at least 15 s after it started, it is killed once so it restarts with
+    the new format.
   - Any change here: run the candidate command for a few seconds offline on real data of the affected feed
     before it reaches a live server (`-map 0:a:0` with a short probe crash-looped a live stream).
+- **Provider format:** `fmtprobe.py` reads the incoming stream once per stream and the engine logs
+  `provider format: {json}`; the hub turns it into the card's "From provider" line.
 - **Encoder restarts** (refill edges and stream switches with transcoding on) wait for the next keyframe
   (`kfo`, `iskey` reads H.264/HEVC NAL units itself; providers often do not mark keyframes) and correct the
   audio lead (`avlead`, `eofs`), so audio and video start together.
@@ -161,6 +184,9 @@ channel covering the same moments; one feed alone cannot be judged.
 2. **Then the picture,** a 20 Hz picture-change signal, searched only within `PICWIN` (40 s) of where the sound
    placed the program; correlation at least 0.45 and 0.15 above the runner-up, else no verdict.
 
+A verdict of 2 s or more is only acted on when a second reading (the later half of the new clip) agrees in
+sign and within 1.5 s; otherwise no verdict. (1.0.4-1 also fixed the sign of the sound and picture lags.)
+
 No verdict means no action. The old method (sound-energy envelope vs picture change over +/-90 s) gave noise
 readings (65.9 s, -50 s, +63 s) that blocked good streams; the MPEG-7 `signature` filter never matches across
 different resolutions or frame rates. Both ffmpeg pieces exist in the image's Jellyfin ffmpeg. Verified: an
@@ -177,15 +203,21 @@ HE-AAC backup read -0.1 s in 3.7 s (picture 0.93 vs 0.37, sound bit error 0.09).
   overlap.
 - Verdicts are logged as `sync check: stream N is in step ... [ref]` or `... has its sound Xs ahead of its
   picture; ... [ref]` and reach feed health through the hub.
+- **Limits.** One feed alone cannot be judged, and nothing reliable without ML was found for that: an
+  onset-correlation method (picture-change onsets vs multi-band audio onsets on 20 s windows) read +/-3 s of
+  noise on in-sync channels and could not separate a feed about 1 s off. The owner rejected ML models
+  (Synchformer, SyncNet). A feed that is off by itself is handled by hand with Disable (see the hub).
 
 ## Smart Standby (app/feedhealth.py)
 
 Keeps each channel's saved stream order stable and good, acting only on real trouble.
 
 - `problem(ch, key, kind)`: `desync` and `placeholder` block at once (`INSTANT`; so the engines only emit them
-  on a clear sync verdict or a 60 s ended playlist); `frozen`/`novideo` block on the 3rd within
-  an hour; `dead` (a stream failed and another took over, confirmed by `switched()`) blocks on the 3rd within
-  6 hours. Absorbed problems (stalls, keepalive) are never blocking.
+  on a clear sync verdict or a 60 s ended playlist); `frozen`/`novideo` (the hub's own restarts) are recorded
+  for ranking only and never block on their own (since 1.0.4-1); `dead` (a stream failed and another took over,
+  confirmed by `switched()`) blocks on the 3rd within 6 hours. Absorbed problems (stalls, keepalive) are never
+  blocking. tsloop short connections hand off only when reserve plus lead is 15 s or less and never report
+  `placeholder`.
 - Blocks: 12 h, 24 h, 3 days within a week (desync 24 h, 3 days). Never deleted. `is_blocked()` is used by the
   hub at tune time and in the failover list. If all streams are blocked, the least bad still plays.
 - On a block, `_fix_order` moves the stream last; if it was main, the proven stream with the most clean playback
@@ -212,13 +244,16 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
   Suggestions are saved with `/api/channels/apply` using `add_streams` (append to the server's current list,
   never send a stale full list). Unsaved suggestions are mirrored in `localStorage coax.unsaved` until saved.
   Autosave (Settings, default 2 min) never runs while a dialog is open.
-- Status cards are keyed per session (`uuid~instance`) and updated in place (rebuilding flashes).
+- Status cards are keyed per session (`uuid~instance`) and updated in place (rebuilding flashes). The tune
+  card lists `feeds` (Playing now / Disabled / Blocked badges, Switch button, Disable checkbox, hover popover
+  for cut-off text) and a corrections list that keeps its scroll position. The Channels stream editor and
+  backup chips show disabled streams too.
 - Popovers via `data-pop` / `data-pop-sub`. Mono inputs disable ligatures (the `http://` slash bug).
 - The bell polls `/api/notifications` every 15 s.
 
 ## Build, test, release
 
-- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (278, about 30 s).
+- Tests: on Gemini, `cd ~/src/coax && .venv/bin/python -m unittest discover tests` (282, about 35 s).
 - UI checks: Gemini has no Node. Copy `app/web` to the Hermes container and drive the real page modules with
   jsdom against a fake `fetch` (set `"type": "module"` in a package.json next to them; stub `scrollTo`,
   `location`, `CSS.escape`).
@@ -237,7 +272,9 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
   `/<stream_id>` (REJECT tcp-reset), always remove it afterwards, and never test on a channel the owner is
   watching without asking. Prefer reorder plus retune for forced tests; never block the stream the owner is
   watching; restore channel order and blocks afterwards; back up `config.json` first.
-- A/V sync work: the owner's eyes on the TV are the ground truth, not timestamps. Iterate with live candidates
+- A/V sync work: first play the provider URL directly in a separate player (VLC) on an idle line. If it is
+  out of sync there, the feed is bad and coax is not the cause; Disable it. Only then touch ffmpeg. The
+  owner's eyes on the TV are the ground truth, not timestamps. Iterate with live candidates
   he watches, one change at a time, each run offline for a few seconds on real feed data first. After a live
   hot-swap of engine code, check for undefined names before he tunes.
 
@@ -248,8 +285,11 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 - Never show a stream known to be out of sync when another stream works.
 - Never promote an unchecked stream; never move the order without real trouble; never rubber-band.
 - Never delete a user's stream; block it.
+- A disabled stream is never tuned, used as a backup or promoted; at least one stream of a channel stays
+  enabled.
 - Config changes only through `ConfigStore.update`.
 - Every exception in background threads is caught; coax never crashes from feed health, history, cleanup or sync.
 - One noisy reading never blocks: unclear checks return no verdict.
 - Informational engine log lines never contain hub trigger phrases.
-- ffmpeg always probes 5 s and adds no mux delay; passthrough is called passthrough.
+- Passthrough is called passthrough.
+- A desync is checked against the provider directly (another player) before any ffmpeg change.
