@@ -166,13 +166,15 @@ HOST_PORT=7780
 
 # ----- HOST_DIR --------------------------------------------------------------------------------------
 # The folder on this machine that belongs to coax. Type only the folder, without /data at the end:
-# coax adds /data itself and keeps everything there (settings, backups, caches).
-#   HOST_DIR=/mnt/user/appdata/coax   ->  coax stores its files in /mnt/user/appdata/coax/data
-#   HOST_DIR=/opt/coax                ->  coax stores its files in /opt/coax/data
+# coax adds /data itself and keeps everything there (settings, backups, caches). Examples:
+#   Linux:     HOST_DIR=/opt/coax                  ->  files in /opt/coax/data
+#   Unraid:    HOST_DIR=/mnt/user/appdata/coax     ->  files in /mnt/user/appdata/coax/data
+#   Synology:  HOST_DIR=/volume1/docker/coax       ->  files in /volume1/docker/coax/data
+# Leave it empty to keep coax's files in a data folder next to this file.
 # The folder is created on first start, and coax fixes its ownership by itself.
 # Back this folder up; it is everything coax knows.
 # Default: the folder this file is in (so ./data)
-HOST_DIR=/mnt/user/appdata/coax
+HOST_DIR=
 
 
 # ----- TZ --------------------------------------------------------------------------------------------
@@ -209,7 +211,7 @@ DOCKER_RUNTIME=runc
 | `TAG` | `latest` | Image version. `latest` is the newest release; set a version number (for example `1.0.3`) to freeze one. |
 | `CONTAINER_NAME` | `coax` | Container name. |
 | `HOST_PORT` | `7780` | Port for the web UI and the streams. Base URL in coax Settings must use it. |
-| `HOST_DIR` | `.` (the compose folder) | The folder for coax on the host, for example `/mnt/user/appdata/coax` on Unraid. coax keeps everything in a `data` folder inside it. |
+| `HOST_DIR` | the compose folder | The folder for coax on the host, without `/data` (for example `/opt/coax`, `/mnt/user/appdata/coax` on Unraid, `/volume1/docker/coax` on Synology). coax keeps everything in a `data` folder inside it. |
 | `TZ` | `Etc/UTC` | Your timezone, for log timestamps and the daily backup. |
 | `GPU_DEVICE`, `DOCKER_RUNTIME` | `/dev/null`, `runc` | GPU transcoding. See [GPU transcoding](#gpu-transcoding). |
 
@@ -353,12 +355,14 @@ HOST_PORT=7780
 
 # ----- HOST_DIR --------------------------------------------------------------------------------------
 # The folder on this machine that belongs to coax. Type only the folder, without /data at the end:
-# coax adds /data itself and keeps everything there (settings, backups, caches).
-#   HOST_DIR=/mnt/user/appdata/coax   ->  coax stores its files in /mnt/user/appdata/coax/data
-#   HOST_DIR=/opt/coax                ->  coax stores its files in /opt/coax/data
+# coax adds /data itself and keeps everything there (settings, backups, caches). Examples:
+#   Linux:     HOST_DIR=/opt/coax                  ->  files in /opt/coax/data
+#   Unraid:    HOST_DIR=/mnt/user/appdata/coax     ->  files in /mnt/user/appdata/coax/data
+#   Synology:  HOST_DIR=/volume1/docker/coax       ->  files in /volume1/docker/coax/data
+# Leave it empty to keep coax's files in a data folder next to this file.
 # The folder is created on first start, and coax fixes its ownership by itself. Back it up.
 # Default: the folder this file is in (so ./data)
-HOST_DIR=/mnt/user/appdata/coax
+HOST_DIR=
 
 
 # ----- TZ --------------------------------------------------------------------------------------------
