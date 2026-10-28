@@ -68,9 +68,9 @@ Channel names, providers and logos below are made up for the demo.
 - **Backup streams per channel**, mixed across providers, with automatic failover in the stream engine and
   suggested matches (same name, call sign, or provider guide ID).
 - **Tuner sharing**: a second viewer of the same channel shares the running stream and uses no extra line.
-- **Smart Standby**: at the first real trouble coax checks every backup by picture and sound before switching,
-  never switches to one it finds bad, blocks bad streams for a while (never deletes them), and moves the stream that
-  proves stable to the top of the channel. Changes appear under the bell with Undo. See [Smart Standby](#smart-standby).
+- **Smart Standby**: switches to a backup only on real trouble, tries the least troubled backup first, blocks
+  streams that keep failing for a while (never deletes them), and moves the stream that proves stable to the top
+  of the channel. Changes appear under the bell with Undo. See [Smart Standby](#smart-standby).
 - **Never gives up on a stream.** While Channels DVR is connected, coax keeps recovering: a frozen engine is
   restarted, a stream with no video is retuned (alternating to another free line of the provider when there is one),
   and null packets hold the connection open in between, so a recording keeps going. Streams that failed recently
@@ -637,7 +637,8 @@ The *Status* page shows live sessions, viewers, which line each channel holds, r
 
 Each playing channel's card lists every stream of the channel in its saved order, with its name, provider,
 group and stream id (hover a cut-off name to see it in full). The stream playing is marked *Playing now*;
-*Blocked* means Smart Standby is resting it, and *Disabled* means you turned it off.
+*Blocked* means Smart Standby is resting it: the pill shows the time left, hovering it shows why, and clicking
+it unblocks the stream at once. *Disabled* means you turned it off.
 
 - **Switch** moves playback to that stream right away.
 - **Disable** turns a stream off without removing it: it stays listed (dimmed), but coax never tunes it, never
@@ -645,7 +646,10 @@ group and stream id (hover a cut-off name to see it in full). The stream playing
   next enabled stream at once. Untick it to use the stream again. One stream of each channel always stays
   enabled. The same checkbox is in the channel's stream editor on the *Channels* page.
 
-Use these when a stream is bad in a way coax cannot see, for example sound slightly off the picture.
+Use these when a stream is bad in a way coax cannot see, most often sound off the picture. coax does not
+detect that: no check tells a feed whose sound is off from a good one reliably enough to act on. A feed that is
+out of sync is almost always built that way by the provider, so it plays the same in any player (try it in VLC)
+and tends to stay that way. Disable it and coax will not use it again.
 
 ## Settings reference
 
@@ -768,73 +772,47 @@ switches or 30 seconds or more of keepalive. Each channel's 10-minute summaries 
 ### Smart Standby
 
 Pick the streams for a channel; Smart Standby decides which one plays. It watches every stream of every channel,
-checks the backups the moment real trouble starts, switches only to one that is good, and keeps the channel's
-order arranged so the next tune starts on the stream that has proven itself. It is built for an appliance you
-leave alone: it acts only on real trouble, never deletes anything, and reports every change under the **bell**.
+switches only on real trouble, and keeps the channel's order arranged so the next tune starts on the stream that
+has proven itself. It is built for an appliance you leave alone: it acts only on real trouble, never deletes
+anything, and reports every change under the **bell**.
 
 **1. Normal IPTV wobble is ignored.** Stalls the reserve covers, catch-ups, refills and A/V holds are what IPTV
 does. Smart Standby rides them out and changes nothing. A shaky stream that coax keeps smooth stays where it is.
 
-**2. Backups are tried best first.** Every stream has a score from its last day: each problem counts (sound
-off its picture far more than anything else, then an offline slate, a dead stream, no video, a freeze), older
-problems fade, and clean playback counts in its favor. When coax has to leave a stream, it tries the others in
-score order, least bad first, and blocked streams last.
+**2. Backups are tried best first.** Every stream has a score from its last day: each problem counts (an offline
+slate most, then a dead stream, no video, a freeze), older problems fade, and clean playback counts in its favor.
+When coax has to leave a stream, it tries the others in score order, least bad first, and blocked streams last.
+Before switching it confirms the backup is answering; one that is not is skipped for now. If no backup answers,
+coax stays on the current stream and keeps retrying.
 
-**3. At the first real trouble, every backup is checked before any switch (HLS).** Real trouble means repeated
-playlist errors, a playlist that stops updating, or the reserve running out. While the reserve keeps playing,
-coax fetches the last minute of each other stream of the channel (it does not play them) and compares each one,
-by picture and sound, with the last minute you actually watched:
-
-| Result | What happens |
-| --- | --- |
-| In step with what you were watching | Switched to first |
-| Sound off its picture (the provider's feed is built that way) | Blocked for 24 hours, never switched to |
-| Not answering | Skipped for now |
-
-The check takes seconds, well inside the reserve, and uses the same short downloads as normal playback, so it
-works with a single line. If no good stream is left, coax stays on the current one rather than switch to a bad
-one, and falls back to it only after 2 minutes with nothing else to play.
-
-**4. Bad streams sit out, they are not deleted.** A stream is blocked (not tuned, last on failover) when:
+**3. Bad streams sit out, they are not deleted.** A stream is blocked (not tuned, last on failover) when:
 
 | Trouble | Blocked |
 | --- | --- |
-| Sound off its picture | At once: 24 hours, then 3 days |
 | Offline slate from the provider instead of the channel | At once: 12 hours, then 24 hours, then 3 days |
 | It stopped working while another stream of the channel worked | The 3rd time within 6 hours: same ladder |
 | coax had to restart or retune it (frozen, or no video for 90 seconds) | Never on its own; it only lowers the stream's score |
 
 The ladder climbs when a stream keeps causing trouble within a week. A stream that stops working while every
 other stream of the channel is down too is not blocked, since that is the provider or the network. If every
-stream of a channel is blocked, coax still plays the least bad one.
+stream of a channel is blocked, coax still plays the least bad one. Click a *Blocked* pill on the Status page to
+lift a block early.
 
-**5. The stable stream moves up, once.** When coax leaves a troubled stream for one that proves stable (it passed
-the check, or played 10 minutes cleanly), that stream moves ahead of the troubled one in the channel's saved
-order. If the troubled one was the main stream, the stable one becomes the main stream, so the next tune starts
-on it. A blocked main stream is replaced the same way, by the checked stream with the most clean playback. A
-stream that has never been checked never becomes the main stream.
+**4. The stable stream moves up, once.** When coax leaves a troubled stream for one that plays 10 minutes
+cleanly, that stream moves ahead of the troubled one in the channel's saved order. If the troubled one was the
+main stream, the stable one becomes the main stream, so the next tune starts on it. A blocked main stream is
+replaced the same way, by the stream with the most clean playback. A stream that has never played cleanly never
+becomes the main stream.
 
-**6. No trouble, no change.** The order stays put until the next real trouble. A stream that recovers, or whose
+**5. No trouble, no change.** The order stays put until the next real trouble. A stream that recovers, or whose
 block ends, does not move back on its own, so channels do not flip back and forth.
 
-**7. Every change is under the bell.** Each entry says what happened, to which stream and why, with **Undo**
+**6. Every change is under the bell.** Each entry says what happened, to which stream and why, with **Undo**
 (restores the order and lifts the block), an **X** to dismiss it, and **Clear all**. A channel with one stream is
 never changed.
 
-**After a switch** the same check runs on a stream that had not been checked yet, comparing it with the end of
-the stream it replaced, so a bad stream that slipped through is caught within seconds and left.
-
-**What the check cannot see.** It compares two streams showing the same moments. A stream whose sound is off
-on its own, by less than about 2 seconds or with no other stream to compare against, is not caught. Use
-**Disable** on the Status page for it (see [First run](#first-run)).
-
-**On MPEG-TS** a stream cannot be looked at without playing it, so coax switches to the best-ranked backup and
-watches it: its first 25 seconds are compared, by picture and sound, with the end of the stream it left. If its
-sound is off its picture, coax leaves it right away for the next stream by score and blocks it. Viewers see the
-bad stream for about half a minute; on HLS they never see it. The check needs the two streams to show the same
-moments; when a TS backup is too far behind or ahead of the stream it replaced, the check has no clear verdict, and
-that backup is judged on real failures only (a freeze, an offline slate, a dead stream). Everything else works the same. See the table under
-[HLS or MPEG-TS](#hls-or-mpeg-ts).
+**What Smart Standby cannot see.** A feed whose sound is off its picture plays without errors, so Smart Standby
+treats it as healthy. Use **Switch** and **Disable** on the Status page for it (see [First run](#first-run)).
 
 History is kept in `data/cache/feedhealth.json` and the bell's list in `data/notifications.json`.
 
@@ -859,9 +837,9 @@ coax reads from the provider differs.
 | Extra head start per joining device | 5 s each, up to about 40 s in total | 5 s each, capped at about 8 to 14 s so failover keeps its headroom |
 | Delay behind live | about 60 s | about 20 s |
 | Recording extension past the scheduled end | about 105 s | about 65 to 80 s |
-| [Smart Standby](#smart-standby): backups checked before a switch | Yes: coax confirms a backup is answering before it switches | Yes: coax confirms a backup is answering before it switches |
+| [Smart Standby](#smart-standby): backup confirmed answering before a switch | Yes | Yes |
 | Smart Standby: sound off its picture | Not detected; disable the stream on the Status page | Not detected; disable the stream on the Status page |
-| Smart Standby: blocking, reordering, new main stream | Yes | Yes, from real failures only |
+| Smart Standby: blocking, reordering, new main stream | Yes | Yes |
 | Log prefix | `[hlsloop stream]` | `[tsloop stream]` |
 
 - **Xtream providers.** coax builds Xtream stream addresses as
