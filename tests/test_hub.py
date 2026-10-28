@@ -631,6 +631,34 @@ class HandSwitchTest(unittest.TestCase):
                          "Stream b failed; skipping it for a while")
 
 
+class LineChoiceAndMaskingTest(unittest.TestCase):
+    def test_catalog_calls_use_an_idle_line(self):
+        from app.providers import xtream
+        cfg = config([provider("p1", 1, 1, 1)], [channel(1, [("p1", "a")])])
+        h, _ = make(cfg)
+        s = h.open("uuid-1", "ip", "ua")
+        saved = xtream.BUSY_LINES[0]
+        xtream.BUSY_LINES[0] = h.busy_lines
+        try:
+            self.assertEqual(h.busy_lines("p1"), {"l1"})
+            self.assertEqual(xtream.first_line(cfg["providers"][0])["id"], "l3")
+            xtream.BUSY_LINES[0] = lambda pid: {"l1", "l2", "l3"}
+            self.assertEqual(xtream.first_line(cfg["providers"][0])["id"], "l1")   # all busy: the first line
+        finally:
+            xtream.BUSY_LINES[0] = saved
+            s.close()
+
+    def test_short_xtream_urls_and_known_logins_are_masked(self):
+        self.assertEqual(hubmod._redact("GET http://pp.example:8080/joe/sec/45446.ts failed"),
+                         "GET http://pp.example:8080/********/********/45446.ts failed")
+        self.assertEqual(hubmod._redact("http://10.0.0.5:8089/dvr/jobs/123"), "http://10.0.0.5:8089/dvr/jobs/123")
+        hubmod._learn_secrets({"providers": [{"lines": [{"username": "joeuser1", "password": "s3cretpw"}]}]})
+        try:
+            self.assertEqual(hubmod._redact("login joeuser1 s3cretpw"), "login ******** ********")
+        finally:
+            hubmod._learn_secrets({})
+
+
 class ProxyErrorBlameTest(unittest.TestCase):
     def test_failure_during_proxy_errors_is_not_charged(self):
         cfg = config([provider("p1", 1)], [channel(1, [("p1", "a"), ("p1", "b")])])

@@ -104,14 +104,36 @@ def _default_stream_url(provider, line, stream_id):
 
 _REDACT = [
     (re.compile(r"(/(?:live|hls|movie|series|timeshift)/)[^/\s]+/[^/\s]+/"), r"\1********/********/"),
+    # The short Xtream form http://host:port/<user>/<pass>/<id>.ts that M3U playlists often use.
+    (re.compile(r"(https?://[^/\s]+/)(?!(?:dvr|api|devices|providers|internal|stream|output|tms)/)[^/\s?]+/[^/\s?]+/"
+                r"(\d+(?:\.(?:ts|m3u8))?)(?=[\s?'\")]|$)"), r"\1********/********/\2"),
     (re.compile(r"((?:username|user|password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
 ]
+_SECRETS = []      # every configured line username and password, longest first (set by Hub._config)
+_SECRETS_FROM = [None]
+
+
+def _learn_secrets(cfg):
+    if cfg is _SECRETS_FROM[0]:
+        return
+    found = set()
+    for provider in cfg.get("providers") or []:
+        for line in provider.get("lines") or []:
+            for key in ("username", "password"):
+                value = str((line or {}).get(key) or "")
+                if len(value) >= 6:   # shorter values would mask ordinary numbers and words
+                    found.add(value)
+    _SECRETS[:] = sorted(found, key=len, reverse=True)
+    _SECRETS_FROM[0] = cfg
 
 
 def _redact(text):
     """Hide provider usernames and passwords in log text (stream, API and guide URLs carry them)."""
     for pattern, repl in _REDACT:
         text = pattern.sub(repl, text)
+    for secret in list(_SECRETS):
+        if secret in text:
+            text = text.replace(secret, "********")
     return text
 
 
@@ -240,7 +262,7 @@ class Session:
                     self._watch(line)
                     log.info("[%s] %s", self.name, self.hub._label(line))
         except Exception:  # noqa: BLE001
-            pass
+            log.exception("[%s] reading the engine's log stopped", self.name)
         finally:
             try:
                 proc.stderr.close()
@@ -303,7 +325,7 @@ class Session:
             self.slow, self.slow_since = True, time.time()
         elif "back to real speed" in line:
             self.slow, self.slow_since = False, None
-        if "reserve: empty" in line:
+        if re.search(r"reserve:? empty", line):   # hlsloop says "reserve: empty", tsloop "reserve empty:"
             self.reserve_empty = True
         m = re.search(r"reserve(?::)? (?:refilled to |back to |down to )?(\d+)s", line)
         if m:
@@ -527,10 +549,15 @@ class Hub:
 
     def _config(self):
         try:
-            return self._get_config() or {}
+            cfg = self._get_config() or {}
         except Exception:  # noqa: BLE001
             log.exception("hub: could not read config")
             return {}
+        try:
+            _learn_secrets(cfg)
+        except Exception:  # noqa: BLE001
+            log.exception("hub: could not read line logins for log masking")
+        return cfg
 
     @staticmethod
     def _providers(cfg):
@@ -635,13 +662,17 @@ class Hub:
         try:
             return health.is_blocked(channel_id, (str(provider.get("id")), str(stream.get("stream_id"))))
         except Exception:  # noqa: BLE001
+            log.exception("feed health: could not read whether a stream is blocked")
             return False
 
     def _rank(self, channel_id, stream_provider):
         stream, provider = stream_provider
+        if self.health is None:
+            return (0, 0.0)
         try:
             return self.health.rank(channel_id, (str(provider.get("id")), str(stream.get("stream_id"))))
         except Exception:  # noqa: BLE001
+            log.exception("feed health: could not rank a stream")
             return (0, 0.0)
 
     def _health(self, kind, channel_id, key, *args):
@@ -746,8 +777,8 @@ class Hub:
                 with open(path + ".tmp", "w", encoding="utf-8") as handle:
                     handle.writelines(rows[len(rows) // 2:])
                 os.replace(path + ".tmp", path)
-        except Exception:  # noqa: BLE001 - history is best effort
-            pass
+        except Exception as exc:  # noqa: BLE001 - history is best effort
+            log.warning("stream history for channel %s not saved: %s", session.channel_id, exc)
 
     # -- tune (ah4c tune()) ---------------------------------------------------------
 
