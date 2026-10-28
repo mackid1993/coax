@@ -277,7 +277,7 @@ def ffcmd():
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
     af = "aresample=async=1:min_hard_comp=0.1" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % (tout + 1.4 - ADJ[0]), "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
+    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-drop_changed:a", "1", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % (tout + 1.4 - ADJ[0]), "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return RES
@@ -353,6 +353,12 @@ def pump():
         if b and TRANSCODE:
             # A restarted encoder continues the picture exactly where the previous one stopped.
             b, g_ = CT.feed(p.pid, b, mono())
+            if CT.silent(p.pid, mono()):
+                log("output: the encoder has sent no audio for 10s while video flows; restarting it")
+                try:
+                    p.kill()
+                except Exception:
+                    pass
             if g_:
                 log("encoder restart: shifted the new encoder's timestamps by %.2fs so the picture continues where it left off" % g_)
             if not b:

@@ -63,6 +63,7 @@ class Cont:
         if s is None:
             s = self.st[key] = {"rem": b"", "lv": None, "fd": None, "dt": 0,
                                 "hold": [] if self.prev else None, "t": now}
+        s["now"] = now
         b = s["rem"] + b
         n = len(b) - len(b) % 188
         s["rem"] = b[n:]
@@ -84,6 +85,16 @@ class Cont:
                     s["dt"] = int(round(g * 90000))
                     d = g
         return self._shift(b, s), d
+
+    def silent(self, key, now):
+        """True once encoder `key` has sent video but no audio for 10 s (at most once per encoder)."""
+        s = self.st.get(key)
+        if not s or s.get("told") or s.get("vv") is None or now - s["vv"] > 2 or now - s["t"] < 15:
+            return False
+        if now - (s.get("aa") or s["t"]) > 10:
+            s["told"] = True
+            return True
+        return False
 
     def end(self, key):
         """Encoder `key` finished: what is left of its output; it becomes the one the next encoder follows."""
@@ -118,7 +129,10 @@ class Cont:
                 _wr(a, o + 9, _rd(a, o + 9) + dt)
                 if a[o + 7] & 192 == 192 and o + 19 <= j + 188:
                     _wr(a, o + 14, _rd(a, o + 14) + dt)
+            if 192 <= a[o + 3] <= 223 or a[o + 3] == 189:
+                s["aa"] = s.get("now")
             if 224 <= a[o + 3] <= 239:
+                s["vv"] = s.get("now")
                 v = _rd(a, o + 9) / 90000.0
                 lv = s["lv"]
                 if lv is None:
