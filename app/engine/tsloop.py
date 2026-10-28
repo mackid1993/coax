@@ -467,6 +467,7 @@ prim = None
 sl = threading.Lock()
 resumed = False
 rg = 0.0
+oprim = None
 try:
     j = json.load(open(st))
     if time.time() - j["t"] < RSW and (j.get("src") == src or RST):
@@ -475,16 +476,22 @@ try:
         off = j.get("off", 0.0)
         rcur = j.get("cur") if j.get("src") == src else None
         prim = j.get("prim") if j.get("src") == src else None
-        xb = float(j.get("xb", 0.0))
+        oprim = j.get("prim")
+        xb = float(j.get("xb", 0.0)) if RST else 0.0   # a new DVR connection has no player lead yet
         vpk = max(1, int(j.get("pk", 1)))
-        rstk = bool(j.get("stk"))
+        rstk = bool(j.get("stk")) and RST
         vlj = mono() if xb > JB else 0.0
-        wlead = max(j.get("lead", 0.0) - (time.time() - j["t"]), 0.0)
+        wlead = max(j.get("lead", 0.0) - (time.time() - j["t"]), 0.0) if RST else 0.0
         resumed = True
         rg = min(max(j.get("gage", 0.0), 0.0), FAILT)
         log("resuming after an engine restart")
 except Exception:
     pass
+if os.environ.get("COAX_NEWSTREAM"):
+    # The hub switched this channel to another stream by hand: keep the output clock, but none of the old
+    # stream's failure clock or stuck flag, so the new stream is not judged by what the old one did.
+    rg = 0.0
+    rstk = False
 cur = rcur or src
 
 def save():
@@ -541,7 +548,7 @@ def feeds(quiet=False):
         out.append(src)
     return out
 stalled = False
-pend = False
+pend = bool(os.environ.get("COAX_NEWSTREAM"))   # a hand switch joins the new stream like a failover
 got = mono() - rg
 ost = got
 lv = got
@@ -656,8 +663,9 @@ ql = threading.Lock()
 moff = off
 qend = None
 wput = mono()
-if prim is not None and prim in dl:
-    qend = dl[prim] + off
+if (prim if prim is not None else oprim) in dl:
+    # Also after a restart on another URL (a line move or a hand switch), so the output timeline continues.
+    qend = dl[prim if prim is not None else oprim] + off
 
 FMTU = [None]
 

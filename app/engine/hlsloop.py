@@ -620,10 +620,10 @@ try:
         wlast = last
         rpart = j.get("part")
         dep = j.get("dep") or 0.0
-        xb = float(j.get("xb", 0.0))
+        xb = float(j.get("xb", 0.0)) if RST else 0.0   # a new DVR connection has no player lead yet
         pk = max(1, int(j.get("pk", 1)))
-        rstk = bool(j.get("stk"))
-        wlead = max(j.get("lead", 0.0) - (time.time() - j["t"]), 0.0)
+        rstk = bool(j.get("stk")) and RST
+        wlead = max(j.get("lead", 0.0) - (time.time() - j["t"]), 0.0) if RST else 0.0
         log("resuming after an engine restart")
 except Exception:
     pass
@@ -673,8 +673,9 @@ if os.environ.get("COAX_NEWSTREAM"):
     rseen = None
     seen.clear()
     rpart = None
+    rstk = False   # the old stream's stuck flag must not send the new one straight to a backup
 cur = src
-pend = False
+pend = bool(os.environ.get("COAX_NEWSTREAM"))   # a hand switch continues the output timeline like a failover
 fbad = {}
 lpr = -1000000000.0
 def mark(u):
@@ -1173,6 +1174,9 @@ def writer():
             tout += cd * SPA
             with ql:
                 Qs[0] -= cd
+            if it[4] is not None and it[5] < len(d):
+                # Output end so far, part of a segment included: a hand switch continues the timeline from here.
+                oend = it[4] + off + (tpos(it[6], it[5], it[2]) if it[6] else it[2] * it[5] / max(len(d), 1))
             if it[5] >= len(d):
                 with ql:
                     Q.popleft()

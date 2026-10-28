@@ -575,3 +575,57 @@ class FeedsViewTest(unittest.TestCase):
         self.assertEqual(f[1]["blocked_until"], 2e9)
         self.assertFalse(f[0]["blocked"])
         self.assertTrue(f[2]["disabled"])
+
+
+class HandSwitchTest(unittest.TestCase):
+    def setUp(self):
+        hubmod.RESTART_DELAY = 0.05
+
+    def test_old_line_held_until_old_engine_is_dead(self):
+        cfg = config([provider("a", 1), provider("b", 1)],
+                     [channel(1, [("a", "s1"), ("b", "s2")]), channel(2, [("a", "s3")])])
+        h, eng = make(cfg, "--ignore-term")   # the old engine takes STOP_TIMEOUT to die
+        s = h.open("uuid-1", "ip", "ua")
+        r = Reader(s)
+        r.start()
+        self.assertTrue(wait_for(lambda: s.proc is not None and r.bytes > 0, 5))
+        old = s.proc
+        th = threading.Thread(target=h.switch, args=(1, 0, "b", "s2"))
+        th.start()
+        self.assertTrue(wait_for(lambda: s.provider_id == "b", 2))
+        self.assertIsNone(old.poll())
+        self.assertIsNone(h.open("uuid-2", "ip", "ua"))   # a/l1 still has the old engine on it
+        th.join(10)
+        self.assertIsNotNone(old.poll())
+        s2 = h.open("uuid-2", "ip", "ua")
+        self.assertEqual((s2.provider_id, s2.line_id), ("a", "l1"))
+        s2.close()
+        # The hand switch starts the new stream at once and is not counted as a crash.
+        self.assertTrue(wait_for(lambda: eng.count() >= 2, 3))
+        self.assertEqual(s.restarts, [])
+        r.stop()
+        self.assertTrue(r.finished.wait(10))
+        self.assertEqual(sum(l["used"] for l in h.line_status()), 0)
+
+    def test_switch_to_backup_provider_reuses_the_line_it_holds(self):
+        cfg = config([provider("p1", 1), provider("p2", 1)], [channel(1, [("p1", "a"), ("p2", "b"), ("p2", "c")])])
+        h, _ = make(cfg)
+        s = h.open("uuid-1", "ip", "ua")
+        h.backup_urls(1)
+        ref_b = sorted(hubmod.url_refs("fake://p2/l1/b"))[0]
+        s._watch("[hlsloop stream] stalled; switching to stream 2 of 3 [ref %s]" % ref_b)
+        self.assertEqual(s.extra_slots, [("p2", "l1")])
+        h.switch(1, 0, "p2", "c")
+        self.assertEqual((s.provider_id, s.line_id, s.extra_slots), ("p2", "l1", []))
+        used = {(l["provider_id"], l["line_id"]): l["used"] for l in h.line_status()}
+        self.assertEqual(used, {("p1", "l1"): 0, ("p2", "l1"): 1})
+        s.close()
+
+    def test_timeline_names_the_stream_by_id(self):
+        cfg = config([provider("p1", 1)], [channel(1, [("p1", "a"), ("p1", "b")])])
+        h, _ = make(cfg)
+        h._remember("fake://p1/l1/b", "p1", "l1", "b")
+        ref = sorted(hubmod.url_refs("fake://p1/l1/b"))[0]
+        line = "[hlsloop stream] stream 2 of 2 failed; not using it again for 60s [ref %s]" % ref
+        self.assertEqual(h._label(line, "Stream 2 of 2 failed; skipping it for a while"),
+                         "Stream b failed; skipping it for a while")

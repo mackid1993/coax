@@ -191,6 +191,7 @@ class Session:
         self.switch_msg = None      # why the engine is being restarted on another stream
         self.input_fmt = {}         # what the provider sends on the stream playing now ("video", "audio")
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
+        self.drop_after_kill = []   # slots a hand switch gave up; released once the old engine is dead
         self.cur_key = (provider.get("id"), str(stream.get("stream_id")))  # the stream playing now
         self.degraded = False       # last 10-minute status showed repeated failovers or long keepalive
         self.dead_retunes = 0       # retunes in a row without real video
@@ -440,6 +441,7 @@ class Session:
                     return
                 self.proc = None
             moved = False
+            hand = False
             if why in ("frozen", "dead"):
                 self.hub._health("problem", self.channel_id, self.cur_key, "frozen" if why == "frozen" else "novideo")
             if why == "frozen":
@@ -459,6 +461,7 @@ class Session:
             elif self.switch_msg:
                 self.event("failover", self.switch_msg, "warn")
                 self.switch_msg = None
+                hand = True   # chosen by hand, not a crash: start the new stream at once
             else:
                 log.warning("[%s] engine exited (code %s); restarting it on the same line", self.name, code)
                 self.event("restart", "Engine stopped (code %s); restarted on the same line" % code, "warn")
@@ -469,7 +472,7 @@ class Session:
             ka = self._keepalive()
             if ka:
                 yield ka
-            end = time.monotonic() + self._backoff()
+            end = time.monotonic() + (0 if hand else self._backoff())
             while True:
                 left = end - time.monotonic()
                 if left <= 0 or self.closed:
@@ -569,8 +572,9 @@ class Hub:
     def _release(self, session):
         """Give back the session's main slot and every backup slot it holds."""
         with self._lock:
-            keys = [(session.provider_id, session.line_id)] + list(session.extra_slots)
+            keys = [(session.provider_id, session.line_id)] + list(session.extra_slots) + list(session.drop_after_kill)
             session.extra_slots = []
+            session.drop_after_kill = []
             for key in keys:
                 self._drop_locked(session, key)
             if session in self._sessions:
@@ -608,7 +612,7 @@ class Hub:
         hit = self._refs.get(m.group(1)) if m else None
         if hit is None:
             return text
-        return re.sub(r"\bstream \d+ of \d+\b", "stream %s" % hit[2], text, count=1)
+        return re.sub(r"\b([Ss])tream \d+ of \d+\b", lambda m: "%stream %s" % (m.group(1), hit[2]), text, count=1)
 
     def unblock(self, channel_id, provider_id, stream_id):
         """Lift a Smart Standby block now (the Unblock button)."""
@@ -686,11 +690,13 @@ class Hub:
             if session.closed:
                 return False
             old = (session.provider_id, session.line_id)
+            # This session's own slot must not count against the provider-wide limit when it changes lines.
+            self._drop_locked(session, old)
             new = next((l for l in self._lines(provider)
                         if l.get("id") != session.line_id and self._free_locked(provider, l)), None)
             if new is None:
+                self._hold_locked(session, old)
                 return False
-            self._drop_locked(session, old)
             self._hold_locked(session, (session.provider_id, new.get("id")))
             old_line = (session.line_id, session.line_name)
             session.line_id, session.line_name = new.get("id"), new.get("name") or new.get("id")
@@ -917,22 +923,28 @@ class Hub:
             if s is None or s.closed:
                 raise LookupError("this channel is not playing")
             same = provider_id == str(s.provider_id)
+            reuse = False
             if same:
                 line = next((l for l in provider.get("lines") or [] if l.get("id") == s.line_id), None)
             else:
-                line = next((l for l in self._lines(provider) if self._free_locked(provider, l)), None)
-                if line is not None:
-                    self._hold_locked(s, (provider_id, line.get("id")))
+                # A line this session already holds for a backup on that provider is free for it to use.
+                line = next((l for l in self._lines(provider) if (provider_id, l.get("id")) in s.extra_slots), None)
+                reuse = line is not None
+                if line is None:
+                    line = next((l for l in self._lines(provider) if self._free_locked(provider, l)), None)
+                    if line is not None:
+                        self._hold_locked(s, (provider_id, line.get("id")))
             if line is None:
                 raise ValueError("no free line on that stream's provider")
+        new_key = (provider_id, line.get("id"))
         try:
             url = self._stream_url(provider, line, stream_id)
         except Exception:  # noqa: BLE001
             url = None
         if not url:
-            if not same:
+            if not same and not reuse:
                 with self._lock:
-                    self._drop_locked(s, (provider_id, line.get("id")))
+                    self._drop_locked(s, new_key)
             raise ValueError("could not build that stream's address")
         try:
             from app.providers import stream_format
@@ -940,13 +952,20 @@ class Hub:
         except Exception:  # noqa: BLE001
             fmt = provider.get("format") or "hls"
         msg = why or "Switched to stream %s by hand" % stream_id
-        with self._lock:
+        # The session lock keeps the copy loop from starting an engine on the old address meanwhile: an engine
+        # it already started is in s.proc and gets stopped below, a later one starts on the new address.
+        with self._lock, s._lock:
+            if s.closed:
+                if not same and not reuse:
+                    self._drop_locked(s, new_key)
+                raise LookupError("this channel is not playing")
+            # The old engine may still be connected on the lines being given up: keep holding them until it
+            # is dead (kill before release), so no other tune can open a second connection on them.
             if not same:
-                self._drop_locked(s, (s.provider_id, s.line_id))
+                s.drop_after_kill.append((s.provider_id, s.line_id))
                 s.provider_id, s.provider_name = provider_id, provider.get("name") or provider_id
                 s.line_id, s.line_name = line.get("id"), line.get("name") or line.get("id")
-            for key in list(s.extra_slots):
-                self._drop_locked(s, key)
+            s.drop_after_kill.extend(k for k in s.extra_slots if not (reuse and k == new_key))
             s.extra_slots = []
             s.fmt, s.url, s.stream_id = fmt, url, stream_id
             s.cur_key, s.stream_no, s.input_fmt = (provider_id, stream_id), i + 1, {}
@@ -957,6 +976,10 @@ class Hub:
         log.info("[%s] %s", s.name, msg)
         if proc is not None:
             s._kill(proc, close_stdout=False)   # the copy loop restarts the engine on the new stream
+        with self._lock:
+            for key in s.drop_after_kill:
+                self._drop_locked(s, key)
+            s.drop_after_kill = []
         return msg
 
     def feed_disabled(self, channel_id, provider_id, stream_id):
