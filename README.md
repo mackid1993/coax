@@ -504,6 +504,13 @@ WIREGUARD_ENDPOINT_PORT=
 # The IP is the DNS line of your WireGuard config file, or in your provider's help pages.
 # NEVER use your router or any LAN address (like 192.168.1.1:53): that sends every lookup outside the
 # VPN tunnel, which is a DNS leak.
+#
+# With choice B, Gluetun's log shows a warning like:
+#   WARN [dns] DNS server address 10.64.0.1 is not in local subnets, make sure to specify it in
+#   FIREWALL_OUTBOUND_SUBNETS as 10.64.0.1/32
+# Ignore it. Your VPN provider's DNS server is reached through the tunnel, which is what you want.
+# Do NOT add that address to LAN_SUBNETS: that would send DNS outside the tunnel, a DNS leak.
+# To confirm DNS works, look for "leak check report" and "Public IP address" a few lines later in the log.
 
 # ----- DNS_UPSTREAM_RESOLVER_TYPE --------------------------------------------------------------------
 # plain = use the address in DNS_UPSTREAM_PLAIN_ADDRESSES (choice B).
@@ -560,6 +567,9 @@ Everything from the table above applies, plus:
      Lookups then go through the tunnel to the provider, so nothing leaks to your ISP. Never use a LAN or
      router address here; that sends DNS outside the tunnel. Left empty, Gluetun uses its built-in encrypted
      DNS (DNS over TLS to Cloudflare), which also stays inside the tunnel.
+     Gluetun then logs `DNS server address ... is not in local subnets, make sure to specify it in
+     FIREWALL_OUTBOUND_SUBNETS`. Ignore it: do not add that address to `LAN_SUBNETS`, which would send DNS
+     outside the tunnel.
    - **A VPN Gluetun has no page for:** `VPN_SERVICE_PROVIDER=custom`, `VPN_TYPE=wireguard`, and all six
      `WIREGUARD_` values from its WireGuard config (`WIREGUARD_ENDPOINT_IP` must be an IP address). See
      Gluetun's [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
