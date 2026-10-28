@@ -106,6 +106,8 @@ def iapi(path):
 FF = shutil.which("ffmpeg") or "/usr/local/bin/ffmpeg"
 s = requests.Session()
 s.headers["User-Agent"] = ua
+PXE = [-1e9]   # when the provider last answered 407 Proxy Authentication Required (a line-wide hiccup, not one stream)
+s.hooks["response"].append(lambda r, *a, **k: PXE.__setitem__(0, mono()) if r.status_code == 407 else None)
 mono = time.monotonic
 BUSY = (429, 503, 509)
 run = 1
@@ -609,7 +611,8 @@ def handoff(why):
     nxt = None
     pt = mono()
     if not stalled:
-        log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
+        # During provider proxy errors the whole line hiccups; the hub then does not hold it against this stream.
+        log("stream %d of %d failed%s; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(cur), ref(cur)))
     cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
     for u in cand:
@@ -619,7 +622,7 @@ def handoff(why):
         if pr is not None:
             nxt = u
             break
-        log("backup stream %d of %d is not answering; not trying it again for %.0fs [ref %s]" % (fl.index(u) + 1, len(fl), mark(u), ref(u)))
+        log("backup stream %d of %d is not answering%s; not trying it again for %.0fs [ref %s]" % (fl.index(u) + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(u), ref(u)))
     if nxt is None:
         if not stalled:
             ost = got

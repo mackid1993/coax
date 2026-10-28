@@ -280,7 +280,9 @@ class Session:
             if "switching to stream" in line:
                 self.hub._follow(self, m.group(1))
             elif re.search(r"\b(failed|is not answering)\b", line):
-                self.hub._note_bad(m.group(1), self)
+                # A failure during the provider's proxy errors is the line's hiccup: try the stream last for a
+                # while, but do not count it against the stream in Smart Standby.
+                self.hub._note_bad(m.group(1), self, charge="during provider proxy errors" not in line)
         if "status: " in line:
             self.hub._history(self, line)
             m = re.search(r"(\d+) (?:switches|failovers), (\d+)s keepalive", line)
@@ -592,7 +594,7 @@ class Hub:
         entry = self._bad.get((provider_id, str(stream_id)))
         return bool(entry) and entry[0] > time.monotonic()
 
-    def _note_bad(self, ref, session=None):
+    def _note_bad(self, ref, session=None, charge=True):
         """An engine gave up on a stream: try it last everywhere for a while (60 s, doubling to 10 min)."""
         hit = self._refs.get(ref)
         if hit is None:
@@ -601,7 +603,7 @@ class Hub:
         with self._lock:
             strikes = (self._bad.get(key) or [0, 0])[1]
             self._bad[key] = [time.monotonic() + min(60 * 2 ** strikes, 600), strikes + 1]
-        if session is not None:
+        if session is not None and charge:
             self._health("problem", session.channel_id, key, "dead")
 
     def _label(self, line, text=None):

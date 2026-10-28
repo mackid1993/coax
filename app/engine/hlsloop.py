@@ -114,6 +114,8 @@ if HSX.search(src):
 FF = shutil.which("ffmpeg") or "/usr/local/bin/ffmpeg"
 s = requests.Session()
 s.headers["User-Agent"] = ua
+PXE = [-1e9]   # when the provider last answered 407 Proxy Authentication Required (a line-wide hiccup, not one stream)
+s.hooks["response"].append(lambda r, *a, **k: PXE.__setitem__(0, mono()) if r.status_code == 407 else None)
 mono = time.monotonic
 BUSY = (429, 503, 509)
 AV = {1, 2, 3, 4, 6, 15, 17, 27, 36, 129, 135}
@@ -737,7 +739,8 @@ def handoff(why, depth=None, fl=None):
     nxt = None
     pt = mono()
     if not stalled:
-        log("stream %d of %d failed; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), mark(cur), ref(cur)))
+        # During provider proxy errors the whole line hiccups; the hub then does not hold it against this stream.
+        log("stream %d of %d failed%s; not using it again for %.0fs [ref %s]" % (i0 + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(cur), ref(cur)))
     cand = [u for u in fl if u != cur]  # coax lists the channel's streams best first (by score)
     cand = [u for u in cand if fbad.get(u, [0])[0] <= mono()] or sorted(cand, key=lambda u: fbad.get(u, [0])[0])
     for u in cand:
@@ -746,7 +749,7 @@ def handoff(why, depth=None, fl=None):
         if probe(u):
             nxt = u
             break
-        log("backup stream %d of %d is not answering; not trying it again for %.0fs [ref %s]" % (fl.index(u) + 1, len(fl), mark(u), ref(u)))
+        log("backup stream %d of %d is not answering%s; not trying it again for %.0fs [ref %s]" % (fl.index(u) + 1, len(fl), " during provider proxy errors" if mono() - PXE[0] < 30 else "", mark(u), ref(u)))
     if nxt is None:
         if not stalled:
             ost = got
@@ -1254,12 +1257,14 @@ while not gone():
                 rb = mono() + 2
                 time.sleep(2)
                 continue
-            PHG[0] = None
-            PHG[1] = False
-            if held >= 60:
+            c0 = cur
+            if held >= 60 and mono() - PXE[0] >= 30:   # not while the provider is still answering proxy errors
                 handoff("provider is serving an offline placeholder")
             else:
                 handoff("provider sent an ended playlist and the reserve ran low")
+            if cur != c0:   # switched: the next stream starts its own minute. Still here: keep counting.
+                PHG[0] = None
+                PHG[1] = False
             z = 5 if stalled else 0
             rb = mono() + z
             time.sleep(z)

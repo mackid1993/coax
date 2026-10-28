@@ -629,3 +629,24 @@ class HandSwitchTest(unittest.TestCase):
         line = "[hlsloop stream] stream 2 of 2 failed; not using it again for 60s [ref %s]" % ref
         self.assertEqual(h._label(line, "Stream 2 of 2 failed; skipping it for a while"),
                          "Stream b failed; skipping it for a while")
+
+
+class ProxyErrorBlameTest(unittest.TestCase):
+    def test_failure_during_proxy_errors_is_not_charged(self):
+        cfg = config([provider("p1", 1)], [channel(1, [("p1", "a"), ("p1", "b")])])
+        h, _ = make(cfg)
+
+        class Health:
+            calls = []
+
+            def problem(self, *a):
+                self.calls.append(a)
+        h.health = Health()
+        s = h.open("uuid-1", "ip", "ua")
+        ref = sorted(hubmod.url_refs("fake://p1/l1/a"))[0]
+        s._watch("[hlsloop stream] stream 1 of 2 failed during provider proxy errors; not using it again for 60s [ref %s]" % ref)
+        self.assertEqual(Health.calls, [])
+        self.assertTrue(h._is_bad("p1", "a"))   # still tried last for a while
+        s._watch("[hlsloop stream] stream 1 of 2 failed; not using it again for 120s [ref %s]" % ref)
+        self.assertEqual([c[2] for c in Health.calls], ["dead"])
+        s.close()
