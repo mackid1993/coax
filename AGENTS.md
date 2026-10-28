@@ -89,7 +89,7 @@ own while the DVR is connected:
 - Engine exits: restart on the same line, resuming from its state file (`COAX_RESTART=1` trusts it for 60 s).
 - Frozen (no bytes for 25 s after video flowed): kill and restart.
 - No real video for 90 s (only null packets): retune; every second retune moves to another free line of the
-  provider (`_move_line`, which resets backup slots and the playing stream).
+  provider (`_move_line`, which drops backup slots and keeps the stream that is playing).
 - Between engines the hub sends MPEG-TS null packets (only after video has flowed, only on a 188-byte boundary)
   so the DVR keeps the connection. Backoff doubles to 15 s.
 - While idle it checks whether the DVR closed the socket (`client_gone`, set by the server), so a slot is never
@@ -208,13 +208,14 @@ threads). `hlsloop.py` is the recommended path.
   switch, so while no backup answers the minute keeps counting. TS detects the placeholder by a redirect to
   `black.*`.
 - **TS short connections:** a connection that ends with under 15 s of video and under 60 s long counts in
-  `short`; only other errors reset it. Three in a row with reserve plus lead at 15 s or less hand off with
+  `short`; a longer connection or any other error resets it. Three in a row with reserve plus lead at 15 s or less hand off with
   `charge=False` (logged "failed after short connections", so the hub tries the stream last for a while but
   does not count it in Smart Standby) and reconnect at once, switched or not.
 - **Stream format (HLS first):** `providers.stream_format` picks the engine. A `.m3u8` address is always HLS;
   an Xtream `/live/<u>/<p>/<id>` address (`.ts` or no extension) is HLS unless the provider is set to `ts`
-  (hlsloop's `HSX` and `hub._HSX` rewrite it to `<id>.m3u8`); any other `.ts` address is TS; anything else
-  follows the provider's setting.
+  (hlsloop's `HSX` and `hub._HSX` rewrite it to `<id>.m3u8`); any other `.ts` address, and the short Xtream
+  form `/<u>/<p>/<id>` without `/live/` or an extension, is TS (no HLS form); anything else follows the
+  provider's setting.
 - **Hand switch state:** on `COAX_NEWSTREAM` both engines also clear `rcur`, so the stream the hub chose plays,
   not the old engine's last failover stream. The silent-audio guard's "has had sound" flag resets on every
   stream switch.

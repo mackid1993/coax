@@ -69,8 +69,9 @@ Channel names, providers and logos below are made up for the demo.
   suggested matches (same name, call sign, or provider guide ID).
 - **Tuner sharing**: a second viewer of the same channel shares the running stream and uses no extra line.
 - **Smart Standby**: switches to a backup only on real trouble, tries the least troubled backup first, blocks
-  streams that keep failing for a while (never deletes them), and moves the stream that proves stable to the top
-  of the channel. Changes appear under the bell with Undo. See [Smart Standby](#smart-standby).
+  streams that keep failing for a while (never deletes them), and moves the stream that proves stable ahead of
+  the troubled one (to the top when the troubled one was the main stream). Changes appear under the bell with
+  Undo. See [Smart Standby](#smart-standby).
 - **Never gives up on a stream.** While Channels DVR is connected, coax keeps recovering: a frozen engine is
   restarted, a stream with no video is retuned (alternating to another free line of the provider when there is one),
   and null packets hold the connection open in between, so a recording keeps going. Streams that failed recently
@@ -708,7 +709,7 @@ last resort.
 | No new video for 60 seconds | Switches to the next stream. It switches sooner when the reserve is nearly empty: on HLS after about three segments, on MPEG-TS after about 8 seconds. |
 | The feed's audio and video timestamps start more than 3 seconds apart | On HLS, keeps playing it for up to 30 seconds while it tries the next stream, then switches. On MPEG-TS, a backup like this is passed over at connect time. With no other stream it plays anyway. |
 | Slower than real time for 5 minutes | Switches to the next stream. On HLS that means below 0.75x while the reserve drains; on MPEG-TS, below 0.85x with the reserve nearly empty. A feed that is slow but keeps the reserve up never triggers a switch. |
-| A backup answers busy (429, 503, 509) when coax checks it | Not held against the backup (the provider may still count the stream just left); coax tries the next backup, and asks again a few seconds later if none answered. A backup that stays busy three times in a row is treated as not answering. |
+| A backup answers busy (429, 503, 509) when coax checks it | Not held against the backup (the provider may still count the stream just left); coax tries the next backup, and asks again a few seconds later if none answered. A backup that is still busy the fourth time in a row is treated as not answering. |
 | No backup on the channel | Keeps retrying the same feed until the provider comes back. |
 | Sound off its picture with matching timestamps | Not detected. Use **Switch** and **Disable** on the Status page. |
 
@@ -859,8 +860,8 @@ coax reads from the provider differs.
 - **M3U providers.** HLS comes first; MPEG-TS is used only when HLS is not possible. A stream whose URL ends
   in `.m3u8` is always read as HLS. An Xtream-style `/live/` address ending in `.ts` (or with no extension) is
   read through its HLS form while the provider is set to HLS, and as MPEG-TS only when it is set to MPEG-TS.
-  Any other `.ts` URL has no HLS form and is read as MPEG-TS. Other URLs follow the provider's *Stream
-  format*.
+  Any other `.ts` URL, and the short Xtream form `/<user>/<pass>/<id>` without `/live/` and without an
+  extension, has no HLS form and is read as MPEG-TS. Other URLs follow the provider's *Stream format*.
 - **Wrong format.** If the HLS engine gets something other than a playlist, the log shows
   `response is not an m3u8 playlist`; set the provider to MPEG-TS. If the MPEG-TS engine gets a playlist, it
   logs `this stream URL is HLS; set the provider format to HLS for it`.
@@ -1159,8 +1160,8 @@ Common lines:
 | `viewer buffer: Channels DVR source <source> is out of date, refreshing it` | The DVR's copy of coax's M3U was stale, so coax refreshed it. |
 | `catching up N segments` / `playlist stale Ns, re-resolving` | The provider stalled; the reserve covered it. |
 | `provider restarted the channel, rejoining at the live edge` | The provider restarted the channel. |
-| `...; switching to stream N of M` | Failover to the next stream. |
-| `stream N of M failed; not using it again for Ns` | A feed failed and is skipped for that long. |
+| `...; switching to stream <id>` | Failover to that stream (coax names streams by their stream id). |
+| `stream <id> failed; not using it again for Ns` | A feed failed and is skipped for that long. |
 | `audio and video are Ns apart in this feed; holding it back` | The provider sent audio and video out of step. |
 | `skipped segment N` | A segment could not be downloaded in time. |
 | `stream error (...); reconnect N in Ns` | MPEG-TS: the connection dropped. Normal once in a while. |
