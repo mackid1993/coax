@@ -454,3 +454,59 @@ class ClientGoneTest(unittest.TestCase):
         used = {(l["provider_id"], l["line_id"]): l["used"] for l in h.line_status()}
         self.assertEqual(used[("p2", "l1")], 0)
         s.close()
+
+
+class FrozenFeedBlockedEndToEnd(unittest.TestCase):
+    """A main stream that keeps freezing: the real hub reports each freeze to the real feed health,
+    and on the third within an hour the stream is blocked, the proven backup becomes main, and the bell
+    says so. Fake engine, temp folder, no provider."""
+
+    def test_three_freezes_block_main_and_promote_backup(self):
+        import copy
+        import tempfile
+        from app import feedhealth as fh
+
+        hubmod.RESTART_DELAY = 0.05
+        old_stall = hubmod.STALL_TIMEOUT
+        hubmod.STALL_TIMEOUT = 0.6
+        self.addCleanup(setattr, hubmod, "STALL_TIMEOUT", old_stall)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+
+        cfg = config([provider("p1", 0)], [channel(1, [("p1", "main"), ("p1", "b2")])])
+
+        class Store:
+            def get(self):
+                return cfg
+
+            def update(self, mutate):
+                c = copy.deepcopy(cfg)
+                r = mutate(c)
+                cfg.clear()
+                cfg.update(c)
+                return r
+
+        health = fh.FeedHealth(Store(), tmp.name)
+        clock = [1000.0]
+        real_time = fh.time.time
+        # Feed health counts one freeze per 2 minutes (one episode is one problem), so each freeze the
+        # hub reports is placed 10 minutes after the last, as in a real evening of a bad feed.
+        def tick():
+            clock[0] += 600
+            return clock[0]
+        fh.time.time = tick
+        self.addCleanup(setattr, fh.time, "time", real_time)
+        health.good(1, ("p1", "b2"), 30)          # the backup has played clean before: it is proven
+        h, eng = make(cfg, "--freeze-after", "0.3")
+        h.health = health
+        s = h.open("uuid-1", "ip", "ua")
+        r = Reader(s)
+        r.start()
+        order = lambda: [x["stream_id"] for x in cfg["channels"][0]["streams"]]
+        self.assertTrue(wait_for(lambda: order() == ["b2", "main"], 30), "order is %s" % order())
+        self.assertTrue(health.is_blocked(1, ("p1", "main"), now=clock[0]))
+        self.assertFalse(health.is_blocked(1, ("p1", "b2"), now=clock[0]))
+        self.assertGreaterEqual(eng.count(), 3)
+        texts = [n["text"] for n in health.list()["items"]]
+        self.assertTrue(any("main" in t and "Blocked" in t for t in texts), texts)
+        s.close()
