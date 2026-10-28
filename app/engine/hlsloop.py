@@ -313,6 +313,74 @@ def eofs(vk, av):
         return None
     return e[0] + dif(e[3], e[2]) + dif(vk, e[3]) * e[1] - av
 
+# ---- A/V timestamp monitor (diagnostic): latest audio and video PTS seen in the provider input and in coax's
+# output. Logged once a minute, and at once when the output gap moves by 0.5 s or more since the encoder
+# started; that shows whether audio and video separate in the feed or inside our own encoder.
+AVM = {"in": [None, None], "out": [None, None], "base": None, "t": 0.0, "last": None, "pos": 0, "rest": b""}
+AVML = threading.Lock()
+
+def avscan(d, side):
+    # Track the newest audio and video PES timestamps in a chunk of MPEG-TS. Never raises.
+    try:
+        st = AVM[side]
+        if side == "out":
+            d = AVM["rest"] + d
+            n = len(d) - len(d) % 188
+            AVM["rest"] = d[n:]
+            d = d[:n]
+        for i in range(0, len(d) - 187, 188):
+            p = d[i:i + 188]
+            if p[0] != 71 or not p[1] & 64:
+                continue
+            af = p[3] >> 4 & 3
+            if af == 2:
+                continue
+            o = 5 + p[4] if af == 3 else 4
+            if o + 14 <= 188 and p[o:o + 3] == b"\x00\x00\x01" and 192 <= p[o + 3] <= 239 and p[o + 7] & 128:
+                b = p[o + 9:o + 14]
+                v = ((b[0] >> 1 & 7) << 30 | b[1] << 22 | b[2] >> 1 << 15 | b[3] << 7 | b[4] >> 1) / 90000.0
+                st[1 if p[o + 3] >= 224 else 0] = v
+    except Exception:
+        pass
+
+def avgap(side):
+    a, v = AVM[side]
+    if a is None or v is None:
+        return None
+    g = a - v
+    # Fold the 33-bit PTS wrap (about 26.5 hours).
+    while g > 47721.86:
+        g -= 95443.72
+    while g < -47721.86:
+        g += 95443.72
+    return g
+
+def avreport():
+    try:
+        with AVML:
+            gi, go = avgap("in"), avgap("out")
+            if go is None:
+                return
+            if AVM["base"] is None:
+                AVM["base"] = go
+            moved = go - AVM["base"]
+            now = mono()
+            big = AVM["last"] is None or abs(moved - AVM["last"]) >= 0.5
+            if now - AVM["t"] >= 60 or big:
+                AVM["t"] = now
+                AVM["last"] = moved
+                log("av monitor: input audio-video %s, output audio-video %+.2fs (moved %+.2fs since this encoder started)"
+                    % ("%+.2fs" % gi if gi is not None else "n/a", go, moved))
+    except Exception:
+        pass
+
+def avreset():
+    with AVML:
+        AVM["out"] = [None, None]
+        AVM["base"] = None
+        AVM["last"] = None
+        AVM["rest"] = b""
+
 def ffcmd():
     b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
     if not TRANSCODE:
@@ -356,6 +424,7 @@ def remux(why=None, ofs=None):
     OFS[0] = ofs if ofs is not None else tout + 1.4 - ADJ[0]
     if old:
         EI.pop(old.pid, None)
+    avreset()
     ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE)
     FST[0] = mono()
     ADJ[0] = 0.0
@@ -425,6 +494,8 @@ def pump():
                 time.sleep(0.05)
             if not b:
                 continue
+        avscan(b, "out")
+        avreport()
         try:
             while b:
                 n = os.write(1, b)
@@ -448,6 +519,7 @@ def gone():
         return False
 
 def put(b):
+    avscan(b, "in")
     if TRANSCODE:
         note(b)
     try:

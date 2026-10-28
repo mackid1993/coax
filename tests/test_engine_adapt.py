@@ -291,3 +291,30 @@ class ViewerBufferMatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AvMonitorTest(unittest.TestCase):
+    def test_avscan_tracks_audio_and_video_pts(self):
+        import importlib.util, os
+        for name in ("hlsloop", "tsloop"):
+            src = open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", name + ".py")).read()
+            start = src.index("AVM = {")
+            end = src.index("def avreport")
+            ns = {"threading": __import__("threading")}
+            exec(src[start:end], ns)
+
+            def pes(sid, pts):
+                b = bytes([0x21 | ((pts >> 29) & 0x0E), (pts >> 22) & 0xFF, ((pts >> 14) & 0xFE) | 1,
+                           (pts >> 7) & 0xFF, ((pts << 1) & 0xFE) | 1])
+                body = bytes([0, 0, 1, sid, 0, 0, 0x80, 0x80, 5]) + b
+                pkt = bytes([0x47, 0x41, 0x00, 0x10]) + body
+                return pkt + b"\xff" * (188 - len(pkt))
+
+            ns["avscan"](pes(0xC0, 90000 * 10) + pes(0xE0, 90000 * 12), "in")
+            self.assertEqual(ns["AVM"]["in"], [10.0, 12.0])
+            self.assertAlmostEqual(ns["avgap"]("in"), -2.0)
+            # output side handles a chunk split mid-packet
+            data = pes(0xC0, 90000 * 5) + pes(0xE0, 90000 * 5)
+            ns["avscan"](data[:100], "out")
+            ns["avscan"](data[100:], "out")
+            self.assertAlmostEqual(ns["avgap"]("out"), 0.0)
