@@ -42,7 +42,7 @@ class BackupTests(unittest.TestCase):
         kinds = [b["kind"] for b in snapshots.list_backups(self.store)]
         self.assertIn("pre-restore", kinds)
         pre = os.path.join(snapshots.folder(self.store), result["pre_restore"])
-        self.assertEqual(json.load(open(pre))["server"]["base_url"], "http://two:7780")
+        self.assertEqual(snapshots._config_of(pre)["server"]["base_url"], "http://two:7780")
         for _ in range(5):
             snapshots.create(self.store, "auto")
         snapshots.prune(self.store, 2)
@@ -68,3 +68,37 @@ class BackupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FullBackupTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.store = configmod.ConfigStore(os.path.join(self.dir, "config.json"))
+        self.store.load()
+
+    def test_backup_includes_data_files_and_restores_them(self):
+        os.makedirs(os.path.join(self.dir, "cache", "history"))
+        open(os.path.join(self.dir, "cache", "feedhealth.json"), "w").write('{"feeds": {"a": 1}}')
+        open(os.path.join(self.dir, "notifications.json"), "w").write('[{"id": "1"}]')
+        open(os.path.join(self.dir, "cache", "history", "5.jsonl"), "w").write('{"t": 1}\n')
+        b = snapshots.create(self.store, "manual")
+        self.assertTrue(b["name"].endswith(".tar.gz"))
+        self.assertTrue(b["full"])
+        open(os.path.join(self.dir, "cache", "feedhealth.json"), "w").write('{"feeds": {}}')
+        os.remove(os.path.join(self.dir, "cache", "history", "5.jsonl"))
+        called = []
+        r = snapshots.restore(self.store, b["name"], on_data_restored=lambda: called.append(1))
+        self.assertIn("history/5.jsonl", r["files"])
+        self.assertEqual(json.load(open(os.path.join(self.dir, "cache", "feedhealth.json"))), {"feeds": {"a": 1}})
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "cache", "history", "5.jsonl")))
+        self.assertEqual(called, [1])
+
+    def test_old_json_backup_still_restores(self):
+        self.store.update(lambda c: c["server"].update(base_url="http://old:7780"))
+        os.makedirs(snapshots.folder(self.store), exist_ok=True)
+        name = "config-20260101-000000-manual.json"
+        open(os.path.join(snapshots.folder(self.store), name), "w").write(json.dumps(self.store.snapshot()))
+        self.store.update(lambda c: c["server"].update(base_url="http://new:7780"))
+        self.assertIn(name, [x["name"] for x in snapshots.list_backups(self.store)])
+        snapshots.restore(self.store, name)
+        self.assertEqual(self.store.get()["server"]["base_url"], "http://old:7780")

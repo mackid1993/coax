@@ -594,8 +594,8 @@ def syncswitch(u):
             SYNC["old"] = None
 
 def synccheck(old, new, u):
-    a_ = "/tmp/tsloop-sync-%d-a.ts" % os.getpid()
-    b_ = "/tmp/tsloop-sync-%d-b.ts" % os.getpid()
+    a_ = "/tmp/tsloop-sync-%d-%d-a.ts" % (os.getpid(), threading.get_ident())
+    b_ = "/tmp/tsloop-sync-%d-%d-b.ts" % (os.getpid(), threading.get_ident())
     r_ = {}
     try:
         with open(a_, "wb") as f:
@@ -683,6 +683,15 @@ def bye():
     killall()
     os._exit(0)
 
+def synctmp_clean():
+    # Sync-check clips of this engine; a stop in the middle of a check would otherwise leave them in /tmp.
+    try:
+        for n in os.listdir("/tmp"):
+            if n.startswith("tsloop-sync-%d-" % os.getpid()):
+                os.remove(os.path.join("/tmp", n))
+    except Exception:
+        pass
+
 def killall():
     k = fql.acquire(timeout=1)
     ps = list(fq)
@@ -694,7 +703,7 @@ def killall():
         except Exception:
             pass
 for g in (15, 2, 1):
-    signal.signal(g, lambda *a: (killall(), os._exit(0)))
+    signal.signal(g, lambda *a: (killall(), synctmp_clean(), os._exit(0)))
 Q = collections.deque()
 Qs = [0.0]
 ql = threading.Lock()

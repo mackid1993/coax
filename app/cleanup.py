@@ -56,7 +56,8 @@ def run(cfg, data_dir, tmp_dir=TMP_DIR, now=None):
         for name in os.listdir(tmp_dir):
             if re.match(r"^(hlsloop|tsloop)-", name):
                 path = os.path.join(tmp_dir, name)
-                if os.path.isfile(path) and _age(path, now) > DAY:
+                limit = 3600 if "-sync-" in name else DAY
+                if os.path.isfile(path) and _age(path, now) > limit:
                     removed += _remove(path)
     except OSError:
         pass

@@ -924,6 +924,15 @@ def bye():
     killall()
     os._exit(0)
 
+def synctmp_clean():
+    # Sync-check clips of this engine; a stop in the middle of a check would otherwise leave them in /tmp.
+    try:
+        for n in os.listdir("/tmp"):
+            if n.startswith("hlsloop-sync-%d-" % os.getpid()):
+                os.remove(os.path.join("/tmp", n))
+    except Exception:
+        pass
+
 def killall():
     with fql:
         ps = list(fq)
@@ -933,7 +942,7 @@ def killall():
         except Exception:
             pass
 for g in (15, 2, 1):
-    signal.signal(g, lambda *a: (killall(), os._exit(0)))
+    signal.signal(g, lambda *a: (killall(), synctmp_clean(), os._exit(0)))
 if rcur:
     cur = hsu(rcur)
 bw = re.compile("(?<![A-Z-])BANDWIDTH=(\\d+)")

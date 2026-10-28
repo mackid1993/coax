@@ -676,7 +676,7 @@ coax starts and then every 24 hours. It only ever touches the files listed here,
 | Channel health history (`history/<channel>.jsonl`) | `cache/history/` | the channel was deleted (after 24 hours), or the file was not written for 30 days |
 | Gracenote region index (`gracenote-index-*.json`) | `cache/` | not updated for 30 days; it is rebuilt the next time it is needed |
 
-It never deletes `config.json`, `config.json.bak`, config backups (those follow the backup *keep* setting),
+It never deletes `config.json`, `config.json.bak`, backups (those follow the backup *keep* setting),
 or anything that belongs to a provider, lineup or channel you still have. Everything it removes is a cache coax
 can rebuild. When it deletes something, the log says `cleanup: removed N old files`. There is no setting for
 it.

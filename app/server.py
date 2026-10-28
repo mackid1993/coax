@@ -515,9 +515,9 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/notifications/([0-9]+)/undo", "h_note_undo"),
         ("GET", r"/api/backups", "h_backups"),
         ("POST", r"/api/backups", "h_backup_create"),
-        ("POST", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)/restore", "h_backup_restore"),
-        ("GET", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)", "h_backup_download"),
-        ("DELETE", r"/api/backups/(config-[0-9A-Za-z.-]+\.json)", "h_backup_delete"),
+        ("POST", r"/api/backups/(config-[0-9A-Za-z.-]+\.(?:json|tar\.gz))/restore", "h_backup_restore"),
+        ("GET", r"/api/backups/(config-[0-9A-Za-z.-]+\.(?:json|tar\.gz))", "h_backup_download"),
+        ("DELETE", r"/api/backups/(config-[0-9A-Za-z.-]+\.(?:json|tar\.gz))", "h_backup_delete"),
         ("GET", r"/api/log/download", "h_log_download"),
         ("GET", r"/api/log", "h_log"),
     ]
@@ -1782,7 +1782,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_backup_restore(self, name):
         try:
-            return lazy("app.snapshots").restore(self.app.store, name)
+            return lazy("app.snapshots").restore(self.app.store, name, on_data_restored=self._reload_health)
         except FileNotFoundError:
             raise not_found("no backup named %s" % name)
         except (ValueError, configmod.ConfigError) as exc:
@@ -1793,8 +1793,15 @@ class Handler(BaseHTTPRequestHandler):
             data = lazy("app.snapshots").read(self.app.store, name)
         except (FileNotFoundError, ValueError):
             raise not_found("no backup named %s" % name)
-        self._send_bytes(200, data, "application/json", {"Content-Disposition": 'attachment; filename="%s"' % name,
+        ctype = "application/gzip" if name.endswith(".tar.gz") else "application/json"
+        self._send_bytes(200, data, ctype, {"Content-Disposition": 'attachment; filename="%s"' % name,
                                                          "Cache-Control": "no-store"})
+
+    def _reload_health(self):
+        if self.app.health is not None:
+            fresh = type(self.app.health)(self.app.store, self.app.store.data_dir)
+            with self.app.health.lock:
+                self.app.health.feeds, self.app.health.notes, self.app.health.pending = fresh.feeds, fresh.notes, {}
 
     def h_backup_delete(self, name):
         try:

@@ -64,7 +64,7 @@ function render() {
     <section class="card"><div class="card-head"><div><h2>Auto-match region</h2><p class="faint small">Where you watch from, for guide matching: Auto-match only trusts Gracenote stations in these areas&#39; lineups. Add more than one if you watch channels from several countries. Backup streams come only from the groups you picked for each provider.</p></div><button class="btn btn-sm" data-radd>${icon("plus")}Add region</button></div>
       <div class="card-body stack" id="rgList" style="gap:10px">${regionsHtml()}</div></section>
 
-    <section class="card"><div class="card-head"><div><h2>Backups</h2><p class="faint small">Copies of every setting, provider, channel and lineup, kept in <code>/data/backups</code>. Restoring backs up the current state first.</p></div><button class="btn btn-sm" data-bknow>${icon("download")}Back up now</button></div>
+    <section class="card"><div class="card-head"><div><h2>Backups</h2><p class="faint small">Copies of every setting, provider, channel and lineup, plus Smart Standby history, the bell and each channel's stream history, kept in <code>/data/backups</code>. Restoring backs up the current state first.</p></div><button class="btn btn-sm" data-bknow>${icon("download")}Back up now</button></div>
       <div class="card-body stack" style="gap:12px">
         <div class="row row-wrap" style="gap:16px;align-items:end">
           <label class="switch"><input type="checkbox" data-bk="enabled" ${d.backups.enabled ? "checked" : ""}><span class="track"></span><span>Daily backup</span></label>
