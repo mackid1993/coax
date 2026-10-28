@@ -316,7 +316,7 @@ def eofs(vk, av):
 def ffcmd():
     b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"]
     if not TRANSCODE:
-        return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
+        return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
     h = hwpick()
     fr = frs(TC_FPS)
     g = str(int(round(2 * TC_FPS)))
@@ -338,7 +338,7 @@ def ffcmd():
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
     af = "aresample=async=1:min_hard_comp=0.1:first_pts=0" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
+    return b + ["-probesize", "5000000", "-analyzeduration", "5000000", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-muxdelay", "0", "-muxpreload", "0", "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt
@@ -370,9 +370,6 @@ def remux(why=None, ofs=None):
             pass
 OWT = [mono()]
 NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
-
-import tsfix
-CT = tsfix.Cont(0)
 
 def pump():
     global skf
@@ -414,13 +411,6 @@ def pump():
             elif more or p.poll() is None:
                 continue
         b = os.read(p.stdout.fileno(), 65536) if r else b""
-        if b and TRANSCODE:
-            # A restarted encoder continues the picture exactly where the previous one stopped.
-            b, g_ = CT.feed(p.pid, b, mono())
-            if g_:
-                log("encoder restart: shifted the new encoder's timestamps by %.2fs so the picture continues where it left off" % g_)
-            if not b:
-                continue
         if not b:
             if more:
                 with fql:
@@ -430,8 +420,7 @@ def pump():
                 except Exception:
                     pass
                 shut.pop(p.pid, None)
-                t_ = CT.end(p.pid) if TRANSCODE else b""
-                b = t_ + b"\xff" * ((188 - (ob + len(t_)) % 188) % 188)
+                b = b"\xff" * ((188 - ob % 188) % 188)
             elif p.poll() is not None:
                 time.sleep(0.05)
             if not b:
@@ -710,16 +699,6 @@ def avcmp(old, new):
             f.write(new)
         c_ = sp.run(["nice", "-n", "10", sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "avcheck.py"), a_, b_, FF], capture_output=True, text=True, timeout=240)
         r_ = json.loads(c_.stdout or "{}")
-        o1 = r_.get("offset")
-        if o1 is not None and abs(o1) >= 2.0:
-            # One reading never blocks a stream: the later half of the new clip must give the same answer.
-            h_ = len(new) // 2 // 188 * 188
-            with open(b_, "wb") as f:
-                f.write(new[h_:])
-            c2 = sp.run(c_.args, capture_output=True, text=True, timeout=240)
-            o2 = json.loads(c2.stdout or "{}").get("offset")
-            if o2 is None or (o2 < 0) != (o1 < 0) or abs(o2 - o1) > 1.5:
-                r_ = {"offset": None, "why": "a second reading did not agree (%.1fs, then %s)" % (o1, "none" if o2 is None else "%.1fs" % o2)}
     except Exception as x:
         log("sync check: could not compare (%s)" % x)
         return None
@@ -1243,24 +1222,6 @@ def tpos(ix, x, dur):
             hi = md - 1
     return min(ix[lo][1], dur) if ix[lo][0] <= x else 0.0
 
-FMTU = [None]
-
-def fmtnote(u, d, dur):
-    # Describe the first segment of each stream played, for the Status card's "From provider" line.
-    if u == FMTU[0]:
-        return
-    FMTU[0] = u
-
-    def go():
-        try:
-            import fmtprobe
-            f = fmtprobe.describe(FF, bytes(d), dur)
-            if f:
-                log("provider format: " + json.dumps(f, ensure_ascii=False))
-        except Exception:
-            pass
-    threading.Thread(target=go, daemon=True).start()
-
 def enq(it):
     with ql:
         Q.append(it)
@@ -1612,7 +1573,6 @@ while not gone():
                 rpart = None
             enq(["seg", d, q["d"] or tgt, n, p0, o])
             synckeep(cur, d, q["d"] or tgt)
-            fmtnote(cur, d, q["d"] or tgt)
             dq.append((mono(), q["d"] or tgt))
             ns += 1
             last = n
