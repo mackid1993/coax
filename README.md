@@ -116,7 +116,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all} # NVIDIA only. all, or one GPU's UUID. Does nothing unless DOCKER_RUNTIME=nvidia
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
-      - ${DATA_DIR:-./data}:/data # Everything coax keeps: settings, backups, caches. Created on first start; coax fixes its ownership itself
+      - ${HOST_DIR:-.}/data:/data # Everything coax keeps (settings, backups, caches) goes in a data folder inside HOST_DIR. Created on first start; coax fixes its ownership itself
     restart: unless-stopped
 ```
 
@@ -129,7 +129,7 @@ services:
 TAG=latest
 CONTAINER_NAME=coax
 HOST_PORT=7780
-DATA_DIR=./data
+HOST_DIR=/mnt/user/appdata/coax
 TZ=America/New_York
 GPU_DEVICE=/dev/null
 DOCKER_RUNTIME=runc
@@ -142,7 +142,7 @@ DOCKER_RUNTIME=runc
 | `TAG` | `latest` | Image version. `latest` is the newest release; set a version number (for example `1.0.3`) to freeze one. |
 | `CONTAINER_NAME` | `coax` | Container name. |
 | `HOST_PORT` | `7780` | Port for the web UI and the streams. Base URL in coax Settings must use it. |
-| `DATA_DIR` | `./data` | Where coax keeps everything on the host. |
+| `HOST_DIR` | `.` (the compose folder) | The folder for coax on the host, for example `/mnt/user/appdata/coax` on Unraid. coax keeps everything in a `data` folder inside it. |
 | `TZ` | `Etc/UTC` | Your timezone, for log timestamps and the daily backup. |
 | `GPU_DEVICE`, `DOCKER_RUNTIME` | `/dev/null`, `runc` | GPU transcoding. See [GPU transcoding](#gpu-transcoding). |
 
@@ -222,7 +222,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all} # NVIDIA only. all, or one GPU's UUID. Does nothing unless DOCKER_RUNTIME=nvidia
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
-      - ${DATA_DIR:-./data}:/data # Everything coax keeps: settings, backups, caches. Created on first start; coax fixes its ownership itself
+      - ${HOST_DIR:-.}/data:/data # Everything coax keeps (settings, backups, caches) goes in a data folder inside HOST_DIR. Created on first start; coax fixes its ownership itself
     restart: unless-stopped
 ```
 
@@ -236,7 +236,7 @@ TAG=latest
 CONTAINER_NAME=coax
 VPN_CONTAINER_NAME=coax-gluetun
 HOST_PORT=7780
-DATA_DIR=./data
+HOST_DIR=/mnt/user/appdata/coax
 TZ=America/New_York
 GPU_DEVICE=/dev/null
 DOCKER_RUNTIME=runc

@@ -189,7 +189,7 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 - Release: `gh workflow run image.yml -f version=X -f tag=latest`; it tests, smoke-runs the image, then pushes
   `ghcr.io/mackid1993/coax:X` and `:latest` (amd64).
 - Compose: `docker-compose.yml` and `docker-compose.vpn.yml` need no editing; every setting is a
-  `${VAR:-default}` read from `.env` (`TAG`, `CONTAINER_NAME`, `HOST_PORT`, `DATA_DIR`, `TZ`, `GPU_DEVICE`,
+  `${VAR:-default}` read from `.env` (`TAG`, `CONTAINER_NAME`, `HOST_PORT`, `HOST_DIR` (coax appends `/data`), `TZ`, `GPU_DEVICE`,
   `DOCKER_RUNTIME`, plus the common Gluetun values; `LAN_SUBNETS` and `VPN_SERVICE_PROVIDER` are required). The README embeds these files and the
   `.env` examples verbatim in collapsed blocks; change them together.
 - Deploy on Apollo (only when the owner agrees): back up `config.json`, then in

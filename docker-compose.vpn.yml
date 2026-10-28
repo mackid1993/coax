@@ -52,5 +52,5 @@ services:
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all} # NVIDIA only. all, or one GPU's UUID. Does nothing unless DOCKER_RUNTIME=nvidia
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
-      - ${DATA_DIR:-./data}:/data # Everything coax keeps: settings, backups, caches. Created on first start; coax fixes its ownership itself
+      - ${HOST_DIR:-.}/data:/data # Everything coax keeps (settings, backups, caches) goes in a data folder inside HOST_DIR. Created on first start; coax fixes its ownership itself
     restart: unless-stopped
