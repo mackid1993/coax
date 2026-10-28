@@ -192,8 +192,13 @@ def prune(store, keep):
 
 
 def _done_today(store):
+    # By file name only: list_backups() opens every archive, too costly for a check every 30 s.
     today = time.strftime("config-%Y%m%d-")
-    return any(b["name"].startswith(today) and b["kind"] == "auto" for b in list_backups(store))
+    try:
+        names = os.listdir(folder(store))
+    except OSError:
+        return False
+    return any(n.startswith(today) and (m := NAME.match(n)) and m.group(1) == "auto" for n in names)
 
 
 def start(store, interval=30):
