@@ -12,8 +12,17 @@ class RedactTests(unittest.TestCase):
         out = hub._redact(line)
         self.assertNotIn("secret", out)
         self.assertNotIn("hunter2", out)
-        self.assertIn("/live/u/********/123.m3u8", out)
-        self.assertIn("username=u", out)
+        self.assertIn("/live/********/********/123.m3u8", out)
+        self.assertIn("username=********", out)
+
+    def test_guide_error_line(self):
+        from app import main
+        import logging
+        rec = logging.LogRecord("coax.guide.xmltv", logging.WARNING, __file__, 1, "XMLTV refresh failed for provider %s: %s",
+                                ("p1", "Max retries exceeded with url: /xmltv.php?username=alice9&password=hunter2"), None)
+        main._Redact().filter(rec)
+        self.assertNotIn("alice9", rec.getMessage())
+        self.assertNotIn("hunter2", rec.getMessage())
 
     def test_plain_line_unchanged(self):
         self.assertEqual(hub._redact("reserve: refilled to 37s"), "reserve: refilled to 37s")

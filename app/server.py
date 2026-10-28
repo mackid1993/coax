@@ -112,6 +112,8 @@ class RingLogHandler(logging.Handler):
             message = record.getMessage()
             if record.exc_info:
                 message += "\n" + logging.Formatter().formatException(record.exc_info)
+            elif record.exc_text:
+                message += "\n" + record.exc_text
             entry = {
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record.created))
                 + ".%03d" % int(record.msecs),

@@ -17,6 +17,24 @@ from app import server as servermod
 log = logging.getLogger("coax")
 
 
+class _Redact(logging.Filter):
+    """Masks provider usernames and passwords in every log record, whoever logged it."""
+
+    def filter(self, record):
+        from app.hub import _redact
+        try:
+            msg = record.getMessage()
+            clean = _redact(msg)
+            if clean != msg:
+                record.msg, record.args = clean, None
+            if record.exc_info:
+                record.exc_text = _redact(logging.Formatter().formatException(record.exc_info))
+                record.exc_info = None
+        except Exception:  # noqa: BLE001 - logging must never raise
+            pass
+        return True
+
+
 def setup_logging():
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -24,8 +42,10 @@ def setup_logging():
         root.removeHandler(handler)
     console = logging.StreamHandler(sys.stderr)
     console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    console.addFilter(_Redact())
     root.addHandler(console)
     servermod.LOG_BUFFER.setLevel(logging.INFO)
+    servermod.LOG_BUFFER.addFilter(_Redact())
     root.addHandler(servermod.LOG_BUFFER)
     # The request handler logs each request at DEBUG; keep urllib3 chatter out of the UI log.
     logging.getLogger("urllib3").setLevel(logging.WARNING)

@@ -1222,6 +1222,24 @@ def tpos(ix, x, dur):
             hi = md - 1
     return min(ix[lo][1], dur) if ix[lo][0] <= x else 0.0
 
+FMTU = [None]
+
+def fmtnote(u, d, dur):
+    # Describe the first segment of each stream played, for the Status card's "From provider" line.
+    if u == FMTU[0]:
+        return
+    FMTU[0] = u
+
+    def go():
+        try:
+            import fmtprobe
+            f = fmtprobe.describe(FF, bytes(d), dur)
+            if f:
+                log("provider format: " + json.dumps(f, ensure_ascii=False))
+        except Exception:
+            pass
+    threading.Thread(target=go, daemon=True).start()
+
 def enq(it):
     with ql:
         Q.append(it)
@@ -1573,6 +1591,7 @@ while not gone():
                 rpart = None
             enq(["seg", d, q["d"] or tgt, n, p0, o])
             synckeep(cur, d, q["d"] or tgt)
+            fmtnote(cur, d, q["d"] or tgt)
             dq.append((mono(), q["d"] or tgt))
             ns += 1
             last = n

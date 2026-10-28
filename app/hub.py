@@ -103,13 +103,13 @@ def _default_stream_url(provider, line, stream_id):
 
 
 _REDACT = [
-    (re.compile(r"(/(?:live|hls|movie|series|timeshift)/[^/\s]+/)[^/\s]+/"), r"\1********/"),
-    (re.compile(r"((?:password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
+    (re.compile(r"(/(?:live|hls|movie|series|timeshift)/)[^/\s]+/[^/\s]+/"), r"\1********/********/"),
+    (re.compile(r"((?:username|user|password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
 ]
 
 
 def _redact(text):
-    """Hide provider passwords in engine log lines (stream URLs carry them)."""
+    """Hide provider usernames and passwords in log text (stream, API and guide URLs carry them)."""
     for pattern, repl in _REDACT:
         text = pattern.sub(repl, text)
     return text
@@ -192,6 +192,7 @@ class Session:
         self.reserve_empty = False  # engine says video only arrives as fast as the provider sends it
         self.events = collections.deque(maxlen=60)  # what the engine corrected, newest last
         self.stream_no = 1          # which of the channel's streams is playing (1 = main)
+        self.input_fmt = {}         # what the provider sends on the stream playing now ("video", "audio")
         self.extra_slots = []       # (provider_id, line_id) held for backups on other providers
         self.cur_key = (provider.get("id"), str(stream.get("stream_id")))  # the stream playing now
         self.degraded = False       # last 10-minute status showed repeated failovers or long keepalive
@@ -261,6 +262,7 @@ class Session:
                 if kind != "transcode" and not startup:
                     self.event(kind, text, level)
                 if kind == "failover":
+                    self.input_fmt = {}
                     try:
                         self.stream_no = int(m.group(1))
                     except (IndexError, ValueError, TypeError):
@@ -285,6 +287,12 @@ class Session:
                 self.degraded = int(m.group(1)) >= 2 or int(m.group(2)) >= 30
                 if int(m.group(1)) == 0 and int(m.group(2)) < 10:
                     self.hub._health("good", self.channel_id, self.cur_key, 10)
+        m = re.search(r"provider format: (\{.*\})$", line)
+        if m:
+            try:
+                self.input_fmt = {k: str(v) for k, v in json.loads(m.group(1)).items() if k in ("video", "audio")}
+            except ValueError:
+                pass
         m = re.search(r"transcoding with (.+)$", line)
         if m:
             self.encoder = m.group(1).strip()
@@ -860,6 +868,7 @@ class Hub:
                           "reserve": self._live_reserve(s) if self._live_reserve(s) is not None else s.reserve,
                           "empty": s.reserve_empty},
                 "stream_no": s.stream_no,
+                "input": s.input_fmt,
                 "degraded": s.degraded,
                 "events": list(s.events)[-25:],
                 "engine_pid": proc.pid if proc is not None and proc.poll() is None else None,

@@ -713,6 +713,24 @@ wput = mono()
 if prim is not None and prim in dl:
     qend = dl[prim] + off
 
+FMTU = [None]
+
+def fmtnote(u, d, dur):
+    # Describe the first segment of each stream played, for the Status card's "From provider" line.
+    if u == FMTU[0]:
+        return
+    FMTU[0] = u
+
+    def go():
+        try:
+            import fmtprobe
+            f = fmtprobe.describe(FF, bytes(d), dur)
+            if f:
+                log("provider format: " + json.dumps(f, ensure_ascii=False))
+        except Exception:
+            pass
+    threading.Thread(target=go, daemon=True).start()
+
 def enq(it):
     with ql:
         Q.append(it)
@@ -1206,6 +1224,7 @@ def conn(r):
         if out:
             enq(["seg", bytes(out), adv, dict(last), cur, ix, 0, 0, 0.0])
             synckeep(cur, bytes(out), adv)
+            fmtnote(cur, out, adv)
         if jump is not None and jump < 0:
             raise ValueError("timeline jumped %.0fs inside the stream" % jump)
 

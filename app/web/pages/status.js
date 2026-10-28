@@ -135,6 +135,7 @@ function cardInner(x, key) {
         <div><div class="stat-label">Uptime</div><div class="stat-value">${fmtDuration(x.uptime)}</div></div>
       </div>
       <div class="row row-wrap" style="gap:6px">${tcBadge(x)}${speedBadge(x)}${feedBadge(x)}${x.degraded ? `<span class="badge badge-warn" title="The last 10 minutes had repeated failovers or long gaps without video. coax is still recovering it on its own."><span class="dot"></span>Unsteady feed</span>` : ""}</div>
+      ${fmtHtml(x)}
       ${eventsHtml(x)}
       <div class="faint small" style="display:flex;gap:10px;flex-wrap:wrap"><span>${fmtBytes(x.bytes)} sent</span>${x.restarts ? `<span style="color:var(--warn)">${x.restarts} restart${x.restarts === 1 ? "" : "s"}</span>` : ""}</div>
       ${clients.length ? `<div class="client-list">${clients.map((c) => `<span class="chip" title="${esc(c.user_agent || "")}" style="padding-right:10px">${icon("users", 'style="width:12px;height:12px"')}<span class="num">${esc(c.ip)}</span>${c.connected ? `<span class="faint">${fmtDuration(c.connected > 1e9 ? Date.now() / 1000 - c.connected : c.connected)}</span>` : ""}</span>`).join("")}</div>` : ""}`;
@@ -145,6 +146,12 @@ function tcBadge(x) {
   if (t.on) return `<span class="badge badge-ok" title="Encoding with ${esc(t.encoder || "")}"><span class="dot pulse"></span>Transcoding ${esc(t.profile || "")} · ${esc(/NVENC/.test(t.encoder) ? "NVENC" : /VAAPI/.test(t.encoder) ? "VAAPI" : "CPU")}</span>`;
   if (t.profile && t.profile !== "off") return `<span class="badge badge-warn" title="Transcoding is set but the engine has not reported its encoder yet"><span class="dot"></span>Transcode ${esc(t.profile)} starting</span>`;
   return `<span class="badge" title="Streams pass through untouched"><span class="dot" style="opacity:.5"></span>Passthrough</span>`;
+}
+function fmtHtml(x) {
+  const f = x.input || {};
+  if (!f.video && !f.audio) return "";
+  return `<div class="src-fmt" title="The format the provider sends, before coax touches it. With transcoding on, Channels DVR gets coax's re-encoded stream instead."><span class="badge">From provider</span>
+    <div class="src-fmt-lines small num">${f.video ? `<div>${esc(f.video)}</div>` : ""}${f.audio ? `<div>${esc(f.audio)}</div>` : ""}</div></div>`;
 }
 function feedBadge(x) {
   const n = Number(x.stream_no) || 1;
