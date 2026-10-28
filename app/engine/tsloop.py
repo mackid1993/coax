@@ -305,6 +305,9 @@ def remux(why=None):
             pass
 NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
 
+import tsfix
+CT = tsfix.Cont(0)
+
 def pump():
     global skf
     ob = 0
@@ -347,6 +350,13 @@ def pump():
             elif more or p.poll() is None:
                 continue
         b = os.read(p.stdout.fileno(), 65536) if r else b""
+        if b and TRANSCODE:
+            # A restarted encoder continues the picture exactly where the previous one stopped.
+            b, g_ = CT.feed(p.pid, b, mono())
+            if g_:
+                log("encoder restart: shifted the new encoder's timestamps by %.2fs so the picture continues where it left off" % g_)
+            if not b:
+                continue
         if not b:
             if more:
                 with fql:
@@ -356,7 +366,8 @@ def pump():
                 except Exception:
                     pass
                 shut.pop(p.pid, None)
-                b = b"\xff" * ((188 - ob % 188) % 188)
+                t_ = CT.end(p.pid) if TRANSCODE else b""
+                b = t_ + b"\xff" * ((188 - (ob + len(t_)) % 188) % 188)
             elif p.poll() is not None:
                 time.sleep(0.05)
             if not b:
