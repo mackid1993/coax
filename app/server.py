@@ -272,9 +272,40 @@ class App:
             self.refresh_results[pid] = result
         return result
 
+    def provider_num(self, channel):
+        """The provider's own channel number for a channel's first stream ("" when unknown)."""
+        ref = (channel.get("streams") or [None])[0]
+        if not ref:
+            return ""
+        try:
+            entry = self.catalogs.get(ref["provider"])
+        except ApiError:
+            return ""
+        stream = entry["by_id"].get(ref["stream_id"]) if entry else None
+        return str((stream or {}).get("num") or "")
+
+    def with_provider_numbers(self, cfg):
+        cfg = copy.deepcopy(cfg)
+        for ch in cfg["channels"]:
+            ch["_pnum"] = self.provider_num(ch)
+        return cfg
+
+    def lineup_m3u(self, cfg, lineup_id):
+        """A lineup's M3U as Channels DVR gets it (provider numbers applied when the lineup sorts by them).
+        The DVR sync compares this text, so a provider renumbering is pushed like any other change."""
+        if find_lineup(cfg, lineup_id).get("sort") == "provider":
+            cfg = self.with_provider_numbers(cfg)
+        return lazy("app.guide.output").m3u(cfg, lineup_id)
+
     def on_refresh(self, provider, report):
         """Hook after every successful refresh (manual or scheduled): auto_add new streams. Returns count."""
         self.catalogs.invalidate(provider.get("id"))
+        if self.dvr is not None:
+            # New provider numbers change the M3U of lineups sorted by them; the syncer pushes only real changes.
+            try:
+                self.dvr.on_change(None, None)
+            except Exception:  # noqa: BLE001 - never break a refresh
+                log.exception("could not start a Channels DVR sync after the refresh of %s", provider.get("id"))
         try:
             self._apply_renamed(provider.get("id"), report.get("renamed") or {})
         except Exception:  # noqa: BLE001 - never break a refresh
@@ -721,9 +752,7 @@ class Handler(BaseHTTPRequestHandler):
         find_lineup(cfg, lineup_id)
         if not (cfg["server"].get("base_url") or "").strip():
             raise ApiError(409, "Set the Base URL in coax Settings first")
-        if find_lineup(cfg, lineup_id).get("sort") == "provider":
-            cfg = self._with_provider_numbers(cfg)
-        text = lazy("app.guide.output").m3u(cfg, lineup_id)
+        text = self.app.lineup_m3u(cfg, lineup_id)
         self._send_bytes(200, text.encode("utf-8"), "audio/x-mpegurl; charset=utf-8", {"Cache-Control": "no-cache"})
 
     def h_output_xmltv(self, lineup_id):
@@ -1082,21 +1111,10 @@ class Handler(BaseHTTPRequestHandler):
         return view
 
     def _provider_num(self, channel):
-        ref = (channel.get("streams") or [None])[0]
-        if not ref:
-            return ""
-        try:
-            entry = self.app.catalogs.get(ref["provider"])
-        except ApiError:
-            return ""
-        stream = entry["by_id"].get(ref["stream_id"]) if entry else None
-        return str((stream or {}).get("num") or "")
+        return self.app.provider_num(channel)
 
     def _with_provider_numbers(self, cfg):
-        cfg = copy.deepcopy(cfg)
-        for ch in cfg["channels"]:
-            ch["_pnum"] = self._provider_num(ch)
-        return cfg
+        return self.app.with_provider_numbers(cfg)
 
     def _lineup_map(self, cfg):
         lineup_map = collections.defaultdict(list)
@@ -1824,7 +1842,7 @@ class Handler(BaseHTTPRequestHandler):
         """(module, syncer). The syncer is made on first use when main did not create one (tests)."""
         module = lazy("app.channels_dvr")
         if self.app.dvr is None:
-            self.app.dvr = module.Syncer(self.app.store, start=False)
+            self.app.dvr = module.Syncer(self.app.store, start=False, m3u_func=self.app.lineup_m3u)
         return module, self.app.dvr
 
     def _dvr_call(self, func, *args):

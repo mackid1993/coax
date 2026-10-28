@@ -289,6 +289,15 @@ class SyncerTests(DvrTestCase):
         self.assertEqual(len(self.xmltv_calls), 1)   # both lineup: XMLTV rebuilt first
         self.assertTrue(self.syncer.last_result("cable")["guide_started"])
 
+    def test_adding_a_disabled_channel_does_nothing(self):
+        def add_disabled(cfg):
+            cfg["channels"][1]["enabled"] = False
+            cfg["lineups"][0]["channels"].append(2)
+        self.store.update(add_disabled)
+        self.wait_idle()
+        self.assertEqual(self.fake.calls(), [])
+        self.assertEqual(self.xmltv_calls, [])
+
     def test_guide_id_change_downloads_guide(self):
         def new_station(cfg):
             cfg["channels"][0]["guide"]["xmltv_id"] = "cnn2.us"

@@ -60,11 +60,11 @@ def start_hub(store):
         return None
 
 
-def start_dvr_sync(store):
-    """Keep Channels DVR sources of added lineups in step with config changes."""
+def start_dvr_sync(store, m3u_func=None):
+    """Keep Channels DVR sources of added lineups in step with config changes and provider refreshes."""
     try:
         dvr = importlib.import_module("app.channels_dvr")
-        return dvr.Syncer(store).register()
+        return dvr.Syncer(store, m3u_func=m3u_func).register()
     except Exception:  # noqa: BLE001 - coax works without the DVR sync
         log.exception("Channels DVR sync failed to start")
         return None
@@ -125,7 +125,7 @@ def main(argv=None):
             hub.health = app.health
     except Exception:  # noqa: BLE001 - coax streams without feed health
         log.exception("feed health failed to start")
-    app.dvr = start_dvr_sync(store)
+    app.dvr = start_dvr_sync(store, app.lineup_m3u)
     try:
         importlib.import_module("app.snapshots").start(store)
     except Exception:  # noqa: BLE001 - backups are optional

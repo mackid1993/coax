@@ -333,6 +333,30 @@ class ProviderRoutes(ApiTestCase):
         channel = self.store.get()["channels"][0]
         self.assertEqual((channel["name"], channel["enabled"]), ("New", False))
 
+    def test_refresh_asks_the_dvr_sync_to_compare(self):
+        calls = []
+        self.app.dvr = types.SimpleNamespace(on_change=lambda old, new: calls.append(1))
+        provider = self.refreshed_provider()   # first download: nothing to compare yet
+        self.request("POST", "/api/providers/%s/refresh?wait=1" % provider["id"])
+        self.assertEqual(calls, [1])
+
+    def test_lineup_m3u_uses_provider_numbers_for_provider_sorted_lineups(self):
+        self.refreshed_provider()
+        self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p1", "stream_id": "1"}]})
+        seen = []
+        out = sys.modules["app.guide.output"]
+        real, out.m3u = out.m3u, lambda cfg, lineup: seen.append([c.get("_pnum") for c in cfg["channels"]]) or ""
+        try:
+            cfg = self.store.get()
+            self.app.lineup_m3u(cfg, cfg["lineups"][0]["id"])
+            self.assertEqual(seen, [[None]])
+            self.store.update(lambda c: c["lineups"][0].update(sort="provider"))
+            cfg = self.store.get()
+            self.app.lineup_m3u(cfg, cfg["lineups"][0]["id"])
+            self.assertIsNotNone(seen[1][0])
+        finally:
+            out.m3u = real
+
     def test_renamed_stream_ids_carry_over_to_channels(self):
         self.refreshed_provider()
         self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p1", "stream_id": "1"}]})
