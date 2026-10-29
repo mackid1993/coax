@@ -221,7 +221,6 @@ function renderFrameInner() {
       </div>
       ${S.pending.size ? pendingBar() : ""}
       ${S.selected.size ? selectionBar() : ""}
-      ${renumberBar()}
       <div class="table-wrap ch-wrap">
         <table class="table ch-table">
           <thead><tr>
@@ -417,11 +416,6 @@ async function onClick(e) {
       break;
     case "clear-filters": S.filter = "all"; S.q = ""; S.lineup = ""; S.group = ""; renderFrame(); break;
     case "autonumber": autoNumberModal(); break;
-    case "renumber": autoNumberModal(a.dataset.lineup); break;
-    case "renumber-dismiss":
-      try { localStorage.setItem(`coax.renumber.${a.dataset.lineup}`, a.dataset.sig); } catch {}
-      renderFrame();
-      break;
     case "automatch": autoMatch(); break;
     case "accept": busy(a, acceptChecked); break;
     case "check-high": checkHigh(); break;
@@ -575,41 +569,9 @@ async function deleteSelected() {
   } catch (e) { toastError("Delete failed", e); }
 }
 
-// A lineup that was auto-numbered remembers how (start, step, enabled only). Channels added or renamed since leave
-// its numbers out of sequence; the Channels page then offers to renumber it the same way. Never automatic: it
-// changes channel numbers in Channels DVR.
-function lineupOrder(lineup, onlyEnabled) {
-  return S.channels.filter((c) => lineupsOf(c).includes(lineup.id) && (!onlyEnabled || c.enabled)).sort(sorter(lineup.sort || "manual"));
-}
-function outOfSequence(lineup) {
-  const a = lineup.autonumber;
-  if (!a) return 0;
-  let n = Number(a.start), bad = 0;
-  for (const c of lineupOrder(lineup, a.only_enabled)) {
-    if (String(c.number) !== (Number.isInteger(n) ? String(n) : n.toFixed(1))) bad++;
-    n += Number(a.step);
-  }
-  return bad;
-}
-function renumberBar() {
-  for (const l of S.lineups) {
-    const bad = outOfSequence(l);
-    if (!bad) continue;
-    const sig = lineupOrder(l, l.autonumber.only_enabled).map((c) => `${c.id}:${c.number}`).join();
-    let seen = null;
-    try { seen = localStorage.getItem(`coax.renumber.${l.id}`); } catch {}
-    if (seen === sig) continue;
-    return `<div class="selection-bar">${icon("hash")}<span><b>${esc(l.name)}</b>: ${bad} channel${bad === 1 ? " is" : "s are"} out of sequence since you last auto-numbered it (new or renamed channels). Renumber with the same settings?</span>
-      <span class="spacer"></span>
-      <button class="btn btn-sm btn-ghost" data-act="renumber-dismiss" data-lineup="${esc(l.id)}" data-sig="${esc(sig)}">Not now</button>
-      <button class="btn btn-sm btn-primary" data-act="renumber" data-lineup="${esc(l.id)}">${icon("hash")}Renumber</button></div>`;
-  }
-  return "";
-}
-
-function autoNumberModal(preset) {
-  const sel = preset ? 0 : S.selected.size;
-  const lineupChoices = S.lineups.map((l) => `<option value="${esc(l.id)}" ${(preset || S.lineup) === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+function autoNumberModal() {
+  const sel = S.selected.size;
+  const lineupChoices = S.lineups.map((l) => `<option value="${esc(l.id)}" ${S.lineup === l.id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   const m = openModal({
     title: "Auto-number channels",
     body: `<div class="form-grid">
@@ -626,15 +588,8 @@ function autoNumberModal(preset) {
     const lid = $("#anLineup", m.el).value;
     if (!lid) return visibleChannels().map((c) => c.id);
     const lineup = S.lineups.find((l) => l.id === lid);
-    return lineup ? lineupOrder(lineup, false).map((c) => c.id) : [];
-  };
-  // Start from the settings this lineup was last auto-numbered with.
-  const prefill = () => {
-    const a = S.lineups.find((l) => l.id === $("#anLineup", m.el).value)?.autonumber;
-    if (!a) return;
-    $("#anStart", m.el).value = a.start;
-    $("#anStep", m.el).value = a.step;
-    $("#anOnly", m.el).checked = !!a.only_enabled;
+    const order = new Map((lineup?.channels || []).map((id, i) => [id, i]));
+    return S.channels.filter((c) => order.has(c.id)).sort(sorter(lineup?.sort || "manual")).map((c) => c.id);
   };
   const note = () => {
     const ids = new Set(pickIds());
@@ -642,22 +597,17 @@ function autoNumberModal(preset) {
     const shared = S.channels.filter((c) => ids.has(c.id) && lineupsOf(c).some((x) => x !== lid)).length;
     $("#anShared", m.el).textContent = `${ids.size} channels.` + (lid && shared ? ` ${shared} are also in another lineup and will get these numbers there too.` : "");
   };
-  $("#anLineup", m.el).onchange = () => { prefill(); note(); };
-  prefill();
+  $("#anLineup", m.el).onchange = note;
   note();
   $("[data-ok]", m.el).onclick = (e) => busy(e.currentTarget, async () => {
     const ids = pickIds();
-    const lid = sel ? "" : $("#anLineup", m.el).value;
-    const body = { start: Number($("#anStart", m.el).value) || 1, step: Number($("#anStep", m.el).value) || 1, ids, only_enabled: $("#anOnly", m.el).checked };
     try {
-      const r = await api.autonumber(lid ? { ...body, lineup: lid } : body);
-      const l = lid && S.lineups.find((x) => x.id === lid);
-      if (l) l.autonumber = { start: body.start, step: body.step, only_enabled: body.only_enabled };
+      const r = await api.autonumber({ start: Number($("#anStart", m.el).value) || 1, step: Number($("#anStep", m.el).value) || 1, ids, only_enabled: $("#anOnly", m.el).checked });
       const nums = r?.numbers || {};
       for (const [id, n] of Object.entries(nums)) { const c = chById(Number(id)); if (c) c.number = n; }
       toast("Renumbered", `${Object.keys(nums).length} channels`, "ok");
       m.close();
-      renderFrame();
+      renderRows();
     } catch (err) { toastError("Auto-number failed", err); }
   });
 }

@@ -433,11 +433,6 @@ class ChannelRoutes(ApiTestCase):
         self.assertEqual(self.store.get()["lineups"][0]["channels"], [3, 1, 2])
         status, result, _ = self.request("POST", "/api/channels/auto-number", {"start": 500, "step": 10})
         self.assertEqual(result["numbers"], {"3": "500", "1": "510", "2": "520"})
-        # ids are numbered in the order sent (a lineup's A to Z order), and the lineup remembers the settings
-        status, result, _ = self.request("POST", "/api/channels/auto-number",
-                                         {"start": 1, "step": 1, "ids": [2, 3, 1], "lineup": "main"})
-        self.assertEqual(result["numbers"], {"2": "1", "3": "2", "1": "3"})
-        self.assertEqual(self.store.get()["lineups"][0]["autonumber"], {"start": 1, "step": 1, "only_enabled": False})
         status, _, _ = self.request("POST", "/api/channels/bulk-update", {"ids": [1, 2], "set": {"enabled": False}})
         self.assertEqual(status, 200)
         self.assertEqual([c["enabled"] for c in self.store.get()["channels"]], [True, False, False])

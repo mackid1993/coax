@@ -1335,18 +1335,14 @@ class Handler(BaseHTTPRequestHandler):
             raise bad_request("step must be a positive number")
         ids = self._ids(body, required=False)
         only_enabled = body.get("only_enabled") is True
-        lineup_id = body.get("lineup") or None
 
         def mutate(cfg):
             targets = cfg["channels"]
             if ids is not None:
-                # Number in the order given: the UI sends a lineup's channels in that lineup's sort (A to Z...).
-                targets = [find_channel(cfg, cid) for cid in dict.fromkeys(ids)]
-            if lineup_id:
-                # Remembered so the Channels page can offer the same renumbering after channels are added.
-                lineup = next((l for l in cfg["lineups"] if l["id"] == lineup_id), None)
-                if lineup is not None:
-                    lineup["autonumber"] = {"start": start, "step": step, "only_enabled": only_enabled}
+                wanted = set(ids)
+                for cid in wanted:
+                    find_channel(cfg, cid)
+                targets = [c for c in targets if c["id"] in wanted]
             if only_enabled:
                 targets = [c for c in targets if c["enabled"]]
             number = start
