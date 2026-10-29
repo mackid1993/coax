@@ -412,6 +412,8 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   Settings (transcode help, region, backups, XMLTV sources), filters, stream rows and every dialog fit the
   screen. Status card: drag streams into a new order (saved with the streams endpoint's `order` mode, never
   switches). Checked by rendering every page and dialog at iPhone size against the real server.
+- **1.0.6-4** (Oct 29) Status page no longer jumps up when a card's corrections list was scrolled and the page
+  sits at the bottom (the list's scroll was restored before it was reopened, forcing a layout of a shorter page).
 
 ---
 
