@@ -126,6 +126,20 @@ class AuditFixes(ApiTestCase):
         self.assertNotIn("alice123", text)
         self.assertNotIn("s3cret!!", text)
 
+    def test_auto_match_takes_backups_only_from_picked_groups_none_when_none_are_picked(self):
+        from app import backups
+        seen = []
+        saved = backups.suggest
+        backups.suggest = lambda channel, catalogs, *a, **k: seen.append(
+            sorted(s["stream_id"] for c in catalogs.values() for s in c.get("streams") or [])) or []
+        self.addCleanup(setattr, backups, "suggest", saved)
+        self.refreshed_provider()   # picks US| NEWS
+        self.request("POST", "/api/channels", {"name": "CNN", "streams": [{"provider": "p1", "stream_id": "1"}]})
+        self.request("POST", "/api/automatch", {"ids": [1]})
+        self.request("PUT", "/api/providers/p1/groups", {"groups": []})
+        self.request("POST", "/api/automatch", {"ids": [1]})
+        self.assertEqual(seen, [["1", "2"], []])
+
 
 class GuideRefreshRequests(unittest.TestCase):
     def test_a_changed_xmltv_source_refreshes_the_guide_now_and_at_its_own_interval(self):

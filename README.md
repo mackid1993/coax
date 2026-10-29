@@ -604,7 +604,8 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    three lines; coax spreads tunes across them. Channel list and guide downloads use a line nobody is watching
    when there is one, so they only share a login with a playing stream when every line is in use.
 4. **Groups.** coax fetches the provider's live groups. Tick the ones you want (search helps with large
-   lists). Only streams in these groups are offered when adding channels. Optionally turn on *auto add* to
+   lists). Only streams in these groups are offered when adding channels, and only they are suggested as
+   backups by Auto-match. Optionally turn on *auto add* to
    add new streams in those groups as disabled channels at each refresh.
 5. **Channels.** Browse and filter the streams, select the ones you want, and add them as channels. Number
    and reorder them, attach backup streams (from any provider), and enable or disable channels.

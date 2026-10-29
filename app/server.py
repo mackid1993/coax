@@ -1861,12 +1861,12 @@ class Handler(BaseHTTPRequestHandler):
                 except ApiError:
                     entry = None
                 if entry:
+                    # Only streams from the groups picked for this provider can become backups; a provider with
+                    # no groups picked offers none (its whole catalog once matched a Polish Comedy Central).
                     selected = set(provider.get("groups") or [])
                     catalog = entry["catalog"]
-                    if selected:
-                        # Only streams from the groups picked for this provider can become backups.
-                        catalog = dict(catalog, streams=[s for s in catalog.get("streams") or []
-                                                         if (s.get("group") or "") in selected])
+                    catalog = dict(catalog, streams=[s for s in catalog.get("streams") or []
+                                                     if (s.get("group") or "") in selected])
                     catalogs[provider["id"]] = catalog
             if job:
                 job["phase"], job["done"] = "backups", len(channels)
