@@ -123,6 +123,7 @@ class StreamIdTests(unittest.TestCase):
                 m3u.download = saved
         first = ids(["101", "202", "303"], "aaaa1111bbbb2222")
         self.assertEqual(ids(["202", "303", "101"], "cccc3333dddd4444"), first)
+        self.assertEqual(ids(["101", "202", "303"], "1730000000&_=1730000123&sid=9"), first)   # cache busters
         self.assertEqual(len(set(first.values())), 3)
 
     def entry(self, url, name="", tvg_id=""):

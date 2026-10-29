@@ -70,15 +70,15 @@ def normalized_url(url):
     return "%s://%s/%s" % (parts.scheme.lower(), host, "/".join(kept))
 
 
-# Query keys that carry logins, tokens or expiry times: they change between refreshes, so they never go into an id.
-_SECRET_KEYS = re.compile(r"(?i)^(token|auth.*|key|api_?key|sig|signature|hash|md5|exp|expires?|e|st|ts|t|time|"
-                          r"session|nonce|hdnts|wmsauthsign|pass|password|pwd|user|username|u|p)$")
+# Query keys that name a stream (play.php?id=101). Only these go into an id: anything else in a query (logins,
+# tokens, expiry times, cache busters like _=1730000000, session ids) can change between refreshes.
+_IDENTITY_KEYS = re.compile(r"(?i)^(id|ch|chan|channel|channel_?id|stream|stream_?id|cid|chid)$")
 
 
 def query_identity(url):
-    """The query parameters that name the stream (play.php?id=101), without logins, tokens or expiry times."""
+    """The query parameters that name the stream (play.php?id=101), nothing that can rotate."""
     kept = sorted((k, v) for k, v in parse_qsl(urlsplit(url.strip()).query, keep_blank_values=True)
-                  if not _SECRET_KEYS.match(k) and not _credential_like(v))
+                  if _IDENTITY_KEYS.match(k) and not _credential_like(v))
     return "&".join("%s=%s" % kv for kv in kept)
 
 
@@ -92,7 +92,7 @@ def candidate_ids(entry):
     1. the Xtream numeric id from the URL path (survives credential and token rotation);
     2. a hash of tvg-id and name;
     3. a hash of the URL without query string and credential-looking path parts;
-    4. that hash plus the query parameters that name the stream (no logins or tokens).
+    4. that hash plus the query parameters that name the stream (id=, ch=, ...; nothing that rotates).
     The caller takes the first one not already used in the playlist.
     """
     url = entry["url"]
