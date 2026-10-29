@@ -317,8 +317,9 @@ class App:
         return result
 
     def provider_num(self, channel):
-        """The provider's own channel number for a channel's first stream ("" when unknown)."""
-        ref = (channel.get("streams") or [None])[0]
+        """The provider's own channel number for a channel ("" when unknown), from the stream it was numbered by
+        (config.number_stream), so reordering its streams never renumbers a lineup sorted by provider number."""
+        ref = channel.get("number_stream") or (channel.get("streams") or [None])[0]
         if not ref:
             return ""
         try:
@@ -384,9 +385,12 @@ class App:
             moved = 0
             for channel in cfg["channels"]:
                 have = {r["stream_id"] for r in channel["streams"] if r["provider"] == provider_id}
+                anchor = channel.get("number_stream") or {}
                 for ref in channel["streams"]:
                     new = renamed.get(str(ref["stream_id"])) if ref["provider"] == provider_id else None
                     if new and new not in have:
+                        if (anchor.get("provider"), anchor.get("stream_id")) == (provider_id, str(ref["stream_id"])):
+                            anchor["stream_id"] = new
                         have.discard(ref["stream_id"])
                         ref["stream_id"] = new
                         have.add(new)

@@ -113,6 +113,22 @@ def one_guide(g, xmltv_lineups_only=False):
     return g
 
 
+def _anchor_number_stream(channel):
+    """Remember which stream gives a channel its provider number (a lineup sorted by provider number).
+
+    It is the channel's first stream when first seen, and stays put while that stream is on the channel, so
+    a Smart Standby promotion or a drag on the Status card never renumbers the lineup."""
+    refs = [r for r in channel.get("streams") or [] if isinstance(r, dict)]
+    anchor = channel.get("number_stream")
+    if isinstance(anchor, dict) and any((r.get("provider"), str(r.get("stream_id"))) ==
+                                        (anchor.get("provider"), str(anchor.get("stream_id"))) for r in refs):
+        return
+    if refs:
+        channel["number_stream"] = {"provider": refs[0].get("provider"), "stream_id": str(refs[0].get("stream_id"))}
+    else:
+        channel.pop("number_stream", None)
+
+
 def fill_defaults(cfg):
     """Fill every missing key in place, including inside providers, lines and channels."""
     _fill(cfg, default_config())
@@ -127,6 +143,7 @@ def fill_defaults(cfg):
             _fill(channel, default_channel())
             if not channel.get("uuid"):
                 channel["uuid"] = str(uuidlib.uuid4())
+            _anchor_number_stream(channel)
     for lineup in cfg.get("lineups") or []:
         if isinstance(lineup, dict):
             lineup.setdefault("name", lineup.get("id", ""))

@@ -46,6 +46,18 @@ class AuditFixes(ApiTestCase):
         self.assertEqual(status, 200, result)
         self.assertIn("1", result["results"])   # Auto-match looks for its station
 
+    def test_reordering_streams_never_renumbers_a_provider_sorted_lineup(self):
+        self.add_provider()
+        status, ch, _ = self.request("POST", "/api/channels", {"name": "ABC", "streams": [
+            {"provider": "p1", "stream_id": "1"}, {"provider": "p1", "stream_id": "2"}]})
+        self.app.catalogs.get = lambda pid: {"by_id": {"1": {"num": 5}, "2": {"num": 905}}}
+        channel = lambda: self.store.get()["channels"][0]  # noqa: E731
+        self.assertEqual(self.app.provider_num(channel()), "5")
+        self.store.update(lambda cfg: cfg["channels"][0]["streams"].reverse())   # a Smart Standby promotion
+        self.assertEqual(self.app.provider_num(channel()), "5")
+        self.store.update(lambda cfg: cfg["channels"][0]["streams"].pop())       # its stream is removed
+        self.assertEqual(self.app.provider_num(channel()), "905")
+
 
 if __name__ == "__main__":
     unittest.main()
