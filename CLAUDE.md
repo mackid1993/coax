@@ -366,7 +366,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 331 after 1.0.6-7, about 45 s.
+- **Tests:** 333 after 1.0.6-7, about 45 s.
 
 ---
 
@@ -439,7 +439,11 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   never reused (`next_provider_id`) and a delete drops its held suggestions; renamed M3U ids carry Smart
   Standby state and held suggestions; empty Xtream categories are a failed refresh; Status card Disable avoids
   blocked streams, badge and focus fixed, Undo refuses over a newer order, Unblock clears confirmed deaths;
-  Auto-match backups only from picked groups.
+  Auto-match backups only from picked groups. Then two fresh reviews (Python, UI) and a confirmation pass; their
+  findings fixed (Status page scroll jump from refocus, legacy "both" without a station keeps XMLTV, M3U query ids
+  from identity keys only, Xtream empty categories refused only over a catalog with named groups, A to Z key
+  matching the browser's ICU order, verified against Node on the owner's 208 names). Deploying it renumbers 15
+  channels of the owner's A to Z Trex lineup in Channels DVR, to match the Channels page.
 
 ---
 
