@@ -55,7 +55,7 @@ scripts/make_logo.py brand asset generator
 `streams` = ordered list of `{provider, stream_id}`, optionally `"disabled": true`, `guide` =
 mode/station_id/xmltv_id/...), `lineups`
 (id, name, guide source, channel ids, sort, start_number, DVR options), `xmltv_sources`, `gracenote.regions`,
-`backups`, `autosave_minutes`, `timezone`.
+`backups`, `timezone`, `autosave_minutes` (unused since the held suggestions replaced autosave).
 
 Always change config through `ConfigStore.update(mutate)`: it deep-copies, validates, writes atomically and calls
 listeners (time zone, DVR sync). Never write the file directly.
@@ -275,10 +275,18 @@ are not in the M3U and do not count as members. Sources must never need a manual
 
 No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`; each page exports
 `mount(el)` and `unmount()`. `api.js` holds every route. Patterns to keep:
-- Channels page state `S`; Auto-match results are applied once per job (`sessionStorage coax.amSeen`).
-  Suggestions are saved with `/api/channels/apply` using `add_streams` (append to the server's current list,
-  never send a stale full list). Unsaved suggestions are mirrored in `localStorage coax.unsaved` until saved.
-  Autosave (Settings, default 2 min) never runs while a dialog is open.
+- Channels page state `S`. Unsaved Auto-match suggestions (`S.pending`, checks included) are a holding area
+  kept on the server: `GET/PUT /api/suggestions` (`/data/suggestions.json`, a `rev` counter, 409 on a stale
+  rev, after which the page takes the server copy). `saveDraft()` runs from `renderFrame`/`refreshPendingBar`
+  with one request in flight. The server never applies them; only Save does, with `/api/channels/apply` using
+  `add_streams` (append to the server's current list, never a stale full list), and Save removes only what it
+  applied. A finished job is applied once (`job_id` in the suggestions file); the last finished job is kept in
+  `/data/automatch.json` across restarts. There is no autosave that applies anything (owner: checks are a
+  holding pattern, not approval); `autosave_minutes` in old configs is ignored.
+- Filters: *To review* = channels with unsaved suggestions (guide or backups), the counter counts the same;
+  *Unmatched guide* = no saved guide and not left as is; *No backups* = no playable backup (disabled and
+  vanished streams do not count). Counters use the lineup and group scope. Filters whose rows are gone fall
+  back to All; the selection is pruned to visible rows; drag handles show only in Coax order.
 - Status cards are keyed per session (`uuid~instance`) and updated in place (rebuilding flashes). The tune
   card lists `feeds` (Playing now / Disabled badges, Switch button, Disable checkbox, hover popover for
   cut-off text; a blocked stream shows a purple dashed `Blocked · 23h 12m` pill with the reason on hover that

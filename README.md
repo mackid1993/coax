@@ -608,6 +608,14 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    add new streams in those groups as disabled channels at each refresh.
 5. **Channels.** Browse and filter the streams, select the ones you want, and add them as channels. Number
    and reorder them, attach backup streams (from any provider), and enable or disable channels.
+
+   **Auto-match** suggests a Gracenote station and backup streams for the channels shown (or the ones you
+   selected). Suggestions are only held, never applied for you: they appear under **To review**, sure ones
+   already checked, and stay there through reloads, other devices and restarts until you press **Save**, which
+   applies only the checked ones, or **Discard**. Unchecked suggestions stay to review after a Save. A channel
+   that already has a guide, or that you marked *Left as is*, gets backup suggestions only. The filters above the
+   table (*Needs attention*, *Unmatched guide*, *No backups*, *To review*, *Left as is*) match the counters at
+   the top; *No backups* counts only backups that can play (not disabled, not vanished from the provider).
 6. **Guide.** For each channel choose a guide mode:
    - **Gracenote**: coax searches Channels DVR's station database and suggests the best match with a
      confidence score. Channels DVR then uses its own guide data for that channel. Best when it matches.

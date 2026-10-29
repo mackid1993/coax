@@ -205,6 +205,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   the README. (HISTORY 3.7, A.6, A.7)
 - **Hub = ah4c model:** one DVR connection, one engine, one line slot, kill then release. No fan-out (Channels
   shares its own tuner). Two DVR clients on one channel use two slots (accepted).
+- **Auto-match suggestions are a holding pattern, never approval.** Checked suggestions are kept (on the server,
+  across reloads, devices and restarts) until Save or Discard; nothing applies them for you. The old autosave
+  that applied checked items was removed (owner: "it takes stuff that you've checked off and approves them for
+  you instead of just saving them"). Everything reviewable shows under **To review**.
 - **Reordering streams never switches.** Dragging a stream on the Status card (or reordering in the stream
   editor) only saves the order for the next failover; switching is the deliberate **Switch** button.
 - **The UI works on a phone** (owner: "something you might need to fix really quick with on your phone").
@@ -414,6 +418,11 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   switches). Checked by rendering every page and dialog at iPhone size against the real server.
 - **1.0.6-4** (Oct 29) Status page no longer jumps up when a card's corrections list was scrolled and the page
   sits at the bottom (the list's scroll was restored before it was reopened, forcing a layout of a shorter page).
+- **1.0.6-5** (Oct 29) Channels page: Auto-match suggestions are held on the server until Save or Discard (the
+  autosave that applied checked items is gone); To review shows every channel with suggestions; filters and
+  counters agree (No backups counts playable backups only, Unmatched guide excludes left as is); selection is
+  pruned to visible rows; Save clears only what it applied; auto-number follows the order shown. From an audit
+  plus three review rounds; tested against the real server with a fake Xtream panel in Chromium.
 
 ---
 
