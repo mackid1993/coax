@@ -55,13 +55,14 @@ async function loadDraft() {
   if (!S) return;
   const all = new Map(Object.entries(d.pending || {}).map(([k, v]) => [Number(k), v]));
   S.pending = new Map([...all].filter(([id]) => chById(id)).map(([id, p]) => [id, structuredClone(p)]));
-  settleHeld();
+  settleHeld(true);   // loadDraft always follows a reload()
   draft = { loaded: true, rev: d.rev || 0, job: d.job_id || null, sent: jsonOf(all), sentJob: d.job_id || null, busy: false, again: false };
   saveDraft();   // drops suggestions for channels deleted since (a no-op when nothing changed)
 }
 // Held suggestions that no longer apply: a guide saved since (here or on another device) or "left as is", and
-// backups the channel already has. Run after the channel list is (re)loaded.
-function settleHeld() {
+// backups the channel already has. Run after the channel list is (re)loaded; afterReload also drops backups from a
+// provider deleted since (S.providers is fresh only right after reload(); the server drops them on delete anyway).
+function settleHeld(afterReload = false) {
   for (const [id, p] of [...S.pending]) {
     const c = chById(id);
     if (!c) { S.pending.delete(id); continue; }
@@ -69,7 +70,7 @@ function settleHeld() {
     if (p.guide?.cands?.length && (hasGuide(c) || leftAsIs(c))) p.guide = null;
     const own = new Set((c.streams || []).map(refKey));
     // Drop backups the channel already has, and backups from a provider that was deleted (they cannot be saved).
-    const gone = (b) => own.has(refKey(b)) || (S.providers.length && !S.providers.some((x) => x.id === b.provider));
+    const gone = (b) => own.has(refKey(b)) || (afterReload && S.providers.length && !S.providers.some((x) => x.id === b.provider));
     if (p.backups?.some(gone)) p.backups = p.backups.filter((b) => !gone(b));
     if (!p.guide?.cands?.length && !p.backups?.length) S.pending.delete(id);
   }
@@ -121,7 +122,7 @@ async function reload() {
     S.lineups = lineups;
     S.config = config;
     S.channelsLoaded = ok = true;
-    if (draft.loaded) settleHeld();   // before drawing, so rows and held suggestions always match
+    if (draft.loaded) settleHeld(true);   // before drawing, so rows and held suggestions always match
   } catch (e) {
     toastError("Could not load channels", e);
   }
