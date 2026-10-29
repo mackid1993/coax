@@ -1109,7 +1109,7 @@ function streamsModal(c) {
     title: `Streams · ${c.name}`,
     wide: true,
     body: `
-      <p class="muted small" style="margin-bottom:14px">The first stream is the primary. When a stream fails or its provider has no free line, coax moves down this list. Drag to reorder.</p>
+      <p class="muted small" style="margin-bottom:14px">The first stream is the primary. When a stream fails or its provider has no free line, coax tries the others, those that have played cleanly first, then in this order. Drag to reorder.</p>
       <div class="grid grid-2">
         <div class="stack"><div class="label">Order</div><div class="backup-list" id="bList"></div>
           ${p?.backups?.length ? `<div class="label" style="margin-top:6px">Suggested</div><div class="backup-list" id="bSugg"></div>` : ""}</div>
