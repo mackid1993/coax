@@ -995,6 +995,8 @@ class Handler(BaseHTTPRequestHandler):
             if gone and channel["guide"].get("xmltv_provider") in gone:
                 channel["guide"]["xmltv_provider"] = ""
                 channel["guide"]["xmltv_id"] = ""
+        for source_id in gone:
+            forget_source_ids(source_id)
 
     # ------------------------------------------------------------ providers
     def _provider_view(self, provider):
@@ -1735,6 +1737,7 @@ class Handler(BaseHTTPRequestHandler):
                     cleared += 1
             return cleared
         cleared = self.app.store.update(mutate)
+        forget_source_ids(source_id)
         return {"deleted": source_id, "channels_cleared": cleared}
 
     # ------------------------------------------------------------ one-screen setup
@@ -2244,6 +2247,17 @@ def line_usage(cfg, hub, sessions):
                         "line_name": line["name"], "max": line["max_streams"], "used": len(holders),
                         "channels": holders})
     return out
+
+
+def forget_source_ids(source_id):
+    """Remove a deleted XMLTV source's cached id list, so a later source that gets the same id never shows the
+    old feed's channels in the Guide picker."""
+    try:
+        os.remove(lazy("app.guide.xmltv").ids_path(source_id))
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # noqa: BLE001 - only a stale picker list is left behind
+        log.warning("could not remove the cached ids of XMLTV source %s: %s", source_id, exc)
 
 
 def wake_scheduler(guide=False):
