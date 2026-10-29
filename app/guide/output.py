@@ -1,6 +1,7 @@
 """Lineup output for Channels DVR: the M3U playlist and the cached XMLTV file path."""
 
 import re
+import unicodedata
 
 from app.guide import xmltv
 
@@ -31,16 +32,27 @@ def _num_key(value):
         return (1, 0.0)
 
 
+def _name_key(value):
+    """A to Z the way the Channels page sorts: accents and case ignored, numbers by value (PPV 2 before PPV 10)."""
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch)).casefold()
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part) for part in re.findall(r"\d+|\D+", text)]
+
+
 def ordered_ids(lineup, channels):
-    """Channel ids of a lineup in its chosen order: manual (as arranged in coax),
-    provider (the provider's own channel number, from _pnum), or alpha (by name)."""
+    """Channel ids of a lineup in its chosen order: manual (as arranged in coax, whatever order they were
+    added to the lineup in), provider (the provider's own channel number, from _pnum), or alpha (by name).
+    channels is {id: channel} in coax's order."""
     ids = list(lineup.get("channels") or [])
     mode = lineup.get("sort") or "manual"
+    name = lambda cid: _name_key((channels.get(str(cid)) or {}).get("name"))  # noqa: E731
     if mode == "alpha":
-        ids.sort(key=lambda cid: str((channels.get(str(cid)) or {}).get("name") or "").casefold())
+        ids.sort(key=name)
     elif mode == "provider":
-        ids.sort(key=lambda cid: (_num_key((channels.get(str(cid)) or {}).get("_pnum")),
-                                  str((channels.get(str(cid)) or {}).get("name") or "").casefold()))
+        ids.sort(key=lambda cid: (_num_key((channels.get(str(cid)) or {}).get("_pnum")), name(cid)))
+    else:
+        position = {cid: i for i, cid in enumerate(channels)}
+        ids.sort(key=lambda cid: position.get(str(cid), 1 << 30))
     return ids
 
 

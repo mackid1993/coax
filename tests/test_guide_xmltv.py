@@ -249,19 +249,19 @@ class OutputTests(unittest.TestCase):
         text = output.m3u(make_config(), "main")
         lines = text.splitlines()
         self.assertEqual(lines[0], "#EXTM3U")
-        # Lineup order, disabled channel 3 skipped.
+        # Coax order (the lineup lists 2, 1, 3, 4), disabled channel 3 skipped.
         self.assertEqual(len(lines), 1 + 3 * 2)
-        self.assertEqual(
-            lines[1],
-            '#EXTINF:-1 channel-id="coax-2" tvg-id="coax-2" tvg-name="ESPN" tvg-logo="" '
-            'group-title="Sports" channel-number="102" tvc-guide-stationid="10179",ESPN')
-        self.assertEqual(lines[2], "http://192.168.1.50:7780/stream/uuid-2.ts")
         # Mode xmltv: no station id; quotes in attributes escaped.
         self.assertEqual(
-            lines[3],
+            lines[1],
             '#EXTINF:-1 channel-id="coax-1" tvg-id="coax-1" tvg-name="CNN \'Live\'" '
             'tvg-logo="http://logo/cnn.png" group-title="News" channel-number="101",CNN \'Live\'')
-        self.assertEqual(lines[4], "http://192.168.1.50:7780/stream/uuid-1.ts")
+        self.assertEqual(lines[2], "http://192.168.1.50:7780/stream/uuid-1.ts")
+        self.assertEqual(
+            lines[3],
+            '#EXTINF:-1 channel-id="coax-2" tvg-id="coax-2" tvg-name="ESPN" tvg-logo="" '
+            'group-title="Sports" channel-number="102" tvc-guide-stationid="10179",ESPN')
+        self.assertEqual(lines[4], "http://192.168.1.50:7780/stream/uuid-2.ts")
         self.assertIn('tvc-guide-stationid="50000",BBC One', lines[5])
         self.assertTrue(text.endswith("\n"))
 
@@ -277,7 +277,7 @@ class OutputTests(unittest.TestCase):
         config["channels"][1]["name"] = "ESPN\r\n#EXTINF:-1,evil"
         lines = output.m3u(config, "main").splitlines()
         self.assertEqual(len(lines), 7)
-        self.assertTrue(lines[1].endswith(",ESPN #EXTINF:-1,evil"))
+        self.assertTrue(lines[3].endswith(",ESPN #EXTINF:-1,evil"))
 
     def test_m3u_unknown_lineup(self):
         with self.assertRaises(KeyError):
