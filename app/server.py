@@ -962,7 +962,7 @@ class Handler(BaseHTTPRequestHandler):
         def mutate(merged):
             configmod.unmask(body, merged)
             if isinstance(body.get("xmltv_sources"), list):
-                self._settle_sources(merged, body["xmltv_sources"])
+                gone.update(self._settle_sources(merged, body["xmltv_sources"]))
             for key, value in body.items():
                 if key in ("server", "channels_dvr") and isinstance(value, dict):
                     if not isinstance(merged.get(key), dict):
@@ -973,7 +973,10 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     merged[key] = value
         before = self.app.store.get().get("xmltv_sources")
+        gone = set()
         self.app.store.update(mutate)
+        for source_id in gone:   # only once the save went through
+            forget_source_ids(source_id)
         log.info("settings saved")
         if self.app.store.get().get("xmltv_sources") != before:
             wake_scheduler(guide=True)
@@ -983,7 +986,7 @@ class Handler(BaseHTTPRequestHandler):
     def _settle_sources(cfg, sources):
         """XMLTV sources saved from Settings: a new source (no id) gets an id never used by a source or provider
         in this config, so it cannot take over a removed source's channels; channels of a removed source lose
-        that XMLTV id, as a delete does."""
+        that XMLTV id, as a delete does. Returns the removed source ids."""
         old = {x.get("id") for x in cfg["xmltv_sources"]}
         taken = old | {p["id"] for p in cfg["providers"]} | {s.get("id") for s in sources if isinstance(s, dict)}
         for src in sources:
@@ -995,8 +998,7 @@ class Handler(BaseHTTPRequestHandler):
             if gone and channel["guide"].get("xmltv_provider") in gone:
                 channel["guide"]["xmltv_provider"] = ""
                 channel["guide"]["xmltv_id"] = ""
-        for source_id in gone:
-            forget_source_ids(source_id)
+        return gone
 
     # ------------------------------------------------------------ providers
     def _provider_view(self, provider):
