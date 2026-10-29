@@ -964,7 +964,7 @@ class Handler(BaseHTTPRequestHandler):
             raise bad_request("provider must be a JSON object")
         provider = copy.deepcopy(existing) if existing else configmod.default_provider()
         for key in ("name", "type", "server", "m3u_url", "xmltv_url", "user_agent", "format", "refresh_hours",
-                    "auto_add", "groups", "lines"):
+                    "auto_add", "groups", "lines", "max_streams"):
             if key in body:
                 provider[key] = body[key]
         for key in ("name", "server", "m3u_url", "xmltv_url", "user_agent"):
