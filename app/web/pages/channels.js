@@ -997,7 +997,7 @@ function guideModal(c) {
       $("#gnCur", el).innerHTML = `· current <span class="num">${esc(v)}</span>`;
       summary(); return;
     }
-    if (e.target.closest("[data-gclear]")) { g.station_id = ""; g.call_sign = ""; g.station_name = ""; g.confidence = null; $("#gnCur", el).innerHTML = ""; $$("[data-station]", el).forEach((b) => b.classList.remove("picked")); summary(); return; }
+    if (e.target.closest("[data-gclear]")) { g.station_id = ""; g.call_sign = ""; g.station_name = ""; g.confidence = null; $("#gnCur", el).innerHTML = ""; $("#gnManual", el).value = ""; $$("[data-station]", el).forEach((b) => b.classList.remove("picked")); summary(); return; }
     if (e.target.closest("[data-xclear]")) { g.xmltv_id = ""; $$("[data-xmid]", el).forEach((b) => b.classList.remove("picked")); summary(); return; }
     const mb = e.target.closest("[data-mode]");
     if (mb) { g.mode = mb.dataset.mode; $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b === mb)); summary(); return; }
@@ -1005,6 +1005,7 @@ function guideModal(c) {
     if (st) {
       useStation();
       g.station_id = st.dataset.station; g.call_sign = st.dataset.call || ""; g.station_name = st.dataset.name || ""; g.confidence = st.dataset.conf ? Number(st.dataset.conf) : null;
+      $("#gnManual", el).value = g.station_id;
       $("#gnCur", el).innerHTML = `· current <span class="num">${esc(g.station_id)}</span>`;
       $$("[data-station]", el).forEach((b) => b.classList.toggle("picked", b === st));
       summary(); return;
@@ -1061,6 +1062,9 @@ function guideModal(c) {
     if (saving || m.closed) return;   // a second Enter or click while saving must not save twice
     saving = true;
     try {
+      // A station ID typed in the box counts even without "Use this ID" or Enter; an invalid one stops the save.
+      const typed = $("#gnManual", el).value.trim();
+      if (typed && typed !== g.station_id) { $("[data-manual]", el).click(); if (!manualOk) return; }
       g.reviewed = $("#gLeft", el).checked;
       // A station wins over an XMLTV id left from an older build; the server keeps only one either way.
       // A Gracenote channel without a station stays Gracenote (unmatched; a provider tvg-id is only a hint).
