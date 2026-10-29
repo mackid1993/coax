@@ -90,15 +90,19 @@ def _fill(target, defaults):
     return target
 
 
-def one_guide(g):
+def one_guide(g, xmltv_lineups_only=False):
     """A channel's guide is a Gracenote station or an XMLTV id, never both (mutates g).
 
-    A station wins: the XMLTV id beside it is dropped (older builds and Auto-match wrote both). An XMLTV
-    channel drops any station. A Gracenote channel still waiting for a station keeps the provider's
-    tvg-id, which Auto-match uses as a hint and the guide never uses.
+    Gracenote is the default: a channel without a mode, or a new channel carrying only the provider's
+    tvg-id, is a Gracenote channel waiting for a station, and the tvg-id is kept as a hint for Auto-match
+    (the guide never uses it). An XMLTV channel the user set stays XMLTV and drops any station. A channel
+    stored as "both" (older builds) keeps its station, unless every lineup it is in takes XMLTV.
     """
-    if g.get("mode") in (None, "", "none", "both"):
-        g["mode"] = "gracenote" if g.get("station_id") else "xmltv" if g.get("xmltv_id") else "none"
+    mode = g.get("mode")
+    if mode == "both" and xmltv_lineups_only and g.get("xmltv_id"):
+        g["mode"] = "xmltv"
+    elif mode in (None, "", "both") or (mode == "none" and (g.get("station_id") or g.get("xmltv_id"))):
+        g["mode"] = "gracenote" if g.get("station_id") or g.get("xmltv_id") else "none"
     if g["mode"] == "gracenote" and g.get("station_id"):
         g["xmltv_id"] = ""
         g["xmltv_provider"] = ""
@@ -132,10 +136,15 @@ def fill_defaults(cfg):
             if lineup.get("sort") not in LINEUP_SORTS:
                 lineup["sort"] = "manual"
             lineup.setdefault("start_number", None)
+    guides = {}   # channel id -> the guides of the lineups it is in
+    for lineup in cfg.get("lineups") or []:
+        if isinstance(lineup, dict):
+            for cid in lineup.get("channels") or []:
+                guides.setdefault(cid, set()).add(lineup.get("guide"))
     for ch in cfg.get("channels") or []:
         g = ch.get("guide") if isinstance(ch, dict) else None
         if isinstance(g, dict):
-            one_guide(g)
+            one_guide(g, guides.get(ch.get("id")) == {"xmltv"})
     if not isinstance(cfg.get("autosave_minutes"), int) or isinstance(cfg.get("autosave_minutes"), bool):
         cfg["autosave_minutes"] = 2
     if not isinstance(cfg.get("timezone"), str):

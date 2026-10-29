@@ -622,8 +622,10 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    - **XMLTV**: use the provider's guide for that channel; pick the XMLTV channel id from the list.
    - **None**: no guide data.
 
-   Picking a Gracenote station clears the channel's XMLTV id, and picking an XMLTV id clears its station.
-   Auto-match works the same way: a matched station replaces the XMLTV id.
+   Gracenote is the default: a new channel starts as Gracenote, and the provider's tvg-id is kept only as a
+   hint for Auto-match until a station is picked. A channel you set to XMLTV stays XMLTV. Picking a Gracenote
+   station clears the channel's XMLTV id, and picking an XMLTV id clears its station. Auto-match works the
+   same way: a matched station replaces the XMLTV id.
 7. **Lineups.** A default lineup holds all channels. Add more lineups if you want separate sources in the
    DVR (for example kids or sports).
 8. **Add each lineup to Channels DVR.** On the *Lineups* page, press **Add to Channels DVR** on a lineup and

@@ -509,7 +509,8 @@ def channel_fields_from_stream(provider_id, stream):
         "group": clean_name(stream.get("group")),
         "logo": stream.get("logo") or "",
         "streams": [{"provider": provider_id, "stream_id": str(stream.get("stream_id"))}],
-        "guide": {"mode": "none", "station_id": "", "xmltv_id": tvg_id,
+        # Gracenote by default; the provider's tvg-id is a hint for Auto-match until a station is picked.
+        "guide": {"mode": "gracenote", "station_id": "", "xmltv_id": tvg_id,
                   "xmltv_provider": provider_id if tvg_id else ""},
     }
 
@@ -1278,8 +1279,8 @@ class Handler(BaseHTTPRequestHandler):
             raise bad_request("enabled must be true or false")
         start = body.get("start_number")
         group_override = body.get("group")
-        guide_mode = body.get("guide_mode", "none")
-        if guide_mode not in configmod.GUIDE_MODES:
+        guide_mode = body.get("guide_mode")
+        if guide_mode is not None and guide_mode not in configmod.GUIDE_MODES:
             raise bad_request("guide_mode must be one of " + ", ".join(configmod.GUIDE_MODES))
         catalogs = {}
         for ref in refs:
@@ -1305,7 +1306,8 @@ class Handler(BaseHTTPRequestHandler):
                     stream = {"stream_id": ref["stream_id"], "name": body.get("name") or ""}
                 fields = channel_fields_from_stream(ref["provider"], stream)
                 fields["enabled"] = enabled
-                fields["guide"]["mode"] = guide_mode
+                if guide_mode is not None:
+                    fields["guide"]["mode"] = guide_mode
                 if isinstance(group_override, str) and group_override.strip():
                     fields["group"] = group_override.strip()
                 channel = configmod.new_channel(cfg, fields)

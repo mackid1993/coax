@@ -151,7 +151,9 @@ const hasGuide = (c) => {
   const need = guideNeed(c);
   if (need === "gracenote") return !!g.station_id;
   if (need === "xmltv") return !!g.xmltv_id;
-  return !!(g.station_id || g.xmltv_id);
+  // Otherwise the channel's own mode decides: a provider tvg-id beside an unmatched Gracenote channel is only
+  // a hint for Auto-match, not a guide.
+  return g.mode === "gracenote" ? !!g.station_id : g.mode === "xmltv" ? !!g.xmltv_id : false;
 };
 // Like the original matcher: Matched (sure, pre-checked) needs nothing; Review (only weaker candidates)
 // and Unmatched (nothing found) need you. A guide you saved yourself is never second-guessed.
@@ -950,7 +952,7 @@ function guideModal(c) {
           <div class="result-list" id="gnList">${p?.guide?.cands?.length ? candList(p.guide.cands, g.station_id) : `<div class="faint small">Search to see stations.</div>`}</div>
         </div>
         <div class="stack" data-pane="xm">
-          <div class="label">XMLTV channel <button type="button" class="btn btn-ghost btn-sm" data-xclear style="padding:0 6px">Clear</button> <span class="faint" id="xmCur">${g.xmltv_id ? `· current <span class="mono">${esc(g.xmltv_id)}</span>` : ""}</span></div>
+          <div class="label">XMLTV channel <button type="button" class="btn btn-ghost btn-sm" data-xclear style="padding:0 6px">Clear</button> <span class="faint" id="xmCur">${g.mode === "xmltv" && g.xmltv_id ? `· current <span class="mono">${esc(g.xmltv_id)}</span>` : ""}</span></div>
           <div class="row"><select class="input" id="xmSrc" style="flex:0 0 42%">${sources.map((s) => `<option value="${esc(s.id)}" ${s.id === g.xmltv_provider ? "selected" : ""}>${esc(s.name)}${s.kind === "source" ? " (XMLTV)" : ""}</option>`).join("") || `<option value="">No sources</option>`}</select>
           <label class="search" style="flex:1"><span class="sr-only">Search XMLTV ids</span>${icon("search")}<input class="input" id="xmQ" placeholder="Search id or name"></label></div>
           <div class="result-list" id="xmList"><div class="faint small">Loading ids…</div></div>
@@ -1047,7 +1049,8 @@ function guideModal(c) {
     try {
       g.reviewed = $("#gLeft", el).checked;
       // A station wins over an XMLTV id left from an older build; the server keeps only one either way.
-      g.mode = g.station_id ? "gracenote" : g.xmltv_id ? "xmltv" : "none";
+      // A Gracenote channel without a station stays Gracenote (unmatched; a provider tvg-id is only a hint).
+      g.mode = g.station_id ? "gracenote" : g.mode === "xmltv" && g.xmltv_id ? "xmltv" : g.mode === "gracenote" ? "gracenote" : "none";
       if (g.station_id) { g.xmltv_id = ""; g.xmltv_provider = ""; }
       const r = await api.updateChannel(c.id, { guide: g });
       Object.assign(chById(c.id) || c, r && typeof r === "object" && r.id ? r : { guide: g });
