@@ -515,7 +515,11 @@ async function onClick(e) {
     case "guide": if (c) guideModal(c); break;
     // The page loads once; take the channel's current streams first, so a Smart Standby promotion or a Disable
     // from the Status card since then is not saved over.
-    case "streams": if (c) busy(a, async () => { const st = S; try { Object.assign(c, await api.getChannel(c.id)); } catch {} if (S === st) streamsModal(c); }); break;
+    case "streams": if (c) busy(a, async () => {
+      const st = S;
+      try { Object.assign(c, await api.getChannel(c.id)); } catch (err) { toastError("Could not load the channel's streams", err); return; }
+      if (S === st) streamsModal(c);
+    }); break;
     case "lineups": if (c) lineupModal([c.id]); break;
     case "edit": if (c) editModal(c); break;
     case "sel-enable": bulkSet({ enabled: true }); break;
