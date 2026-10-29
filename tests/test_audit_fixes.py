@@ -119,6 +119,13 @@ class AuditFixes(ApiTestCase):
         self.assertGreater(self.app.health.blocked_until(cid, ("p1", "101"), now=now + 1), now + 1)
         self.assertEqual(self.app.health.blocked_until(cid, ("p1", "1"), now=now + 1), 0)
 
+    def test_refresh_and_test_errors_hide_the_username(self):
+        from app import server
+        provider = {"lines": [{"username": "alice123", "password": "s3cret!!"}]}
+        text = server.redact("GET http://h/player_api.php?username=alice123&password=s3cret!! failed", provider)
+        self.assertNotIn("alice123", text)
+        self.assertNotIn("s3cret!!", text)
+
 
 class GuideRefreshRequests(unittest.TestCase):
     def test_a_changed_xmltv_source_refreshes_the_guide_now_and_at_its_own_interval(self):

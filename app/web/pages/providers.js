@@ -132,10 +132,10 @@ function showTest(r) {
   if (!r || r.ok === false) { toast("Connection failed", r?.error || r?.message || "No details", "bad"); return; }
   const bits = [];
   if (r.status) bits.push(`status ${r.status}`);
-  if (r.max_connections != null) bits.push(`${r.active_cons ?? 0}/${r.max_connections} connections`);
+  if (r.max_connections != null) bits.push(`${r.active_connections ?? r.active_cons ?? 0}/${r.max_connections} connections`);
   if (r.exp_date) { const d = Number(r.exp_date) ? new Date(Number(r.exp_date) * 1000) : new Date(r.exp_date); if (!isNaN(d)) bits.push(`expires ${d.toLocaleDateString()}`); }
   if (r.streams != null) bits.push(`${fmtInt(r.streams)} streams`);
-  toast("Connection OK", r.message || bits.join(" · "), "ok", 6000);
+  toast("Connection OK", bits.join(" · ") || r.message || "connected", "ok", 6000);
 }
 
 // ---------- Add / edit ----------

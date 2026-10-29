@@ -2358,11 +2358,13 @@ def test_provider(provider):
         try:
             result = func(provider)
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "message": str(exc)}
+            return {"ok": False, "message": redact(str(exc), provider)}
         if isinstance(result, dict):
             result = dict(result)
             result.setdefault("ok", True)
-            result.setdefault("message", result.get("error") or ("connected" if result["ok"] else "failed"))
+            if result.get("error"):
+                result["error"] = redact(str(result["error"]), provider)
+            result.setdefault("message", result.get("error") or ("" if result["ok"] else "failed"))
             return result
         return {"ok": bool(result), "message": "connected" if result else "no answer", "info": result}
     return probe_provider(provider)
@@ -2396,9 +2398,13 @@ def probe_provider(provider, timeout=15):
 
 
 def redact(text, provider):
+    """Hide the provider's logins in text shown on the page: passwords always, usernames too (long enough not to
+    mangle ordinary words)."""
     for line in provider.get("lines") or []:
         if line.get("password"):
             text = text.replace(line["password"], configmod.MASK)
+        if len(line.get("username") or "") >= 4:
+            text = text.replace(line["username"], configmod.MASK)
     return text
 
 
