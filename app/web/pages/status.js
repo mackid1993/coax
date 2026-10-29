@@ -145,7 +145,7 @@ function focusOf(card) {
 function refocus(card, f) {
   if (!f) return;
   const row = [...card.querySelectorAll(".feed")].find((r) => r.dataset.p === f.p && r.dataset.s === f.s);
-  row?.querySelector(`[${f.role}]`)?.focus();
+  row?.querySelector(`[${f.role}]`)?.focus({ preventScroll: true });   // never pull a scrolled page back to the card
 }
 function skey(x) { return `${x.uuid || x.channel_id}~${x.instance || 0}`; }
 function cardInner(x, key) {
