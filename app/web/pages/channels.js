@@ -974,7 +974,7 @@ function streamsModal(c) {
     $("#bList", el).innerHTML = streams.length ? streams.map((s, i) => `<div class="backup-item ${i === 0 ? "primary" : ""} ${s.missing ? "missing" : ""} ${s.disabled ? "off" : ""}" data-i="${i}">
       <button class="drag-handle" data-bdrag aria-label="Move ${esc(s.name || s.stream_id)}, Alt plus arrow keys">${icon("grip")}</button>
       <span class="order">${i + 1}</span>
-      <span style="flex:1;min-width:0"><span class="ellip" style="display:block;font-weight:560" data-pop="${esc(s.name || s.stream_id)}">${esc(s.name || s.stream_id)}</span><span class="faint small">${esc(providerName(S.providers, s.provider))} · <span class="num">${esc(s.stream_id)}</span>${s.missing ? ' · <span style="color:var(--bad)">vanished</span>' : ""}</span></span>
+      <span class="b-main" style="flex:1;min-width:0"><span class="ellip" style="display:block;font-weight:560" data-pop="${esc(s.name || s.stream_id)}">${esc(s.name || s.stream_id)}</span><span class="faint small">${esc(providerName(S.providers, s.provider))} · <span class="num">${esc(s.stream_id)}</span>${s.missing ? ' · <span style="color:var(--bad)">vanished</span>' : ""}</span></span>
       ${i === 0 ? `<span class="badge badge-accent">Primary</span>` : ""}
       ${s.disabled ? `<span class="badge badge-bad">Disabled</span>` : ""}
       <label class="f-off" title="A disabled stream is never played or used as a backup"><input type="checkbox" data-boff="${i}" ${s.disabled ? "checked" : ""}> Disable</label>

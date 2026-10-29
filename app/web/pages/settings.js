@@ -84,7 +84,7 @@ function render() {
 }
 function xsHtml() {
   if (!draft.xmltv_sources.length) return `<p class="faint small">None. Provider XMLTV feeds are always available.</p>`;
-  return draft.xmltv_sources.map((s, i) => `<div class="line-row" style="grid-template-columns:1fr 2fr 110px 36px" data-xi="${i}">
+  return draft.xmltv_sources.map((s, i) => `<div class="line-row xs-row" data-xi="${i}">
     <div class="field"><label>Name</label><input class="input input-sm" data-xf="name" value="${esc(s.name || "")}"></div>
     <div class="field"><label>URL (gzip or plain)</label><input class="input input-sm mono" data-xf="url" value="${esc(s.url || "")}" placeholder="https://example.com/guide.xml.gz"></div>
     <div class="field"><label>Refresh (h)</label><input class="input input-sm mono" type="number" min="1" data-xf="refresh_hours" value="${esc(s.refresh_hours ?? 24)}"></div>
@@ -163,7 +163,7 @@ const COUNTRIES = [
 ];
 function regionsHtml() {
   if (!draft.regions.length) return `<p class="faint small">No region set: guide matching searches all of Gracenote, so stations from other countries can show up. Add your country and postal code.</p>`;
-  return draft.regions.map((r, i) => `<div class="line-row" style="grid-template-columns:1fr 160px 36px">
+  return draft.regions.map((r, i) => `<div class="line-row region-row">
     <div class="field"><label>Country</label><select class="input input-sm" data-rc="${i}">${COUNTRIES.map(([c, n]) => `<option value="${c}" ${r.country === c ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="field"><label>Postal code</label><input class="input input-sm mono" data-rp="${i}" value="${esc(r.postal || "")}" placeholder="e.g. 10001"></div>
     <button type="button" class="btn btn-ghost btn-sm btn-icon btn-danger" data-rrm="${i}" aria-label="Remove region">${icon("trash")}</button></div>`).join("");
@@ -174,7 +174,7 @@ async function loadBackups() {
   try {
     const r = await api.backups();
     const tz = $("#bkTz", root); if (tz) tz.textContent = `Container time now: ${r.now} ${r.timezone || ""}`;
-    el.innerHTML = r.backups.length ? r.backups.map((b) => `<div class="line-row" style="grid-template-columns:1fr auto auto auto;align-items:center">
+    el.innerHTML = r.backups.length ? r.backups.map((b) => `<div class="line-row bk-row">
       <div><div class="mono small">${esc(b.created)}</div><div class="faint small">${esc(b.kind)}${b.channels != null ? ` · ${b.channels} channels · ${b.providers} providers` : ""}</div></div>
       <button class="btn btn-sm" data-bkrestore="${esc(b.name)}">Restore</button>
       <a class="btn btn-sm btn-ghost" href="/api/backups/${encodeURIComponent(b.name)}">${icon("download")}Download</a>

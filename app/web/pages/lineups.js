@@ -58,7 +58,7 @@ function dvrBlock(l) {
   if (!d) return `<span class="skel" style="width:60%;height:32px"></span>`;
   if (d.dvr_url_set === false || d.base_url_set === false) {
     const missing = d.dvr_url_set === false ? "Channels DVR URL" : "coax base URL";
-    return `<div class="row" style="justify-content:space-between;gap:12px"><p class="faint small">Set the ${missing} in <a href="#/settings">Settings</a> to add this lineup with one click.</p>
+    return `<div class="row" style="justify-content:space-between;gap:12px;flex-wrap:wrap"><p class="faint small">Set the ${missing} in <a href="#/settings">Settings</a> to add this lineup with one click.</p>
       <button class="btn btn-primary btn-sm" disabled>${icon("plug")}Add to Channels DVR</button></div>`;
   }
   const sync = d.last_sync;
