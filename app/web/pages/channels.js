@@ -977,10 +977,12 @@ function guideModal(c) {
     $("#gnCur", el).innerHTML = ""; $("#gnManual", el).value = ""; $$("[data-station]", el).forEach((b) => b.classList.remove("picked"));
   };
   summary();
+  let manualOk = true;
   el.addEventListener("click", (e) => {
     if (e.target.closest("[data-manual]")) {
       const v = $("#gnManual", el).value.trim();
-      if (!/^\d{1,12}$/.test(v)) { toast("Station IDs are numbers", "Example: 62420", "warn", 3000); return; }
+      if (!/^\d{1,12}$/.test(v)) { toast("Station IDs are numbers", "Example: 62420", "warn", 3000); manualOk = false; return; }
+      manualOk = true;
       useStation();
       g.station_id = v; g.call_sign = ""; g.station_name = ""; g.confidence = null;
       $("#gnCur", el).innerHTML = `· current <span class="num">${esc(v)}</span>`;
@@ -1045,7 +1047,10 @@ function guideModal(c) {
   // The next channel in the list as shown now (captured before saving, since saving can drop it from a filter).
   const order = visibleChannels().map((x) => x.id);
   const nextId = order[order.indexOf(c.id) + 1];
+  let saving = false;
   const save = async (goNext) => {
+    if (saving || m.closed) return;   // a second Enter or click while saving must not save twice
+    saving = true;
     try {
       g.reviewed = $("#gLeft", el).checked;
       // A station wins over an XMLTV id left from an older build; the server keeps only one either way.
@@ -1054,14 +1059,14 @@ function guideModal(c) {
       if (g.station_id) { g.xmltv_id = ""; g.xmltv_provider = ""; }
       const r = await api.updateChannel(c.id, { guide: g });
       Object.assign(chById(c.id) || c, r && typeof r === "object" && r.id ? r : { guide: g });
-      if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.guide = null; if (!pp.backups?.length) S.pending.delete(c.id); }
+      settleHeld();   // drops the held guide suggestion only when a guide was saved or the channel was left as is
       toast("Guide saved", c.name, "ok", 1500);
       m.close();
       renderFrame();
       const next = goNext && nextId != null ? chById(nextId) : null;
       if (next) guideModal(next);
       else if (goNext) toast("End of the list", "", "info", 2000);
-    } catch (err) { toastError("Could not save guide", err); }
+    } catch (err) { toastError("Could not save guide", err); } finally { saving = false; }
   };
   $("[data-save]", el).onclick = (e) => busy(e.currentTarget, () => save(false));
   $("[data-save-next]", el).onclick = (e) => busy(e.currentTarget, () => save(true));
@@ -1073,7 +1078,10 @@ function guideModal(c) {
     e.preventDefault();
     if (e.target.id === "gnQ") { searchGn(); return; }
     if (e.target.id === "xmQ") return;
-    if (e.target.id === "gnManual" && e.target.value.trim()) $("[data-manual]", el).click();
+    if (e.target.id === "gnManual" && e.target.value.trim()) {
+      $("[data-manual]", el).click();
+      if (!manualOk) return;   // an invalid ID warns and stays on this channel
+    }
     save(!e.shiftKey);
   });
 }
