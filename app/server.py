@@ -255,6 +255,22 @@ class App:
                 except OSError as exc:
                     log.warning("could not remove %s: %s", path, exc)
 
+    def edit_held(self, change):
+        """Change the held suggestions on the server (change(pending) edits it in place, returns True if it did).
+        The version moves on, so an open Channels page takes the new copy instead of saving over it."""
+        with self.suggestions_lock:
+            pending = copy.deepcopy(self.suggestions.get("pending") or {})
+            if not change(pending):
+                return False
+            data = dict(self.suggestions, rev=self.suggestions.get("rev", 0) + 1, pending=pending,
+                        saved_at=now_iso())
+            try:
+                configmod.atomic_write(self.suggestions_path, json.dumps(data).encode())
+            except OSError as exc:
+                log.warning("could not save the held suggestions: %s", exc)
+            self.suggestions = data
+            return True
+
     # -- refresh
     def start_refresh(self, provider_id, wait=False):
         cfg = self.store.get()
@@ -939,7 +955,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(merged.get(key), dict):
                         merged[key] = {}
                     merged[key].update(value)
-                elif key in ("version", "next_channel_id"):
+                elif key in ("version", "next_channel_id", "next_provider_id"):
                     continue
                 else:
                     merged[key] = value
@@ -1034,7 +1050,14 @@ class Handler(BaseHTTPRequestHandler):
 
         def mutate(cfg):
             provider = self._normalize_provider(body)
-            provider["id"] = configmod.next_id("p", {p["id"] for p in cfg["providers"]})
+            # Never hand out a deleted provider's id: its cache, Smart Standby records and held suggestions
+            # would pass to the new provider.
+            taken = {p["id"] for p in cfg["providers"]} | {x["id"] for x in cfg["xmltv_sources"]}
+            n = cfg["next_provider_id"]
+            while "p%d" % n in taken:
+                n += 1
+            provider["id"] = "p%d" % n
+            cfg["next_provider_id"] = n + 1
             cfg["providers"].append(provider)
             return provider
         provider = self.app.store.update(mutate)
@@ -1071,12 +1094,24 @@ class Handler(BaseHTTPRequestHandler):
             for channel in cfg["channels"]:
                 if channel["guide"].get("xmltv_provider") == provider_id:
                     channel["guide"]["xmltv_provider"] = ""
+                    channel["guide"]["xmltv_id"] = ""   # as an XMLTV source delete does
             cfg["providers"] = [p for p in cfg["providers"] if p["id"] != provider_id]
-            return len(users)
-        detached = self.app.store.update(mutate)
+            # Never re-enable what the user disabled; name the channels left with nothing they may play.
+            stuck = [c["name"] for c in users if c["streams"] and all(r.get("disabled") for r in c["streams"])]
+            return len(users), stuck
+        detached, stuck = self.app.store.update(mutate)
         self.app.catalogs.invalidate(provider_id)
+
+        def drop_provider(pending):
+            changed = False
+            for item in pending.values():
+                kept = [b for b in item.get("backups") or [] if b.get("provider") != provider_id]
+                if len(kept) != len(item.get("backups") or []):
+                    item["backups"], changed = kept, True
+            return changed
+        self.app.edit_held(drop_provider)   # held backups from it could never be saved
         log.info("provider %s deleted", provider_id)
-        return {"deleted": provider_id, "channels_detached": detached}
+        return {"deleted": provider_id, "channels_detached": detached, "only_disabled_streams": stuck}
 
     def h_providers_test_unsaved(self):
         body = self._body_object()
@@ -1858,6 +1893,13 @@ class Handler(BaseHTTPRequestHandler):
             if streams is not None and len({(r["provider"], r["stream_id"]) for r in streams}) != len(streams):
                 raise bad_request("channel %s: a stream is listed twice" % cid)
             add = stream_refs(entry["add_streams"], "channel %s add_streams" % cid) if "add_streams" in entry else None
+            if add:
+                # A suggestion held from a provider deleted since cannot be added; skip it, keep the rest.
+                known = {p["id"] for p in self.app.store.get()["providers"]}
+                dropped = [r for r in add if r["provider"] not in known]
+                if dropped:
+                    log.warning("channel %s: skipped %d suggested backups from deleted providers", cid, len(dropped))
+                    add = [r for r in add if r["provider"] in known]
             changes.append((cid, guide, streams, add))
         if len({c[0] for c in changes}) != len(changes):
             raise bad_request("a channel is listed twice")

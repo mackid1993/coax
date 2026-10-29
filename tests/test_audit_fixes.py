@@ -72,6 +72,35 @@ class AuditFixes(ApiTestCase):
         guide = self.store.get()["channels"][0]["guide"]
         self.assertEqual((guide["xmltv_provider"], guide["xmltv_id"]), ("", ""))
 
+    def test_deleting_a_provider_drops_its_held_suggestions_and_its_id_is_never_reused(self):
+        self.add_provider()
+        p2 = self.add_provider(name="Provider B")
+        self.assertEqual(p2["id"], "p2")
+        status, ch, _ = self.request("POST", "/api/channels", {"name": "CNN", "streams": [
+            {"provider": "p1", "stream_id": "1"}]})
+        held = {str(ch["id"]): {"guide": None, "backups": [{"provider": "p2", "stream_id": "9", "checked": True},
+                                                          {"provider": "p1", "stream_id": "2", "checked": True}]}}
+        self.request("PUT", "/api/suggestions", {"rev": 0, "pending": held})
+        status, r, _ = self.request("DELETE", "/api/providers/p2")
+        self.assertEqual(status, 200, r)
+        status, d, _ = self.request("GET", "/api/suggestions")
+        self.assertEqual([b["provider"] for b in d["pending"][str(ch["id"])]["backups"]], ["p1"])
+        self.assertEqual(d["rev"], 2)   # an open page takes the new copy instead of saving over it
+        # a stale page that still sends the p2 backup: it is skipped, the rest is saved
+        status, r, _ = self.request("POST", "/api/channels/apply", {"channels": [{"id": ch["id"], "add_streams": [
+            {"provider": "p2", "stream_id": "9"}, {"provider": "p1", "stream_id": "2"}]}]})
+        self.assertEqual(status, 200, r)
+        self.assertEqual([s["stream_id"] for s in self.store.get()["channels"][0]["streams"]], ["1", "2"])
+        self.assertEqual(self.add_provider(name="Provider C")["id"], "p3")
+
+    def test_force_deleting_a_provider_names_channels_left_with_only_disabled_streams(self):
+        self.add_provider()
+        self.add_provider(name="Provider B")
+        self.request("POST", "/api/channels", {"name": "CNN", "streams": [
+            {"provider": "p1", "stream_id": "1"}, {"provider": "p2", "stream_id": "7", "disabled": True}]})
+        status, r, _ = self.request("DELETE", "/api/providers/p1?force=1")
+        self.assertEqual((status, r["only_disabled_streams"]), (200, ["CNN"]))
+
 
 class GuideRefreshRequests(unittest.TestCase):
     def test_a_changed_xmltv_source_refreshes_the_guide_now_and_at_its_own_interval(self):

@@ -68,7 +68,9 @@ function settleHeld() {
     // Only touch what changes, so a page opening never rewrites (and re-versions) an unchanged copy.
     if (p.guide?.cands?.length && (hasGuide(c) || leftAsIs(c))) p.guide = null;
     const own = new Set((c.streams || []).map(refKey));
-    if (p.backups?.some((b) => own.has(refKey(b)))) p.backups = p.backups.filter((b) => !own.has(refKey(b)));
+    // Drop backups the channel already has, and backups from a provider that was deleted (they cannot be saved).
+    const gone = (b) => own.has(refKey(b)) || (S.providers.length && !S.providers.some((x) => x.id === b.provider));
+    if (p.backups?.some(gone)) p.backups = p.backups.filter((b) => !gone(b));
     if (!p.guide?.cands?.length && !p.backups?.length) S.pending.delete(id);
   }
 }

@@ -53,6 +53,7 @@ def default_config():
         "backups": {"enabled": True, "time": "03:30", "keep": 14},
         "autosave_minutes": 2,
         "next_channel_id": 1,
+        "next_provider_id": 1,
     }
 
 
@@ -180,6 +181,12 @@ def fill_defaults(cfg):
     ids = [c.get("id") for c in cfg.get("channels") or [] if isinstance(c, dict) and isinstance(c.get("id"), int)]
     if not isinstance(cfg.get("next_channel_id"), int) or cfg["next_channel_id"] <= max(ids, default=0):
         cfg["next_channel_id"] = max(ids, default=0) + 1
+    # next_provider_id likewise, so a deleted provider's id (p2) is never handed to a new provider
+    pids = [int(m.group(1)) for m in (re.match(r"^p(\d+)$", str(p.get("id"))) for p in cfg.get("providers") or []
+                                      if isinstance(p, dict)) if m]
+    if not isinstance(cfg.get("next_provider_id"), int) or isinstance(cfg.get("next_provider_id"), bool) \
+            or cfg["next_provider_id"] <= max(pids, default=0):
+        cfg["next_provider_id"] = max(pids, default=0) + 1
     return cfg
 
 
@@ -527,6 +534,8 @@ class ConfigStore:
             new_cfg["version"] = CURRENT_VERSION
             new_cfg["next_channel_id"] = max(int(new_cfg.get("next_channel_id") or 0),
                                              self.get().get("next_channel_id", 1))
+            new_cfg["next_provider_id"] = max(int(new_cfg.get("next_provider_id") or 0),
+                                              self.get().get("next_provider_id", 1))
             new_cfg = fill_defaults(new_cfg)
             validate(new_cfg)
             self._write(new_cfg)

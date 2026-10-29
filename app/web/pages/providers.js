@@ -108,16 +108,19 @@ async function onClick(e) {
     case "delete": {
       const ok = await confirmDialog({ title: `Delete ${p.name}?`, message: "Its catalog cache is removed. Channels keep their other streams.", confirm: "Delete", danger: true });
       if (!ok) return;
+      let r;
       try {
-        await api.deleteProvider(p.id);
+        r = await api.deleteProvider(p.id);
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) {
           const force = await confirmDialog({ title: "Provider is in use", message: `${err.message}. Remove its streams from those channels and delete anyway? Channels themselves are kept.`, confirm: "Delete anyway", danger: true });
           if (!force) return;
-          try { await api.deleteProvider(p.id, true); } catch (e2) { toastError("Delete failed", e2); return; }
+          try { r = await api.deleteProvider(p.id, true); } catch (e2) { toastError("Delete failed", e2); return; }
         } else { toastError("Delete failed", err); return; }
       }
-      toast("Provider deleted", p.name, "ok");
+      const stuck = r?.only_disabled_streams || [];
+      if (stuck.length) toast("Provider deleted", `These channels now have only disabled streams and will not play until you enable one: ${stuck.join(", ")}`, "warn", 12000);
+      else toast("Provider deleted", p.name, "ok");
       invalidate("providers");
       await load();
       break;
