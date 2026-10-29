@@ -97,11 +97,12 @@ def one_guide(g, xmltv_lineups_only=False):
     Gracenote is the default: a channel without a mode, or a new channel carrying only the provider's
     tvg-id, is a Gracenote channel waiting for a station, and the tvg-id is kept as a hint for Auto-match
     (the guide never uses it). An XMLTV channel the user set stays XMLTV and drops any station. A channel
-    stored as "both" (older builds) keeps its station, unless every lineup it is in takes XMLTV.
+    stored as "both" (older builds) keeps its station, unless every lineup it is in takes XMLTV or it has no
+    station (then its XMLTV id was its guide).
     """
     mode = g.get("mode")
-    if mode == "both" and xmltv_lineups_only and g.get("xmltv_id"):
-        g["mode"] = "xmltv"
+    if mode == "both" and g.get("xmltv_id") and (xmltv_lineups_only or not g.get("station_id")):
+        g["mode"] = "xmltv"   # its XMLTV id was its guide; keep it
     elif mode in (None, "", "both") or (mode == "none" and (g.get("station_id") or g.get("xmltv_id"))):
         g["mode"] = "gracenote" if g.get("station_id") or g.get("xmltv_id") else "none"
     if g["mode"] == "gracenote" and g.get("station_id"):

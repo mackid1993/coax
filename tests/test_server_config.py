@@ -65,7 +65,8 @@ class ConfigTests(unittest.TestCase):
                 ch(2, mode="xmltv", station_id="10179", call_sign="ESPN", xmltv_id="espn.us"),
                 ch(3, mode="gracenote", xmltv_id="hint.us", xmltv_provider="p1"),
                 ch(4, mode="none", xmltv_id="tvg.us", xmltv_provider="p1"),
-                ch(5, mode="both")]}, handle)
+                ch(5, mode="both"),
+                ch(7, mode="both", xmltv_id="seven.us", xmltv_provider="p1")]}, handle)
         store = configmod.ConfigStore(self.path)
         g = [c["guide"] for c in store.load()["channels"]]
         self.assertEqual((g[0]["mode"], g[0]["station_id"], g[0]["xmltv_id"], g[0]["xmltv_provider"]),
@@ -75,6 +76,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((g[2]["mode"], g[2]["xmltv_id"]), ("gracenote", "hint.us"))   # Auto-match hint kept
         self.assertEqual((g[3]["mode"], g[3]["xmltv_id"]), ("gracenote", "tvg.us"))   # Gracenote by default
         self.assertEqual(g[4]["mode"], "none")
+        self.assertEqual((g[5]["mode"], g[5]["xmltv_id"]), ("xmltv", "seven.us"))   # "both" without a station
 
         def xmltv_lineup(cfg):   # a "both" channel whose only lineup takes XMLTV keeps its XMLTV id
             cfg["channels"].append(dict(cfg["channels"][4], id=6, uuid="", guide={
@@ -82,7 +84,7 @@ class ConfigTests(unittest.TestCase):
             cfg["lineups"].append({"id": "nfl", "name": "NFL", "guide": "xmltv", "channels": [6]})
             cfg["lineups"][0]["channels"] = [c for c in cfg["lineups"][0]["channels"] if c != 6]
         store.update(xmltv_lineup)
-        self.assertEqual({k: store.get()["channels"][5]["guide"][k] for k in ("mode", "station_id", "xmltv_id")},
+        self.assertEqual({k: store.get()["channels"][6]["guide"][k] for k in ("mode", "station_id", "xmltv_id")},
                          {"mode": "xmltv", "station_id": "", "xmltv_id": "nfl.us"})
 
         def pick_station(cfg):
