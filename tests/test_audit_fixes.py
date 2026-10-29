@@ -24,6 +24,9 @@ class LineupOrder(unittest.TestCase):
         names = ["PPV 10", "ESPN2 ᴿᴬᵂ", "ESPN ᴿᴬᵂ", "PPV 2", "Équipe 21", "ppv 1", "NEWS 12", "NEW\xa0JERSEY"]
         self.assertEqual(m3u_names(lineup_cfg(names, list(range(1, 9)), "alpha")),
                          ["Équipe 21", "ESPN ᴿᴬᵂ", "ESPN2 ᴿᴬᵂ", "NEW\xa0JERSEY", "NEWS 12", "ppv 1", "PPV 2", "PPV 10"])
+        # punctuation in the browser's order, Æ as AE, and a decorated number never breaks the M3U
+        self.assertEqual(m3u_names(lineup_cfg(["A&E", "❶ Sports", "Æon", "A-E"], [1, 2, 3, 4], "alpha")),
+                         ["❶ Sports", "A-E", "A&E", "Æon"])
 
 
 class AuditFixes(ApiTestCase):

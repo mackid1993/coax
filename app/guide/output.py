@@ -32,22 +32,27 @@ def _num_key(value):
         return (1, 0.0)
 
 
+# Punctuation in the order the browser's collation (ICU) sorts it, and letters it treats as their base letters.
+_PUNCT = "_-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$"
+_FOLD = str.maketrans({"æ": "ae", "œ": "oe", "ø": "o", "ł": "l", "đ": "d", "ð": "d", "ı": "i", "ħ": "h"})
+
+
 def _name_key(value):
     """A to Z the way the Channels page sorts (localeCompare, numeric, base sensitivity): accents and case ignored,
     numbers by value (PPV 2 before PPV 10), spaces before punctuation before digits before letters (ESPN before
     ESPN2)."""
     text = unicodedata.normalize("NFKD", str(value or ""))
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).casefold()
+    text = "".join(ch for ch in text if not unicodedata.combining(ch)).casefold().translate(_FOLD)
     key = []
     for part in re.findall(r"\d+|\D", text):
-        if part.isdigit():
+        if part.isdecimal():   # not isdigit: ❶ is a digit int() cannot read
             key.append((2, int(part), ""))
         elif part.isspace():
             key.append((0, 0, " "))
         elif part.isalpha():
             key.append((3, 0, part))
         else:
-            key.append((1, 0, part))
+            key.append((1, _PUNCT.find(part) if part in _PUNCT else len(_PUNCT) + ord(part), part))
     return key
 
 
