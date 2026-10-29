@@ -97,7 +97,8 @@ usually after a mistake.
   "known issue" that was only seen in a simulation. Separate realistic risk from theoretical.
 - Deliverables go to Artemis `~/Desktop` as Markdown or files.
 - Forum posts and changelogs: in the owner's voice, brief, no AI speak, no invented history, nested one level
-  under a bold version-and-date bullet.
+  under a bold version-and-date bullet. Only when the owner asks for one: small follow-up builds (UI fixes and
+  the like) get no changelog entry.
 
 ### Repo and releases
 - **README:** plain English, no versioning language, no list of fixes. Explain features, settings and the
@@ -402,7 +403,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   - HLS continues the output timeline over lost video (a skipped segment, or an outage longer than the
     playlist) instead of a freeze with silence; a busy answer to a backup probe no longer marks the backup;
   - build version stamped into the image, shown in the sidebar and the startup log.
-  Forum changelog for 1.0.6 and later follow-ups: `~/Desktop/coax-1.0.6-changelog.md` on Artemis. Short-form Xtream
+  Forum changelog for 1.0.6 and 1.0.6-1: `~/Desktop/coax-1.0.6-changelog.md` on Artemis. Short-form Xtream
   addresses (`/<user>/<pass>/<id>` without `/live/`) still play as MPEG-TS: they have no known HLS form, and
   guessing one could break streams that only look like that pattern.
 - **1.0.6-2** (Oct 28) phones: the sidebar fits the visible screen; the public IP (flag and country name) and
