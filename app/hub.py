@@ -906,6 +906,16 @@ class Hub:
         except (OSError, ValueError, TypeError):
             return None
 
+    def _stream_no(self, cfg, s):
+        """Which enabled stream plays, in the channel's current order (1 = main), for the card's badge. Worked out
+        from the stream playing now, so a tune that skipped a blocked main, a drag or a promotion cannot leave
+        the badge stale."""
+        ch = next((c for c in cfg.get("channels") or [] if str(c.get("id")) == str(s.channel_id)), None) or {}
+        cur = (str(s.cur_key[0]), str(s.cur_key[1])) if s.cur_key else None
+        enabled = [(str(r.get("provider")), str(r.get("stream_id"))) for r in ch.get("streams") or []
+                   if not r.get("disabled")]
+        return enabled.index(cur) + 1 if cur in enabled else s.stream_no
+
     def _feeds_view(self, cfg, s):
         """Every stream of the session's channel for the card: which plays, which is disabled or blocked."""
         try:
@@ -1045,7 +1055,11 @@ class Hub:
             if cur and cur != key:
                 target = cur   # tuned to it but already on another stream: restart there so it cannot come back
             else:
-                nxt = next(((st, p) for st, p in self._candidates(ch, providers) if p.get("enabled", True)
+                # The same choice a tune makes: unblocked before blocked, then not recently failed, then saved order.
+                ranked = sorted(self._candidates(ch, providers),
+                                key=lambda sp: (self._blocked(ch.get("id"), sp),
+                                                self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
+                nxt = next(((st, p) for st, p in ranked if p.get("enabled", True)
                             and (str(p.get("id")), str(st.get("stream_id"))) != key), None)
                 if nxt is None:
                     continue
@@ -1077,7 +1091,7 @@ class Hub:
                 "speed": {"slow": s.slow, "since": s.slow_since,
                           "reserve": self._live_reserve(s) if self._live_reserve(s) is not None else s.reserve,
                           "empty": s.reserve_empty},
-                "stream_no": s.stream_no,
+                "stream_no": self._stream_no(cfg, s),
                 "input": s.input_fmt,
                 "feeds": self._feeds_view(cfg, s),
                 "degraded": s.degraded,
