@@ -57,7 +57,10 @@ mode gracenote|xmltv|none, station_id, xmltv_id, ...; one source only: `config.o
 drops the XMLTV id beside it, on every load and save; new channels start as gracenote with the provider tvg-id
 as an Auto-match hint; a stored "both" in XMLTV-only lineups becomes xmltv), `lineups`
 (id, name, guide source, channel ids, sort, start_number, DVR options), `xmltv_sources`, `gracenote.regions`,
-`backups`, `timezone`, `autosave_minutes` (unused since the held suggestions replaced autosave).
+`backups`, `timezone`, `autosave_minutes` (unused since the held suggestions replaced autosave),
+`next_provider_id` (provider ids are never reused), and per channel `number_stream` (the stream whose provider
+number orders a provider-sorted lineup; it stays while that stream is on the channel). Held suggestions are
+changed server-side only through `App.edit_held` (bumps `rev`, so an open page takes the new copy).
 
 Always change config through `ConfigStore.update(mutate)`: it deep-copies, validates, writes atomically and calls
 listeners (time zone, DVR sync). Never write the file directly.

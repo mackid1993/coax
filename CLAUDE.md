@@ -366,7 +366,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 309 after 1.0.6-3, about 40 s.
+- **Tests:** 331 after 1.0.6-7, about 45 s.
 
 ---
 
@@ -430,6 +430,16 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **1.0.6-6** (Oct 29) a channel's guide is one source: the per-channel "both" mode is gone, the Guide dialog
   clears the XMLTV id when a station is picked (and the other way around), Auto-match no longer turns an XMLTV
   channel into "both", and stored "both" channels become Gracenote at load with the XMLTV id dropped.
+- **1.0.6-7** (Oct 29) from a targeted audit (six read-only agents, every finding reproduced), one commit per
+  fix: Gracenote is the default (new channels start as Gracenote with the provider tvg-id as an Auto-match hint;
+  a channel set to XMLTV stays XMLTV); provider Total stream limit saved; Guide and Streams dialogs keep held
+  suggestions and fetch fresh streams; lineup M3U follows coax order and the page's A to Z; provider-sorted
+  lineups keep their numbers through promotions (`number_stream`); a provider without an XMLTV URL no longer
+  freezes a lineup's guide; Settings XMLTV sources get fresh ids and refresh the guide at once; provider ids are
+  never reused (`next_provider_id`) and a delete drops its held suggestions; renamed M3U ids carry Smart
+  Standby state and held suggestions; empty Xtream categories are a failed refresh; Status card Disable avoids
+  blocked streams, badge and focus fixed, Undo refuses over a newer order, Unblock clears confirmed deaths;
+  Auto-match backups only from picked groups.
 
 ---
 
