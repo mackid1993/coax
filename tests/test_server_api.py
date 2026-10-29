@@ -530,6 +530,48 @@ class OneScreenSetup(ApiTestCase):
         self.assertEqual(result["1"]["backups"][0]["stream_id"], "3")
         self.assertEqual(seen["providers"], ["p1"])
 
+    def test_unsaved_suggestions_are_kept_not_applied(self):
+        status, d, _ = self.request("GET", "/api/suggestions")
+        self.assertEqual((status, d["rev"], d["pending"]), (200, 0, {}))
+        before = self.store.snapshot()
+        draft = {"1": {"guide": {"cands": [{"station_id": "10149"}], "idx": 0, "checked": True},
+                       "backups": [{"provider": "p1", "stream_id": "3", "checked": True}]}}
+        status, r, _ = self.request("PUT", "/api/suggestions", {"rev": 0, "job_id": "abc", "pending": draft})
+        self.assertEqual((status, r["rev"]), (200, 1), r)
+        self.assertEqual(self.store.get(), before)   # held, never applied
+        status, err, _ = self.request("PUT", "/api/suggestions", {"rev": 0, "job_id": "abc", "pending": {}})
+        self.assertEqual(status, 409)                # a stale page cannot overwrite newer work
+        status, err, _ = self.request("PUT", "/api/suggestions", {"rev": 1, "pending": {"x": {}}})
+        self.assertEqual(status, 400)
+        # survives a restart
+        again = servermod.App(self.store, self.hub, servermod.RingLogHandler(5))
+        self.assertEqual((again.suggestions["rev"], again.suggestions["job_id"], again.suggestions["pending"]),
+                         (1, "abc", draft))
+
+    def test_finished_automatch_survives_a_restart(self):
+        sys.modules["app.backups"] = None
+        status, job, _ = self.request("POST", "/api/automatch/start", {"ids": [1]})
+        for _ in range(100):
+            status, job, _ = self.request("GET", "/api/automatch/job")
+            if job["state"] != "running":
+                break
+            time.sleep(0.05)
+        self.assertEqual(job["state"], "done", job)
+        again = servermod.App(self.store, self.hub, self.app.log_buffer)
+        self.assertEqual((again.automatch_job["id"], again.automatch_job["state"]), (job["id"], "done"))
+        self.assertEqual(again.automatch_job["result"]["1"]["guide"][0]["station_id"], "10149")
+        self.assertEqual(servermod.Handler._job_view(again.automatch_job)["id"], job["id"])
+        # corrupt or foreign files never stop coax from starting
+        with open(again.automatch_path, "w") as f:
+            f.write('{"state": "done", "id": "x"}')
+        with open(again.suggestions_path, "w") as f:
+            f.write("{not json")
+        third = servermod.App(self.store, self.hub, self.app.log_buffer)
+        self.assertEqual((third.automatch_job, third.suggestions), (None, {}))
+        # a backup restore drops held suggestions (channel ids can be handed out again)
+        third.forget_suggestions()
+        self.assertFalse(os.path.exists(third.automatch_path) or os.path.exists(third.suggestions_path))
+
     def test_apply_is_atomic(self):
         status, result, _ = self.request("POST", "/api/channels/apply", {"channels": [
             {"id": 1, "guide": {"mode": "gracenote", "station_id": "10149"},

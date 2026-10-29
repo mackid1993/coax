@@ -30,6 +30,7 @@ log = logging.getLogger("coax.server")
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_BODY = 16 * 1024 * 1024
+JOB_KEYS = ("id", "state", "done", "total", "phase", "ids", "started", "finished", "error")
 STREAM_CHUNK_TIMEOUT = 60
 DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 LOCAL_ADDRESSES = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
@@ -210,6 +211,49 @@ class App:
         self.health = None          # app.feedhealth.FeedHealth, set by main
         self.automatch_job = None   # {id, state, done, total, phase, started, finished, result, error}
         self.automatch_lock = threading.Lock()
+        # Unsaved Auto-match suggestions (the Channels page's checks included) live on disk until you Save or
+        # Discard them, so a reload, another device or a restart never loses them and nothing is applied for you.
+        self.suggestions_path = os.path.join(store.data_dir, "suggestions.json")
+        self.automatch_path = os.path.join(store.data_dir, "automatch.json")
+        self.suggestions_lock = threading.Lock()
+        self.suggestions = self._read_json(self.suggestions_path, "suggestions")
+        rev = self.suggestions.get("rev", 0)
+        if not isinstance(self.suggestions.get("pending"), dict) or not isinstance(rev, int) or isinstance(rev, bool):
+            self.suggestions = {}
+        job = self._read_json(self.automatch_path, "auto-match result")
+        if job.get("state") == "done" and isinstance(job.get("id"), str) and all(k in job for k in JOB_KEYS):
+            self.automatch_job = job   # the last finished Auto-match, so a restart before it is reviewed loses nothing
+
+    @staticmethod
+    def _read_json(path, what):
+        try:
+            with open(path, "rb") as handle:
+                data = json.loads(handle.read() or b"{}")
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            log.warning("could not read the saved %s (%s); starting without it", what, exc)
+            return {}
+
+    def save_automatch(self, job):
+        try:
+            configmod.atomic_write(self.automatch_path, json.dumps(job).encode())
+        except Exception as exc:  # noqa: BLE001 - a result that cannot be kept on disk is still shown
+            log.warning("could not save the auto-match result: %s", exc)
+
+    def forget_suggestions(self):
+        """After a backup restore: channel ids can be handed out again, so held suggestions no longer fit."""
+        with self.suggestions_lock:
+            self.suggestions = {"rev": self.suggestions.get("rev", 0) + 1, "job_id": None, "pending": {}}
+            self.automatch_job = None
+            for path in (self.suggestions_path, self.automatch_path):
+                try:
+                    os.remove(path)
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    log.warning("could not remove %s: %s", path, exc)
 
     # -- refresh
     def start_refresh(self, provider_id, wait=False):
@@ -566,6 +610,8 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/automatch", "h_automatch"),
         ("POST", r"/api/automatch/start", "h_automatch_start"),
         ("GET", r"/api/automatch/job", "h_automatch_job"),
+        ("GET", r"/api/suggestions", "h_suggestions_get"),
+        ("PUT", r"/api/suggestions", "h_suggestions_put"),
         ("POST", r"/api/channels/apply", "h_channels_apply"),
         ("GET", r"/api/lineups", "h_lineups_list"),
         ("POST", r"/api/lineups", "h_lineups_create"),
@@ -1632,6 +1678,10 @@ class Handler(BaseHTTPRequestHandler):
         def run():
             try:
                 job["result"] = self._automatch_compute(body, ids, job)
+                job["finished"] = time.time()
+                job["done"] = job["total"]
+                if app.automatch_job is job:   # not after a backup restore dropped it
+                    app.save_automatch(dict(job, state="done"))   # on disk before any page can see it finished
                 job["state"] = "done"
                 log.info("auto-match finished in %.0fs", time.time() - job["started"])
             except Exception as exc:  # noqa: BLE001
@@ -1652,9 +1702,39 @@ class Handler(BaseHTTPRequestHandler):
             view["result"] = job["result"]
         return view
 
+    def h_suggestions_get(self):
+        app = self.app
+        with app.suggestions_lock:
+            d = app.suggestions
+            return {"rev": d.get("rev", 0), "job_id": d.get("job_id"), "pending": d.get("pending") or {},
+                    "saved_at": d.get("saved_at")}
+
+    def h_suggestions_put(self):
+        """Keep the unsaved suggestions as they are. Never applies anything: Save on the Channels page does that.
+        `rev` must match the stored one, so a stale page (another tab or device) cannot overwrite newer work."""
+        body = self._body_object()
+        pending, rev = body.get("pending"), body.get("rev")
+        if not isinstance(pending, dict) or not all(re.match(r"^\d+$", str(k)) and isinstance(v, dict)
+                                                    for k, v in pending.items()):
+            raise bad_request("pending must be an object of channel id -> suggestion")
+        if not isinstance(rev, int) or isinstance(rev, bool):
+            raise bad_request("rev is required")
+        job_id = body.get("job_id")
+        if job_id is not None and not isinstance(job_id, str):
+            raise bad_request("job_id must be a string")
+        app = self.app
+        with app.suggestions_lock:
+            cur = app.suggestions.get("rev", 0)
+            if rev != cur:
+                raise ApiError(409, "the suggestions changed in another window")
+            data = {"rev": cur + 1, "job_id": job_id, "pending": pending, "saved_at": now_iso()}
+            configmod.atomic_write(app.suggestions_path, json.dumps(data).encode())
+            app.suggestions = data
+        return {"rev": data["rev"], "saved_at": data["saved_at"]}
+
     @staticmethod
     def _job_view(job):
-        return {k: job[k] for k in ("id", "state", "done", "total", "phase", "ids", "started", "finished", "error")}
+        return {k: job[k] for k in JOB_KEYS}
 
     def h_automatch(self):
         body = self._body_object()
@@ -1899,7 +1979,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_backup_restore(self, name):
         try:
-            return lazy("app.snapshots").restore(self.app.store, name, on_data_restored=self._reload_health)
+            result = lazy("app.snapshots").restore(self.app.store, name, on_data_restored=self._reload_health)
+            self.app.forget_suggestions()
+            return result
         except FileNotFoundError:
             raise not_found("no backup named %s" % name)
         except (ValueError, configmod.ConfigError) as exc:

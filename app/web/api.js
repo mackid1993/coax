@@ -35,6 +35,7 @@ export const routes = {
   automatch: () => "/api/automatch",
   automatchStart: () => "/api/automatch/start",
   automatchJob: (result) => `/api/automatch/job${result ? "?result=1" : ""}`,
+  suggestions: () => "/api/suggestions",
   gracenoteSearch: (q, local) => `/api/gracenote/search${qs(local ? { q, local: 1 } : { q })}`,
   gracenoteSuggest: (p) => `/api/gracenote/suggest${qs(p)}`,
   gracenoteBulkSuggest: () => "/api/gracenote/bulk-suggest",
@@ -139,6 +140,8 @@ export const api = {
   automatch: (ids) => post(routes.automatch(), { ids }, { timeout: 300000 }),
   automatchStart: (ids) => post(routes.automatchStart(), { ids }),
   automatchJob: (result = false) => get(routes.automatchJob(result), { timeout: 10000 }),
+  suggestions: () => get(routes.suggestions()),
+  saveSuggestions: (draft) => put(routes.suggestions(), draft),
   // {channels: [{id, guide: {...}, streams: [...]}]}
   applyChannels: (channels) => post(routes.channelsApply(), { channels }, { timeout: 60000 }),
 
