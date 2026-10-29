@@ -1339,10 +1339,8 @@ class Handler(BaseHTTPRequestHandler):
         def mutate(cfg):
             targets = cfg["channels"]
             if ids is not None:
-                wanted = set(ids)
-                for cid in wanted:
-                    find_channel(cfg, cid)
-                targets = [c for c in targets if c["id"] in wanted]
+                # Number in the order given: the UI sends channels in the order shown (A to Z, a lineup's order).
+                targets = [find_channel(cfg, cid) for cid in dict.fromkeys(ids)]
             if only_enabled:
                 targets = [c for c in targets if c["enabled"]]
             number = start
