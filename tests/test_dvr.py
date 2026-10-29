@@ -300,7 +300,7 @@ class SyncerTests(DvrTestCase):
 
     def test_guide_id_change_downloads_guide(self):
         def new_station(cfg):
-            cfg["channels"][0]["guide"]["xmltv_id"] = "cnn2.us"
+            cfg["channels"][0]["guide"].update(mode="xmltv", xmltv_id="cnn2.us")
         self.store.update(new_station)
         self.wait_idle()
         self.assertIn(("PUT", "/dvr/lineups/X-coaxcable"), self.fake.calls())

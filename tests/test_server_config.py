@@ -55,6 +55,35 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["lineups"][0]["guide"], "per-channel")
         self.assertEqual(cfg["xmltv_sources"][0]["refresh_hours"], 24)
 
+    def test_a_channel_guide_is_one_source(self):
+        def ch(cid, **guide):
+            return {"id": cid, "name": "C%d" % cid, "streams": [{"provider": "p1", "stream_id": str(cid)}],
+                    "guide": dict({"station_id": "", "xmltv_id": "", "xmltv_provider": ""}, **guide)}
+        with open(self.path, "w") as handle:
+            json.dump({"providers": [provider()], "channels": [
+                ch(1, mode="both", station_id="10142", xmltv_id="cnn.us", xmltv_provider="p1"),
+                ch(2, mode="xmltv", station_id="10179", call_sign="ESPN", xmltv_id="espn.us"),
+                ch(3, mode="gracenote", xmltv_id="hint.us", xmltv_provider="p1"),
+                ch(4, mode="none", xmltv_id="tvg.us", xmltv_provider="p1"),
+                ch(5, mode="both")]}, handle)
+        store = configmod.ConfigStore(self.path)
+        g = [c["guide"] for c in store.load()["channels"]]
+        self.assertEqual((g[0]["mode"], g[0]["station_id"], g[0]["xmltv_id"], g[0]["xmltv_provider"]),
+                         ("gracenote", "10142", "", ""))      # the station wins over a stored "both"
+        self.assertEqual((g[1]["mode"], g[1]["station_id"], g[1]["xmltv_id"], "call_sign" in g[1]),
+                         ("xmltv", "", "espn.us", False))
+        self.assertEqual((g[2]["mode"], g[2]["xmltv_id"]), ("gracenote", "hint.us"))   # Auto-match hint kept
+        self.assertEqual((g[3]["mode"], g[3]["xmltv_id"]), ("xmltv", "tvg.us"))
+        self.assertEqual(g[4]["mode"], "none")
+
+        def pick_station(cfg):
+            cfg["channels"][3]["guide"].update(mode="gracenote", station_id="10001")
+        store.update(pick_station)
+        self.assertEqual(store.get()["channels"][3]["guide"]["xmltv_id"], "")
+        with self.assertRaises(configmod.ConfigError):
+            configmod.validate(dict(store.snapshot(), channels=[dict(store.get()["channels"][0],
+                                                                     guide={"mode": "both"})]))
+
     def test_invalid_json_and_invalid_values(self):
         with open(self.path, "w") as handle:
             handle.write("{nope")

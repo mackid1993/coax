@@ -53,7 +53,8 @@ scripts/make_logo.py brand asset generator
 (port, base_url), `channels_dvr.url`, `transcode` (`off` or a preset like `1080p60`), `providers` (each with
 `lines`, `groups`, `format` hls|ts, `max_streams`), `channels` (id, uuid, number, name, group, logo, enabled,
 `streams` = ordered list of `{provider, stream_id}`, optionally `"disabled": true`, `guide` =
-mode/station_id/xmltv_id/...), `lineups`
+mode gracenote|xmltv|none, station_id, xmltv_id, ...; one source only: `config.one_guide` keeps the station and
+drops the XMLTV id beside it, on every load and save), `lineups`
 (id, name, guide source, channel ids, sort, start_number, DVR options), `xmltv_sources`, `gracenote.regions`,
 `backups`, `timezone`, `autosave_minutes` (unused since the held suggestions replaced autosave).
 

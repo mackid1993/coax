@@ -1571,7 +1571,7 @@ class Handler(BaseHTTPRequestHandler):
         ids = self._ids(body, required=False)
         if ids is None:
             ids = [c["id"] for c in cfg["channels"]
-                   if c["guide"]["mode"] in ("gracenote", "both", "none") and not c["guide"].get("station_id")]
+                   if c["guide"]["mode"] in ("gracenote", "none") and not c["guide"].get("station_id")]
         channels = [find_channel(cfg, cid) for cid in ids]
         cdvr = self._cdvr_url()
         countries = self._countries(body.get("countries"))

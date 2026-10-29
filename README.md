@@ -616,12 +616,14 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    that already has a guide, or that you marked *Left as is*, gets backup suggestions only. The filters above the
    table (*Needs attention*, *Unmatched guide*, *No backups*, *To review*, *Left as is*) match the counters at
    the top; *No backups* counts only backups that can play (not disabled, not vanished from the provider).
-6. **Guide.** For each channel choose a guide mode:
+6. **Guide.** Each channel uses one guide source, never two:
    - **Gracenote**: coax searches Channels DVR's station database and suggests the best match with a
      confidence score. Channels DVR then uses its own guide data for that channel. Best when it matches.
    - **XMLTV**: use the provider's guide for that channel; pick the XMLTV channel id from the list.
-   - **Both**: the Gracenote station id, with XMLTV as the fallback for channels that have none.
    - **None**: no guide data.
+
+   Picking a Gracenote station clears the channel's XMLTV id, and picking an XMLTV id clears its station.
+   Auto-match works the same way: a matched station replaces the XMLTV id.
 7. **Lineups.** A default lineup holds all channels. Add more lineups if you want separate sources in the
    DVR (for example kids or sports).
 8. **Add each lineup to Channels DVR.** On the *Lineups* page, press **Add to Channels DVR** on a lineup and

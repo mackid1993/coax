@@ -28,7 +28,7 @@ DATA_DIR = "/data"
 TRANSCODE_VALUES = ("off", "1080p60", "1080p30", "720p60", "720p30", "1080p50", "1080p25", "720p50", "720p25")
 PROVIDER_TYPES = ("xtream", "m3u")
 STREAM_FORMATS = ("hls", "ts")
-GUIDE_MODES = ("gracenote", "xmltv", "both", "none")
+GUIDE_MODES = ("gracenote", "xmltv", "none")  # a channel's guide is one source, never both
 LINEUP_GUIDES = ("gracenote", "xmltv", "both", "per-channel")
 LINEUP_SORTS = ("manual", "provider", "alpha")  # channel order in the lineup's M3U
 ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -90,6 +90,25 @@ def _fill(target, defaults):
     return target
 
 
+def one_guide(g):
+    """A channel's guide is a Gracenote station or an XMLTV id, never both (mutates g).
+
+    A station wins: the XMLTV id beside it is dropped (older builds and Auto-match wrote both). An XMLTV
+    channel drops any station. A Gracenote channel still waiting for a station keeps the provider's
+    tvg-id, which Auto-match uses as a hint and the guide never uses.
+    """
+    if g.get("mode") in (None, "", "none", "both"):
+        g["mode"] = "gracenote" if g.get("station_id") else "xmltv" if g.get("xmltv_id") else "none"
+    if g["mode"] == "gracenote" and g.get("station_id"):
+        g["xmltv_id"] = ""
+        g["xmltv_provider"] = ""
+    elif g["mode"] == "xmltv" and g.get("station_id"):
+        g["station_id"] = ""
+        for key in ("call_sign", "station_name", "confidence"):
+            g.pop(key, None)
+    return g
+
+
 def fill_defaults(cfg):
     """Fill every missing key in place, including inside providers, lines and channels."""
     _fill(cfg, default_config())
@@ -115,10 +134,8 @@ def fill_defaults(cfg):
             lineup.setdefault("start_number", None)
     for ch in cfg.get("channels") or []:
         g = ch.get("guide") if isinstance(ch, dict) else None
-        if isinstance(g, dict) and g.get("mode") in (None, "", "none"):
-            if g.get("station_id") or g.get("xmltv_id"):
-                g["mode"] = "both" if g.get("station_id") and g.get("xmltv_id") else (
-                    "gracenote" if g.get("station_id") else "xmltv")
+        if isinstance(g, dict):
+            one_guide(g)
     if not isinstance(cfg.get("autosave_minutes"), int) or isinstance(cfg.get("autosave_minutes"), bool):
         cfg["autosave_minutes"] = 2
     if not isinstance(cfg.get("timezone"), str):

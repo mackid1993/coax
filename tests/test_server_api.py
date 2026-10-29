@@ -411,7 +411,7 @@ class ChannelRoutes(ApiTestCase):
         status, ch, _ = self.request("PUT", "/api/channels/1", {"name": "CNN", "enabled": False,
                                                               "guide": {"mode": "gracenote", "station_id": "5"}})
         self.assertEqual((ch["name"], ch["enabled"], ch["guide"]["mode"]), ("CNN", False, "gracenote"))
-        self.assertEqual(ch["guide"]["xmltv_id"], "cnn.us")
+        self.assertEqual(ch["guide"]["xmltv_id"], "")   # a station replaces the XMLTV id
         status, err, _ = self.request("PUT", "/api/channels/1", {"number": "abc"})
         self.assertEqual(status, 400)
         status, err, _ = self.request("PUT", "/api/channels/1", {"guide": {"mode": "magic"}})

@@ -209,6 +209,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   across reloads, devices and restarts) until Save or Discard; nothing applies them for you. The old autosave
   that applied checked items was removed (owner: "it takes stuff that you've checked off and approves them for
   you instead of just saving them"). Everything reviewable shows under **To review**.
+- **A channel's guide is one source: a Gracenote station or an XMLTV id, never both.** Picking one clears the
+  other, Auto-match's station replaces the XMLTV id, and `config.one_guide` drops the XMLTV id beside a station
+  on every load and save (1.0.6-6; 143 of the owner's channels had both). Lineup-level "Both" (station, XMLTV
+  for the channels without one) is unaffected.
 - **Reordering streams never switches.** Dragging a stream on the Status card (or reordering in the stream
   editor) only saves the order for the next failover; switching is the deliberate **Switch** button.
 - **The UI works on a phone** (owner: "something you might need to fix really quick with on your phone").
@@ -423,6 +427,9 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   counters agree (No backups counts playable backups only, Unmatched guide excludes left as is); selection is
   pruned to visible rows; Save clears only what it applied; auto-number follows the order shown. From an audit
   plus three review rounds; tested against the real server with a fake Xtream panel in Chromium.
+- **1.0.6-6** (Oct 29) a channel's guide is one source: the per-channel "both" mode is gone, the Guide dialog
+  clears the XMLTV id when a station is picked (and the other way around), Auto-match no longer turns an XMLTV
+  channel into "both", and stored "both" channels become Gracenote at load with the XMLTV id dropped.
 
 ---
 

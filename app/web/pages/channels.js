@@ -443,10 +443,9 @@ function currentGuide(c) {
   const g = c.guide || {};
   const mode = g.mode || "none";
   let inner;
-  if ((mode === "gracenote" || mode === "both") && g.station_id) {
+  if (mode === "gracenote" && g.station_id) {
     inner = `<span class="badge badge-accent">GN</span>${stationLabel(g)}${g.confidence != null ? confidenceHtml(g.confidence) : ""}`;
-    if (mode === "both" && g.xmltv_id) inner += `<span class="badge badge-info">+XMLTV</span>`;
-  } else if ((mode === "xmltv" || mode === "both") && g.xmltv_id) {
+  } else if (mode === "xmltv" && g.xmltv_id) {
     inner = `<span class="badge badge-info">XMLTV</span><span class="mono small ellip" data-pop="${esc(g.xmltv_id)}" data-pop-sub="XMLTV id">${esc(g.xmltv_id)}</span>`;
   } else {
     inner = `<span class="faint">${mode === "none" ? "No guide" : "Not matched"}</span>`;
@@ -801,9 +800,8 @@ function checkHigh() {
   renderFrame();
 }
 function guideFromCandidate(c, cand) {
-  const old = c.guide || {};
-  const mode = old.mode === "xmltv" ? "both" : old.mode === "both" ? "both" : "gracenote";
-  return { ...old, mode, station_id: String(cand.station_id), call_sign: cand.call_sign || "", station_name: cand.name || "", confidence: cand.score ?? cand.confidence ?? null };
+  // A guide is one source: a Gracenote station replaces the XMLTV id.
+  return { ...(c.guide || {}), mode: "gracenote", xmltv_id: "", xmltv_provider: "", station_id: String(cand.station_id), call_sign: cand.call_sign || "", station_name: cand.name || "", confidence: cand.score ?? cand.confidence ?? null };
 }
 async function acceptChecked() {
   if (accepting) return;
@@ -938,7 +936,6 @@ function guideModal(c) {
   const p = S.pending.get(c.id);
   const sources = xmltvSources();
   if (!g.xmltv_provider && sources[0]) g.xmltv_provider = sources[0].id;
-  const modes = [["gracenote", "Gracenote"], ["xmltv", "XMLTV"], ["both", "Both"], ["none", "None"]];
   const m = openModal({
     title: `Guide · ${c.name}`,
     wide: true,
@@ -953,7 +950,7 @@ function guideModal(c) {
           <div class="result-list" id="gnList">${p?.guide?.cands?.length ? candList(p.guide.cands, g.station_id) : `<div class="faint small">Search to see stations.</div>`}</div>
         </div>
         <div class="stack" data-pane="xm">
-          <div class="label">XMLTV channel <button type="button" class="btn btn-ghost btn-sm" data-xclear style="padding:0 6px">Clear</button> <span class="faint">${g.xmltv_id ? `· current <span class="mono">${esc(g.xmltv_id)}</span>` : ""}</span></div>
+          <div class="label">XMLTV channel <button type="button" class="btn btn-ghost btn-sm" data-xclear style="padding:0 6px">Clear</button> <span class="faint" id="xmCur">${g.xmltv_id ? `· current <span class="mono">${esc(g.xmltv_id)}</span>` : ""}</span></div>
           <div class="row"><select class="input" id="xmSrc" style="flex:0 0 42%">${sources.map((s) => `<option value="${esc(s.id)}" ${s.id === g.xmltv_provider ? "selected" : ""}>${esc(s.name)}${s.kind === "source" ? " (XMLTV)" : ""}</option>`).join("") || `<option value="">No sources</option>`}</select>
           <label class="search" style="flex:1"><span class="sr-only">Search XMLTV ids</span>${icon("search")}<input class="input" id="xmQ" placeholder="Search id or name"></label></div>
           <div class="result-list" id="xmList"><div class="faint small">Loading ids…</div></div>
@@ -965,18 +962,25 @@ function guideModal(c) {
   const summary = () => {
     $("#gSummary", el).innerHTML = `Mode <b>${esc(g.mode)}</b>${g.station_id ? ` · station <span class="num">${esc(g.station_id)}</span>` : ""}${g.xmltv_id ? ` · xmltv <span class="mono">${esc(g.xmltv_id)}</span>` : ""}`;
     $$("[data-pane]", el).forEach((pane) => {
-      const on = pane.dataset.pane === "gn" ? g.mode === "gracenote" || g.mode === "both" : g.mode === "xmltv" || g.mode === "both";
-      pane.style.opacity = "1"; void on;
+      pane.style.opacity = "1";
     });
+  };
+  // A guide is one source: picking a Gracenote station clears the XMLTV id, and the other way around.
+  const useStation = () => {
+    g.mode = "gracenote"; g.xmltv_id = ""; g.xmltv_provider = "";
+    $("#xmCur", el).innerHTML = ""; $$("[data-xmid]", el).forEach((b) => b.classList.remove("picked"));
+  };
+  const useXmltv = () => {
+    g.mode = "xmltv"; g.station_id = ""; g.call_sign = ""; g.station_name = ""; g.confidence = null;
+    $("#gnCur", el).innerHTML = ""; $("#gnManual", el).value = ""; $$("[data-station]", el).forEach((b) => b.classList.remove("picked"));
   };
   summary();
   el.addEventListener("click", (e) => {
     if (e.target.closest("[data-manual]")) {
       const v = $("#gnManual", el).value.trim();
       if (!/^\d{1,12}$/.test(v)) { toast("Station IDs are numbers", "Example: 62420", "warn", 3000); return; }
+      useStation();
       g.station_id = v; g.call_sign = ""; g.station_name = ""; g.confidence = null;
-      if (g.mode === "none" || g.mode === "xmltv") g.mode = g.mode === "xmltv" ? "both" : "gracenote";
-      $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === g.mode));
       $("#gnCur", el).innerHTML = `· current <span class="num">${esc(v)}</span>`;
       summary(); return;
     }
@@ -986,17 +990,17 @@ function guideModal(c) {
     if (mb) { g.mode = mb.dataset.mode; $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b === mb)); summary(); return; }
     const st = e.target.closest("[data-station]");
     if (st) {
+      useStation();
       g.station_id = st.dataset.station; g.call_sign = st.dataset.call || ""; g.station_name = st.dataset.name || ""; g.confidence = st.dataset.conf ? Number(st.dataset.conf) : null;
-      if (g.mode === "none" || g.mode === "xmltv") g.mode = g.mode === "xmltv" ? "both" : "gracenote";
-      $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === g.mode));
+      $("#gnCur", el).innerHTML = `· current <span class="num">${esc(g.station_id)}</span>`;
       $$("[data-station]", el).forEach((b) => b.classList.toggle("picked", b === st));
       summary(); return;
     }
     const xm = e.target.closest("[data-xmid]");
     if (xm) {
+      useXmltv();
       g.xmltv_id = xm.dataset.xmid; g.xmltv_provider = $("#xmSrc", el).value;
-      if (g.mode === "none" || g.mode === "gracenote") g.mode = g.mode === "gracenote" ? "both" : "xmltv";
-      $$("[data-mode]", el).forEach((b) => b.setAttribute("aria-pressed", b.dataset.mode === g.mode));
+      $("#xmCur", el).innerHTML = `· current <span class="mono">${esc(g.xmltv_id)}</span>`;
       $$("[data-xmid]", el).forEach((b) => b.classList.toggle("picked", b === xm));
       summary();
     }
@@ -1042,7 +1046,9 @@ function guideModal(c) {
   const save = async (goNext) => {
     try {
       g.reviewed = $("#gLeft", el).checked;
-      g.mode = g.station_id && g.xmltv_id ? "both" : g.station_id ? "gracenote" : g.xmltv_id ? "xmltv" : "none";
+      // A station wins over an XMLTV id left from an older build; the server keeps only one either way.
+      g.mode = g.station_id ? "gracenote" : g.xmltv_id ? "xmltv" : "none";
+      if (g.station_id) { g.xmltv_id = ""; g.xmltv_provider = ""; }
       const r = await api.updateChannel(c.id, { guide: g });
       Object.assign(chById(c.id) || c, r && typeof r === "object" && r.id ? r : { guide: g });
       if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.guide = null; if (!pp.backups?.length) S.pending.delete(c.id); }
