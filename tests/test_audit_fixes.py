@@ -58,6 +58,39 @@ class AuditFixes(ApiTestCase):
         self.store.update(lambda cfg: cfg["channels"][0]["streams"].pop())       # its stream is removed
         self.assertEqual(self.app.provider_num(channel()), "905")
 
+    def test_settings_xmltv_sources_get_fresh_ids_and_removal_clears_channels(self):
+        put = lambda sources: self.request("PUT", "/api/config", {"xmltv_sources": sources})  # noqa: E731
+        status, cfg, _ = put([{"id": "", "name": "A", "url": "http://a/x.xml"},
+                              {"id": "", "name": "B", "url": "http://b/x.xml"}])
+        self.assertEqual((status, [x["id"] for x in cfg["xmltv_sources"]]), (200, ["x1", "x2"]))
+        status, ch, _ = self.request("POST", "/api/channels", {"name": "One", "guide": {
+            "mode": "xmltv", "xmltv_id": "one.a", "xmltv_provider": "x1"}})
+        # remove A (used by a channel) and add C in the same save: C must not become x1 or collide with x2
+        status, cfg, _ = put([{"id": "x2", "name": "B", "url": "http://b/x.xml"},
+                              {"id": "", "name": "C", "url": "http://c/x.xml"}])
+        self.assertEqual((status, [x["id"] for x in cfg["xmltv_sources"]]), (200, ["x2", "x3"]), cfg)
+        guide = self.store.get()["channels"][0]["guide"]
+        self.assertEqual((guide["xmltv_provider"], guide["xmltv_id"]), ("", ""))
+
+
+class GuideRefreshRequests(unittest.TestCase):
+    def test_a_changed_xmltv_source_refreshes_the_guide_now_and_at_its_own_interval(self):
+        from app.providers import scheduler
+        runs = []
+        saved = scheduler.refresh_guide
+        scheduler.refresh_guide = lambda cfg: runs.append(1)
+        try:
+            cfg = {"providers": [], "xmltv_sources": [{"id": "x1", "url": "http://x", "refresh_hours": 2}]}
+            state = {"guide_at": scheduler.clock()}
+            scheduler.run_once(lambda: cfg, state)
+            self.assertEqual(runs, [])
+            scheduler.request_guide()
+            scheduler.run_once(lambda: cfg, state)
+            self.assertEqual(runs, [1])
+            self.assertEqual(scheduler._guide_hours(cfg), 2)
+        finally:
+            scheduler.refresh_guide = saved
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -129,7 +129,8 @@ async function save() {
   if (!urlOk(d.base_url)) return toast("Base URL looks wrong", "Use http://IP:PORT", "warn");
   if (!urlOk(d.dvr)) return toast("DVR server URL looks wrong", "Use http://IP:8089", "warn");
   if (d.xmltv_sources.some((s) => !s.url || !urlOk(s.url))) return toast("Check XMLTV sources", "Every source needs an http(s) URL.", "warn");
-  const sources = d.xmltv_sources.map((s, i) => ({ id: s.id || `x${i + 1}`, name: s.name || `XMLTV ${i + 1}`, url: s.url, refresh_hours: Number(s.refresh_hours) || 24 }));
+  // A new source goes without an id: the server picks one that no removed source used.
+  const sources = d.xmltv_sources.map((s, i) => ({ id: s.id || "", name: s.name || `XMLTV ${i + 1}`, url: s.url, refresh_hours: Number(s.refresh_hours) || 24 }));
   try {
     cfg = await api.putConfig({
       server: { base_url: d.base_url.replace(/\/+$/, ""), port: d.port },
@@ -141,6 +142,7 @@ async function save() {
       backups: { enabled: !!d.backups.enabled, time: d.backups.time || "03:30", keep: Number(d.backups.keep) || 14 },
     });
     invalidate("config");
+    d.xmltv_sources = JSON.parse(JSON.stringify(cfg?.xmltv_sources || []));   // new sources now have their ids
     dirty = false;
     drawSave();
     toast("Settings saved", cfg?.server?.port && cfg.server.port !== location.port * 1 && location.port ? "Restart coax for a port change to take effect." : "", "ok");

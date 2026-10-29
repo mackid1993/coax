@@ -932,6 +932,8 @@ class Handler(BaseHTTPRequestHandler):
 
         def mutate(merged):
             configmod.unmask(body, merged)
+            if isinstance(body.get("xmltv_sources"), list):
+                self._settle_sources(merged, body["xmltv_sources"])
             for key, value in body.items():
                 if key in ("server", "channels_dvr") and isinstance(value, dict):
                     if not isinstance(merged.get(key), dict):
@@ -941,9 +943,29 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 else:
                     merged[key] = value
+        before = self.app.store.get().get("xmltv_sources")
         self.app.store.update(mutate)
         log.info("settings saved")
+        if self.app.store.get().get("xmltv_sources") != before:
+            wake_scheduler(guide=True)
         return self.app.store.masked()
+
+    @staticmethod
+    def _settle_sources(cfg, sources):
+        """XMLTV sources saved from Settings: a new source (no id) gets an id never used by a source or provider
+        in this config, so it cannot take over a removed source's channels; channels of a removed source lose
+        that XMLTV id, as a delete does."""
+        old = {x.get("id") for x in cfg["xmltv_sources"]}
+        taken = old | {p["id"] for p in cfg["providers"]} | {s.get("id") for s in sources if isinstance(s, dict)}
+        for src in sources:
+            if isinstance(src, dict) and not src.get("id"):
+                src["id"] = configmod.next_id("x", {t for t in taken if t})
+                taken.add(src["id"])
+        gone = old - {s.get("id") for s in sources if isinstance(s, dict)}
+        for channel in cfg["channels"]:
+            if gone and channel["guide"].get("xmltv_provider") in gone:
+                channel["guide"]["xmltv_provider"] = ""
+                channel["guide"]["xmltv_id"] = ""
 
     # ------------------------------------------------------------ providers
     def _provider_view(self, provider):
@@ -1637,7 +1659,7 @@ class Handler(BaseHTTPRequestHandler):
             return source
         source = self.app.store.update(mutate)
         log.info("XMLTV source %s added", source["name"])
-        wake_scheduler()
+        wake_scheduler(guide=True)
         return source
 
     def h_xmltv_source_update(self, source_id):
@@ -1648,7 +1670,9 @@ class Handler(BaseHTTPRequestHandler):
                 if source["id"] == source_id:
                     return self._source_fields(body, source)
             raise not_found("unknown XMLTV source %s" % source_id)
-        return self.app.store.update(mutate)
+        source = self.app.store.update(mutate)
+        wake_scheduler(guide=True)
+        return source
 
     def h_xmltv_source_delete(self, source_id):
         def mutate(cfg):
@@ -2167,11 +2191,13 @@ def line_usage(cfg, hub, sessions):
     return out
 
 
-def wake_scheduler():
+def wake_scheduler(guide=False):
+    """Ask the scheduler to check now; guide=True also refreshes the guide (an XMLTV source changed)."""
     try:
         scheduler = importlib.import_module("app.providers.scheduler")
-        if callable(getattr(scheduler, "wake", None)):
-            scheduler.wake()
+        name = "request_guide" if guide else "wake"
+        if callable(getattr(scheduler, name, None)):
+            getattr(scheduler, name)()
     except Exception:  # noqa: BLE001 - the scheduler is optional
         pass
 

@@ -23,6 +23,7 @@ _results = {}  # provider id -> last refresh result summary (for the Status page
 _thread = None
 _stop = threading.Event()
 _wake = threading.Event()
+_guide_wanted = threading.Event()  # set by request_guide(): refresh the guide on the next pass
 
 # Overridable in tests.
 clock = time.time
@@ -176,13 +177,25 @@ def run_once(get_config, state, on_refresh=None):
             wait = RETRY_AFTER_FAILURE if hours == 0 else min(RETRY_AFTER_FAILURE, hours * 3600)
             next_retry[pid] = clock() + wait
 
-    guide_due = clock() - state.get("guide_at", 0) >= GUIDE_REFRESH_HOURS * 3600
-    if refreshed or guide_due or state.pop("guide_requested", False):
+    guide_due = clock() - state.get("guide_at", 0) >= _guide_hours(config) * 3600
+    requested = _guide_wanted.is_set()
+    _guide_wanted.clear()
+    if refreshed or guide_due or requested or state.pop("guide_requested", False):
         state["guide_at"] = clock()
         try:
             refresh_guide(get_config() or config)
         except Exception:  # noqa: BLE001
             log.exception("guide refresh failed")
+
+
+def _guide_hours(config):
+    """How often the guide refreshes on its own: every 12 h, or sooner when an XMLTV source asks for it."""
+    hours = [GUIDE_REFRESH_HOURS]
+    for src in config.get("xmltv_sources") or []:
+        value = src.get("refresh_hours") if isinstance(src, dict) else None
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            hours.append(value)
+    return min(hours)
 
 
 def _loop(get_config, on_refresh, state):
@@ -222,6 +235,12 @@ def start(get_config, on_refresh=None):
 
 def wake():
     """Ask the scheduler to check now (for example after a provider was added)."""
+    _wake.set()
+
+
+def request_guide():
+    """Refresh the guide on the next pass, now (for example after an XMLTV source was added or changed)."""
+    _guide_wanted.set()
     _wake.set()
 
 
