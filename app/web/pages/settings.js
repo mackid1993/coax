@@ -30,7 +30,6 @@ export async function mount(el) {
     xmltv_sources: JSON.parse(JSON.stringify(cfg.xmltv_sources || [])),
     regions: JSON.parse(JSON.stringify(cfg.gracenote?.regions || [])),
     timezone: cfg.timezone || "",
-    autosave: cfg.autosave_minutes ?? 2,
     backups: { enabled: cfg.backups?.enabled !== false, time: cfg.backups?.time || "03:30", keep: cfg.backups?.keep ?? 14 },
   };
   dirty = false;
@@ -68,7 +67,6 @@ function render() {
       <div class="card-body stack" style="gap:12px">
         <div class="row row-wrap" style="gap:16px;align-items:end">
           <label class="switch"><input type="checkbox" data-bk="enabled" ${d.backups.enabled ? "checked" : ""}><span class="track"></span><span>Daily backup</span></label>
-          <div class="field"><label for="sAuto">Autosave checked suggestions every</label><select class="input input-sm" id="sAuto" data-k="autosave">${[[0, "Off"], [1, "1 minute"], [2, "2 minutes"], [5, "5 minutes"], [10, "10 minutes"]].map(([v, t]) => `<option value="${v}" ${Number(d.autosave) === v ? "selected" : ""}>${t}</option>`).join("")}</select></div>
           <div class="field"><label>At</label><input class="input input-sm mono" type="time" data-bk="time" value="${esc(d.backups.time)}"></div>
           <div class="field"><label>Keep</label><input class="input input-sm mono" type="number" min="1" max="365" data-bk="keep" value="${esc(d.backups.keep)}"></div>
           <span class="faint small" id="bkTz"></span></div>
@@ -139,7 +137,6 @@ async function save() {
       transcode: d.transcode,
       xmltv_sources: sources,
       timezone: (d.timezone || "").trim(),
-      autosave_minutes: Number(d.autosave) || 0,
       gracenote: { regions: d.regions.filter((r) => r.country && String(r.postal || "").trim()) },
       backups: { enabled: !!d.backups.enabled, time: d.backups.time || "03:30", keep: Number(d.backups.keep) || 14 },
     });

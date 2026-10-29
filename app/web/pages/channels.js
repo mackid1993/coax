@@ -1,5 +1,6 @@
 // Channels: the main screen. Catalog on the left, one row per channel with Guide and Backups cells,
-// one-click Auto-match that fills pending suggestions, and "Accept all checked" to save in one request.
+// one-click Auto-match that fills pending suggestions, and "Save checked" to save them in one request. Unsaved
+// suggestions (checks included) are kept on the server until you Save or Discard them; nothing is applied for you.
 import { api, ApiError } from "../api.js";
 import { $, $$, esc, icon, toast, toastError, openModal, confirmDialog, logo, emptyState, skeletonRows, debounce, busy, switchHtml, checkHtml, confidenceHtml, fmtInt } from "../ui.js";
 import { loadProviders, loadLineups, loadConfig, invalidate, normalizeGroups, normalizePage, providerName, pct, HIGH, LOW } from "../state.js";
@@ -31,27 +32,80 @@ export async function mount(el) {
   root = el;
   S = freshState();
   try { S.cat.open = localStorage.getItem("coax.catalog") !== "0"; } catch {}
+  draft = { loaded: false, rev: 0, job: null, sent: "", busy: false, again: false };
   renderFrame();
-  await reload();
-  try { S.amSeen = sessionStorage.getItem("coax.amSeen") || ""; } catch { S.amSeen = ""; }
+  if (await reload()) { await loadDraft(); renderFrame(); }
   offerUnsaved();
   watchAutoMatch();
   loadCatalogGroups().then(() => loadCatalog());
 }
-let autoTimer = null;
-function startAutosave() {
-  clearInterval(autoTimer);
-  const mins = Number(S?.config?.autosave_minutes ?? 2);
-  if (!mins) return;
-  autoTimer = setInterval(async () => {
-    if (!S || S.saving || !pendingCheckedCount() || document.querySelector(".modal-backdrop")) return;
-    S.saving = true;
-    try { await acceptChecked(true); } finally { if (S) S.saving = false; }
-  }, mins * 60000);
+export function unmount() { clearTimeout(amTimer); S = null; }
+
+// ---------- Unsaved suggestions ----------
+// S.pending is kept on the server as you work, checks included, so a reload, another device or a restart never
+// loses it. It is only a holding area: nothing reaches a channel until you press Save. `rev` stops a stale page
+// (another tab) from overwriting newer work; on a conflict the page takes the server's copy.
+let draft = { loaded: false, rev: 0, job: null, sent: "", busy: false, again: false };
+const jsonOf = (m) => JSON.stringify([...m].sort((a, b) => a[0] - b[0]));
+const pendingJson = () => jsonOf(S.pending);
+async function loadDraft() {
+  if (!S?.channelsLoaded) return;   // never filter the server copy against a channel list that failed to load
+  let d;
+  try { d = await api.suggestions(); } catch (e) { toastError("Could not load unsaved suggestions", e); return; }
+  if (!S) return;
+  const all = new Map(Object.entries(d.pending || {}).map(([k, v]) => [Number(k), v]));
+  S.pending = new Map([...all].filter(([id]) => chById(id)).map(([id, p]) => [id, structuredClone(p)]));
+  settleHeld();
+  draft = { loaded: true, rev: d.rev || 0, job: d.job_id || null, sent: jsonOf(all), sentJob: d.job_id || null, busy: false, again: false };
+  saveDraft();   // drops suggestions for channels deleted since (a no-op when nothing changed)
 }
-export function unmount() { clearTimeout(amTimer); clearInterval(autoTimer); S = null; }
+// Held suggestions that no longer apply: a guide saved since (here or on another device) or "left as is", and
+// backups the channel already has. Run after the channel list is (re)loaded.
+function settleHeld() {
+  for (const [id, p] of [...S.pending]) {
+    const c = chById(id);
+    if (!c) { S.pending.delete(id); continue; }
+    // Only touch what changes, so a page opening never rewrites (and re-versions) an unchanged copy.
+    if (p.guide?.cands?.length && (hasGuide(c) || leftAsIs(c))) p.guide = null;
+    const own = new Set((c.streams || []).map(refKey));
+    if (p.backups?.some((b) => own.has(refKey(b)))) p.backups = p.backups.filter((b) => !own.has(refKey(b)));
+    if (!p.guide?.cands?.length && !p.backups?.length) S.pending.delete(id);
+  }
+}
+function saveDraft() {
+  if (!S || !draft.loaded) return;
+  const json = pendingJson();
+  if (json === draft.sent && draft.job === draft.sentJob) return;
+  if (draft.busy) { draft.again = true; return; }
+  draft.busy = true;
+  const st = S, job = draft.job, d = draft;
+  api.saveSuggestions({ rev: draft.rev, job_id: job, pending: Object.fromEntries(S.pending) })
+    .then((r) => { if (S !== st || d !== draft) return; d.rev = r.rev; d.sent = json; d.sentJob = job; d.warned = false; })
+    .catch(async (e) => {
+      if (S !== st) return;
+      if (e?.status === 409) {
+        // Newer work exists elsewhere: refresh the channels first (new channels from another device must not be
+        // treated as deleted), then take the server copy.
+        if (await reload()) await loadDraft();
+        if (d === draft) {   // could not take the server copy: try again later instead of resending at once
+          d.again = false;
+          setTimeout(() => { if (S === st && d === draft) saveDraft(); }, 5000);
+          return;
+        }
+        if (S === st) { toast("Suggestions updated", "They were changed in another window; showing the latest.", "info"); renderFrame(); watchAutoMatch(); }
+      } else {
+        if (!draft.warned) { draft.warned = true; toastError("Could not keep the unsaved suggestions on the server; retrying", e); }
+        setTimeout(() => { if (S === st) saveDraft(); }, 5000);
+      }
+    })
+    .finally(() => {
+      d.busy = false;
+      if (d === draft && d.again && S === st) { d.again = false; saveDraft(); }
+    });
+}
 
 async function reload() {
+  let ok = false;
   try {
     const [channels, providers, lineups, config] = await Promise.all([
       api.listChannels(),
@@ -64,18 +118,24 @@ async function reload() {
     S.providers = providers;
     S.lineups = lineups;
     S.config = config;
-    startAutosave();
+    S.channelsLoaded = ok = true;
+    if (draft.loaded) settleHeld();   // before drawing, so rows and held suggestions always match
   } catch (e) {
     toastError("Could not load channels", e);
   }
-  if (!S) return;
+  if (!S) return false;
   S.loading = false;
   renderFrame();
+  return ok;
 }
 
 // ---------- Derived ----------
 const chById = (id) => S.channels.find((c) => c.id === id);
 const backupsOf = (c) => (c.streams || []).slice(1);
+// Backups that can actually play: enabled streams still in the catalog, after the first one.
+const liveBackups = (c) => (c.streams || []).filter((s) => !s.disabled && !s.missing).slice(1);
+// Unsaved Auto-match suggestions on this channel (a guide station or backup streams), sure ones included.
+const hasSuggestions = (c) => { const p = S.pending.get(c.id); return !!(p && (p.guide?.cands?.length || p.backups?.length)); };
 const leftAsIs = (c) => !!(c.guide || {}).reviewed;
 // Which guide a channel needs, from its lineups: a Gracenote-only lineup needs a station ID,
 // an XMLTV-only lineup needs an XMLTV ID, anything else is happy with either.
@@ -106,8 +166,10 @@ function guideStatus(c) {
   if (hasGuide(c)) return "ok";
   return "unmatched";
 }
-// Needs attention = guide review or unmatched. Missing backups have their own filter.
-const needsAttention = (c) => !leftAsIs(c) && ["review", "unmatched"].includes(guideStatus(c));
+// Unmatched = no saved guide, unless you left it as is (a suggestion is not a guide until it is saved).
+const unmatched = (c) => !hasGuide(c) && !leftAsIs(c);
+// Needs attention = suggestions to review, or no guide. Missing backups have their own filter.
+const needsAttention = (c) => hasSuggestions(c) || unmatched(c);
 function lineupsOf(c) {
   if (Array.isArray(c.lineups)) return c.lineups;
   return S.lineups.filter((l) => (l.channels || []).includes(c.id)).map((l) => l.id);
@@ -117,19 +179,18 @@ function xmltvOnly(c) {
   const ls = lineupsOf(c).map((id) => S.lineups.find((l) => l.id === id)).filter(Boolean);
   return ls.length > 0 && ls.every((l) => l.guide === "xmltv");
 }
-function lowConfidence(c) { return guideStatus(c) === "review"; }
+// The lineup and group pickers set the scope; the counters count within it.
+const inScope = (c) => (!S.lineup || lineupsOf(c).includes(S.lineup)) && (!S.group || (c.group || "") === S.group);
 function visibleChannels() {
   const q = S.q.trim().toLowerCase();
   const words = q ? q.split(/\s+/) : [];
   return S.channels.filter((c) => {
-    if (S.lineup && !lineupsOf(c).includes(S.lineup)) return false;
-    if (S.group && (c.group || "") !== S.group) return false;
+    if (!inScope(c)) return false;
     if (S.filter === "attention" && !needsAttention(c)) return false;
-    if (S.filter === "unmatched" && (guideStatus(c) !== "unmatched" || leftAsIs(c))) return false;
-    if (S.filter === "nobackups" && (backupsOf(c).length || leftAsIs(c))) return false;
-    if (S.filter === "low" && (!lowConfidence(c) || leftAsIs(c))) return false;
+    if (S.filter === "unmatched" && !unmatched(c)) return false;
+    if (S.filter === "nobackups" && liveBackups(c).length) return false;
+    if (S.filter === "review" && !hasSuggestions(c)) return false;
     if (S.filter === "left" && !leftAsIs(c)) return false;
-    if (S.filter === "pending" && !S.pending.has(c.id)) return false;
     if (S.filter === "missing" && !c.missing_streams) return false;
     if (words.length) {
       const hay = `${c.number} ${c.name} ${c.group} ${c.guide?.station_id || ""} ${c.guide?.xmltv_id || ""}`.toLowerCase();
@@ -146,15 +207,15 @@ function sorter(mode) {
   return () => 0;
 }
 function counters() {
-  const all = S.lineup ? S.channels.filter((c) => lineupsOf(c).includes(S.lineup)) : S.channels;
+  const all = S.channels.filter(inScope);
   return {
     total: all.length,
     enabled: all.filter((c) => c.enabled !== false).length,
     guide: all.filter(hasGuide).length,
-    backups: all.filter((c) => backupsOf(c).length).length,
+    backups: all.filter((c) => liveBackups(c).length).length,
     missing: all.filter((c) => c.missing_streams).length,
-    pending: [...S.pending.keys()].length,
-    checked: pendingCheckedCount(),
+    review: all.filter(hasSuggestions).length,
+    checked: pendingCheckedCount(),   // Save applies every checked suggestion, whatever the scope
   };
 }
 function pendingCheckedCount() {
@@ -169,6 +230,8 @@ function pendingCheckedCount() {
 // ---------- Frame ----------
 function renderFrame() {
   if (!S) return;
+  normalizeFilters();
+  saveDraft();
   // Rebuilding the page resets scroll; keep the table and window where they were (e.g. after a save).
   const tw = $(".table-wrap", root);
   const keep = { table: tw ? tw.scrollTop : 0, win: window.scrollY };
@@ -176,6 +239,14 @@ function renderFrame() {
   const tw2 = $(".table-wrap", root);
   if (tw2) tw2.scrollTop = keep.table;
   window.scrollTo(0, keep.win);
+}
+// A filter whose rows are all gone falls back to All, and a group that no longer exists is cleared, so the page
+// never sits on an empty, unhighlighted filter.
+function normalizeFilters() {
+  if (S.filter === "review" && !S.channels.some((c) => inScope(c) && hasSuggestions(c))) S.filter = "all";
+  if (S.filter === "missing" && !S.channels.some((c) => inScope(c) && c.missing_streams)) S.filter = "all";
+  if (S.group && !S.channels.some((c) => (c.group || "") === S.group)) S.group = "";
+  if (S.lineup && !S.lineups.some((l) => l.id === S.lineup)) S.lineup = "";
 }
 function renderFrameInner() {
   const k = counters();
@@ -194,19 +265,14 @@ function renderFrameInner() {
     </div>
   </div>
   ${S.config && !(S.config.server?.base_url || "").trim() ? `<div class="callout" style="margin-bottom:14px">${icon("alert")}<div><b>Set the Base URL first.</b> Channels DVR needs it to reach coax. <a href="#/settings">Open Settings</a></div></div>` : ""}
-  <div class="counters">
-    ${counter("Channels", k.total, `${fmtInt(k.enabled)} enabled`)}
-    ${counter("Guide matched", k.guide, pctOf(k.guide, k.total), "unmatched")}
-    ${counter("With backups", k.backups, pctOf(k.backups, k.total), "nobackups")}
-    ${k.missing ? counter("Vanished streams", k.missing, "flagged by refresh", "missing", "bad") : counter("Not saved yet", k.checked, k.pending ? "checked suggestions, press Save" : "run Auto-match", "pending")}
-  </div>
+  ${countersHtml(k)}
   <div class="setup ${S.cat.open ? "with-catalog" : ""}">
     ${S.cat.open ? `<section class="card catalog" aria-label="Catalog">${catalogHtml()}</section>` : ""}
     <section class="card channels-card" aria-label="Channels">
       <div class="toolbar">
         <label class="search" style="flex:1 1 180px"><span class="sr-only">Filter channels</span>${icon("search")}<input class="input input-sm" data-search data-ch-q placeholder="Filter channels" value="${esc(S.q)}"><kbd>/</kbd></label>
         <div class="seg" role="group" aria-label="Filter">
-          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("low", "To review")}${segBtn("left", "Left as is")}${S.pending.size ? segBtn("pending", "Suggestions") : ""}
+          ${segBtn("all", "All")}${segBtn("attention", "Needs attention")}${segBtn("unmatched", "Unmatched guide")}${segBtn("nobackups", "No backups")}${segBtn("review", "To review")}${segBtn("left", "Left as is")}
         </div>
         <span class="spacer"></span>
         <label class="sr-only" for="lineupFilter">Lineup</label>
@@ -242,6 +308,15 @@ function renderFrameInner() {
   if (!S.loading) renderRows();
   wireFrame();
 }
+function countersHtml(k) {
+  return `<div class="counters ${k.missing ? "five" : ""}">
+    ${counter("Channels", k.total, `${fmtInt(k.enabled)} enabled`)}
+    ${counter("Guide matched", k.guide, pctOf(k.guide, k.total), "unmatched")}
+    ${counter("With backups", k.backups, pctOf(k.backups, k.total), "nobackups")}
+    ${counter("To review", k.review, k.review ? `${fmtInt(k.checked)} checked, not saved yet` : "run Auto-match", k.review ? "review" : "")}
+    ${k.missing ? counter("Vanished streams", k.missing, "flagged by refresh", "missing", "bad") : ""}
+  </div>`;
+}
 const pctOf = (a, b) => (b ? `${Math.round((a / b) * 100)}% of channels` : "nothing yet");
 function counter(label, value, sub, filter = "", tone = "") {
   return `<button class="card counter ${tone} ${filter && S.filter === filter ? "active" : ""}" ${filter ? `data-filter="${filter}"` : "disabled"}>
@@ -260,12 +335,12 @@ function amSummary() {
 function pendingBar() {
   const n = pendingCheckedCount();
   const a = amSummary();
-  return `<div class="selection-bar pending-bar">${icon("wand")}<span>Auto-match found <b>${a.sure}</b> sure guide match${a.sure === 1 ? "" : "es"} (checked), <b>${a.review}</b> to review, and <b>${a.backups}</b> backup stream${a.backups === 1 ? "" : "s"}. Nothing is saved until you accept.</span>
+  return `<div class="selection-bar pending-bar">${icon("wand")}<span>Auto-match found <b>${a.sure}</b> sure guide match${a.sure === 1 ? "" : "es"} (checked), <b>${a.review}</b> to review, and <b>${a.backups}</b> backup stream${a.backups === 1 ? "" : "s"}. Kept until you Save or Discard; nothing is applied until you press Save.</span>
     <span class="spacer"></span>
     <button class="btn btn-sm btn-ghost" data-act="check-high">Check high confidence</button>
     <button class="btn btn-sm btn-ghost" data-act="download-unsaved" title="Save a copy of the checked suggestions to a file">${icon("download")}Download unsaved</button>
     <button class="btn btn-sm btn-ghost" data-act="discard">Discard</button>
-    <button class="btn btn-sm btn-primary" data-act="accept" ${n ? "" : "disabled"}>${icon("check")}Save ${n} checked</button></div>`;
+    <button class="btn btn-sm btn-primary" data-act="accept" ${n && !accepting ? "" : "disabled"}>${icon("check")}Save ${n} checked</button></div>`;
 }
 function selectionBar() {
   return `<div class="selection-bar">${S.selected.size} selected<span class="spacer"></span>
@@ -303,11 +378,13 @@ function renderRows() {
     return;
   }
   if (!rows.length) {
+    pruneSelection(rows);
     body.innerHTML = "";
     empty.innerHTML = emptyState({ art: "signal", title: "Nothing matches", text: "No channel fits these filters.", actions: `<button class="btn" data-act="clear-filters">Clear filters</button>` });
     return;
   }
   empty.innerHTML = "";
+  pruneSelection(rows);
   body.innerHTML = rows.map(rowHtml).join("");
   const all = $("[data-check-all]", root);
   if (all) {
@@ -316,12 +393,22 @@ function renderRows() {
     all.indeterminate = n > 0 && n < rows.length;
   }
 }
+// Bulk actions act on the selection, so a row a filter or search hides is never kept selected.
+function pruneSelection(rows) {
+  const shown = new Set(rows.map((c) => c.id));
+  let gone = false;
+  for (const id of [...S.selected]) if (!shown.has(id)) { S.selected.delete(id); gone = true; }
+  if (!gone) return;
+  const bar = $(".selection-bar:not(.pending-bar)", root);
+  if (bar && !S.selected.size) bar.remove();
+  else if (bar) bar.firstChild.textContent = `${S.selected.size} selected`;
+}
 function rowHtml(c) {
   const sel = S.selected.has(c.id);
   const p = S.pending.get(c.id);
   return `<tr data-id="${c.id}" class="${sel ? "selected" : ""} ${c.enabled === false ? "disabled" : ""} ${p ? "has-pending" : ""}">
     <td class="keep">${checkHtml(sel, `data-sel aria-label="Select ${esc(c.name)}"`)}</td>
-    <td class="keep"><button class="drag-handle" draggable="true" data-drag aria-label="Reorder ${esc(c.name)}, Alt plus arrow keys" title="Drag to reorder (Alt+↑/↓)">${icon("grip")}</button></td>
+    <td class="keep">${S.sort !== "manual" ? "" : `<button class="drag-handle" draggable="true" data-drag aria-label="Reorder ${esc(c.name)}, Alt plus arrow keys" title="Drag to reorder (Alt+↑/↓)">${icon("grip")}</button>`}</td>
     <td><input class="input num-input" data-num value="${esc(c.number ?? "")}" aria-label="Channel number for ${esc(c.name)}" inputmode="decimal"></td>
     <td><div class="cell-name">${logo(c.logo, c.name)}<div style="min-width:0"><div class="row" style="gap:4px;flex-wrap:nowrap"><div class="name">${esc(c.name)}</div><button class="btn btn-ghost btn-sm btn-icon edit-ch" data-act="edit" aria-label="Edit name, number, group and logo of ${esc(c.name)}" data-pop="Edit channel" data-pop-sub="Name, number, group and logo" data-pop-always>${icon("edit")}</button></div><div class="meta">${lineupCell(c)}${c.missing_streams ? ` <span class="badge badge-bad" title="A stream vanished from the provider catalog">${icon("alert", 'style="width:12px;height:12px"')}${c.missing_streams} vanished</span>` : ""}</div></div></div></td>
     <td class="keep">${switchHtml("", c.enabled !== false, "", `data-enabled aria-label="Enabled"`)}</td>
@@ -392,7 +479,7 @@ function wireFrame() {
   const lf = $("#lineupFilter", root);
   if (lf) lf.onchange = () => { S.lineup = lf.value; renderFrame(); };
   const so = $("#sortSel", root);
-  if (so) so.onchange = () => { S.sort = so.value; renderRows(); };
+  if (so) so.onchange = () => { S.sort = so.value; renderRows(); };   // drag handles show only in Coax order
   const gf = $("#groupFilter", root);
   if (gf) gf.onchange = () => { S.group = gf.value; S.selected.clear(); renderFrame(); };
   wireDrag();
@@ -420,7 +507,7 @@ async function onClick(e) {
     case "accept": busy(a, acceptChecked); break;
     case "check-high": checkHigh(); break;
     case "download-unsaved": downloadUnsaved(); break;
-    case "discard": S.pending.clear(); if (S.filter === "pending") S.filter = "all"; renderFrame(); break;
+    case "discard": discardPending(); break;
     case "guide": if (c) guideModal(c); break;
     case "streams": if (c) streamsModal(c); break;
     case "lineups": if (c) lineupModal([c.id]); break;
@@ -479,6 +566,9 @@ async function onChange(e) {
 function refreshPendingBar() {
   const bar = $(".pending-bar", root);
   if (bar) bar.outerHTML = pendingBar();
+  const cs = $(".counters", root);
+  if (cs) cs.outerHTML = countersHtml(counters());
+  saveDraft();
 }
 
 // ---------- Drag to reorder ----------
@@ -584,7 +674,7 @@ function autoNumberModal() {
     foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-ok>${icon("hash")}Renumber</button>`,
   });
   const pickIds = () => {
-    if (sel) return S.channels.filter((c) => S.selected.has(c.id)).map((c) => c.id);
+    if (sel) return visibleChannels().filter((c) => S.selected.has(c.id)).map((c) => c.id);
     const lid = $("#anLineup", m.el).value;
     if (!lid) return visibleChannels().map((c) => c.id);
     const lineup = S.lineups.find((l) => l.id === lid);
@@ -631,12 +721,13 @@ function watchAutoMatch() {
     if (j.state === "running") { drawAmProgress(j); amTimer = setTimeout(tick, 1000); return; }
     drawAmProgress(null);
     if (j.state === "error") { toastError("Auto-match failed", new Error(j.error || "unknown error")); return; }
-    if (j.state === "done" && j.id && S.amSeen !== j.id) {
+    // A finished match is applied once: the server copy of the unsaved suggestions remembers which job it holds.
+    if (j.state === "done" && !draft.loaded) { await loadDraft(); if (!S) return; if (!draft.loaded) { amTimer = setTimeout(tick, 5000); return; } renderFrame(); }
+    if (j.state === "done" && j.id && draft.loaded && draft.job !== j.id) {
       let full;
       try { full = await api.automatchJob(true); } catch (e) { toastError("Auto-match failed", e); return; }
-      if (!S) return;
-      S.amSeen = j.id;
-      try { sessionStorage.setItem("coax.amSeen", j.id); } catch {}
+      if (!S || draft.job === j.id) return;
+      draft.job = j.id;
       applyAutoMatch(full.ids || [], full.result || {});
     }
   };
@@ -663,34 +754,49 @@ function drawAmProgress(j) {
 }
 function applyAutoMatch(ids, res) {
   const results = res?.results || res || {};
-  let guideN = 0, backN = 0;
+  let guideN = 0, backN = 0, guideErr = "", backErr = "";
   for (const id of ids) {
     const r = results[id] || results[String(id)];
     if (!r) continue;
     const c = chById(id);
     if (!c) continue;
     const ownKeys = new Set((c.streams || []).map(refKey));
-    const skip = xmltvOnly(c);
-    const cands = skip ? [] : (r.guide || r.guide_candidates || []).filter((x) => x && x.station_id && x.station_id !== c.guide?.station_id);
-    const backups = (r.backups || []).filter((b) => !ownKeys.has(refKey(b))).map((b) => ({ ...b, checked: pct(b.score) >= HIGH }));
+    // A saved guide, a channel you left as is and an XMLTV-only channel get no guide suggestions.
+    const skip = xmltvOnly(c) || hasGuide(c) || leftAsIs(c);
+    const cands = skip ? [] : (r.guide || r.guide_candidates || []).filter((x) => x && x.station_id);
+    const prev = S.pending.get(id);
+    const gErr = !!(r.guide_error || r.guide_status === "error");
+    // A failed step keeps what was already held for review instead of wiping it.
+    const backups = r.backups_error ? (prev?.backups || []) : (r.backups || []).filter((b) => !ownKeys.has(refKey(b))).map((b) => ({ ...b, checked: pct(b.score) >= HIGH }));
     const status = skip ? "" : (r.guide_status || "");
     const sure = status ? status === "matched" : cands.length > 0 && pct(cands[0].score ?? cands[0].confidence) >= HIGH;
-    const guide = { cands, idx: 0, status, checked: cands.length > 0 && sure && !hasGuide(c), skipped: skip };
-    if (!cands.length && !backups.length && !skip) continue;
-    if (cands.length) guideN++;
+    const guide = gErr && prev?.guide ? prev.guide : { cands, idx: 0, status, checked: cands.length > 0 && sure };
+    if (r.guide_error || r.guide_status === "error") guideErr = r.guide_error || r.guide_reason || "Gracenote search failed";
+    if (r.backups_error) backErr = r.backups_error;
+    if (!guide.cands?.length && !backups.length) { S.pending.delete(id); continue; }
+    if (guide.cands?.length) guideN++;
     backN += backups.length;
     S.pending.set(id, { guide, backups });
   }
-  if (!S.pending.size) toast("Auto-match finished", "No new suggestions. Everything already looks matched.", "info");
-  else { const a = amSummary(); toast("Auto-match done", `${a.sure} sure, ${a.review} to review, ${a.backups} backups. Press Save to keep the checked ones.`, "ok"); }
+  if (guideErr || backErr) toast("Auto-match was incomplete", [guideErr && `Guide: ${guideErr}`, backErr && `Backups: ${backErr}`].filter(Boolean).join(". "), "warn", 12000);
+  if (!S.pending.size) { if (!guideErr && !backErr) toast("Auto-match finished", "No new suggestions. Everything already looks matched.", "info"); }
+  else {
+    const a = amSummary();
+    toast("Auto-match done", `${a.sure} sure, ${a.review} to review, ${a.backups} backups. They are under To review; press Save to keep the checked ones.`, "ok");
+    S.filter = "review";
+  }
   renderFrame();
 }
 function checkHigh() {
   for (const [id, p] of S.pending) {
     const c = chById(id);
-    if (p.guide?.cands?.length) p.guide.checked = pct(p.guide.cands[p.guide.idx].score ?? p.guide.cands[p.guide.idx].confidence) >= HIGH;
+    // Only a station the server called a sure match (not a name shared by several stations, not one outside
+    // your region), and never on a channel that has a guide or that you left as is.
+    if (p.guide?.cands?.length) {
+      const cand = p.guide.cands[p.guide.idx];
+      p.guide.checked = !!c && !hasGuide(c) && !leftAsIs(c) && (p.guide.status ? p.guide.status === "matched" && p.guide.idx === 0 : pct(cand.score ?? cand.confidence) >= HIGH);
+    }
     (p.backups || []).forEach((b) => (b.checked = pct(b.score) >= HIGH));
-    if (c && hasGuide(c) && p.guide) p.guide.checked = p.guide.checked && false;
   }
   renderFrame();
 }
@@ -699,20 +805,32 @@ function guideFromCandidate(c, cand) {
   const mode = old.mode === "xmltv" ? "both" : old.mode === "both" ? "both" : "gracenote";
   return { ...old, mode, station_id: String(cand.station_id), call_sign: cand.call_sign || "", station_name: cand.name || "", confidence: cand.score ?? cand.confidence ?? null };
 }
-async function acceptChecked(auto = false) {
+async function acceptChecked() {
+  if (accepting) return;
+  accepting = true;
+  try { return await saveChecked(); } finally { accepting = false; if (S) refreshPendingBar(); }
+}
+let accepting = false;   // one Save at a time; the page redraws during a save, so the button alone cannot guard it
+async function saveChecked() {
+  // Fresh channel data first (reload settles the held suggestions against it), so a guide saved on another
+  // device is never replaced by a held suggestion.
+  if (!(await reload())) return;
   const out = [];
+  const sentGuide = new Map();   // channel id -> the guide candidate sent, to clear exactly what was saved
   for (const [id, p] of S.pending) {
     const c = chById(id);
     if (!c) continue;
     const entry = { id };
-    if (p.guide?.checked && p.guide.cands?.length) entry.guide = guideFromCandidate(c, p.guide.cands[p.guide.idx]);
+    // A guide saved meanwhile (here or on another device) or "left as is" is never replaced by a suggestion.
+    if (p.guide?.checked && p.guide.cands?.length) {
+      entry.guide = guideFromCandidate(c, p.guide.cands[p.guide.idx]);
+      sentGuide.set(id, p.guide.cands[p.guide.idx]);
+    }
     const add = (p.backups || []).filter((b) => b.checked).map((b) => ({ provider: b.provider, stream_id: String(b.stream_id) }));
     if (add.length) entry.add_streams = add;
     if (entry.guide || entry.add_streams) out.push(entry);
   }
   if (!out.length) return;
-  // Keep a copy in the browser until the save succeeds, so nothing is lost to an error or a reload.
-  try { localStorage.setItem("coax.unsaved", JSON.stringify({ at: Date.now(), entries: out })); } catch {}
   const st = S;
   const saved = [];
   let failed = [];
@@ -728,22 +846,35 @@ async function acceptChecked(auto = false) {
       } catch (err) { failed.push({ x, err }); }
     }
   }
-  if (!failed.length) { try { localStorage.removeItem("coax.unsaved"); } catch {} }
-  for (const x of saved) st.pending.delete(x.id);
+  // What was saved leaves the holding area; unchecked suggestions on the same channels stay to review later.
+  // Pruned by what was sent, not by the checks now: rows stay clickable while a save runs.
+  for (const x of saved) {
+    const p = st.pending.get(x.id);
+    if (!p) continue;
+    if (x.guide && p.guide?.cands?.[p.guide.idx] === sentGuide.get(x.id)) p.guide = null;
+    if (x.add_streams) { const sent = new Set(x.add_streams.map(refKey)); p.backups = (p.backups || []).filter((b) => !sent.has(refKey(b))); }
+    if (!p.guide?.cands?.length && !p.backups?.length) st.pending.delete(x.id);
+  }
   if (S !== st) return;
   if (failed.length) {
-    try { localStorage.setItem("coax.unsaved", JSON.stringify({ at: Date.now(), entries: failed.map((f) => f.x) })); } catch {}
     const names = failed.slice(0, 3).map((f) => chById(f.x.id)?.name || `#${f.x.id}`).join(", ");
     toast(`${saved.length} saved, ${failed.length} not saved`,
-      `Not saved: ${names}${failed.length > 3 ? ` and ${failed.length - 3} more` : ""}. They stay checked, so press Save again, or use Download unsaved to keep a copy. Reason: ${failed[0].err?.message || "unknown"}`, "warn", 15000);
+      `Not saved: ${names}${failed.length > 3 ? ` and ${failed.length - 3} more` : ""}. They stay checked and are kept, so press Save again. Reason: ${failed[0].err?.message || "unknown"}`, "warn", 15000);
     if (saved.length) await reload();
     else renderFrame();
     return;
   }
   // Drop remaining suggestions on channels we just saved only if nothing is left unchecked.
-  toast(auto ? "Autosaved" : "Saved", `${out.length} channel${out.length === 1 ? "" : "s"} updated`, "ok", auto ? 2500 : undefined);
-  if (S.filter === "pending" && !S.pending.size) S.filter = "all";
+  toast("Saved", `${out.length} channel${out.length === 1 ? "" : "s"} updated`, "ok");
   await reload();
+}
+async function discardPending() {
+  const n = S.pending.size;
+  if (!n) return;
+  const ok = await confirmDialog({ title: `Discard suggestions for ${n} channel${n === 1 ? "" : "s"}?`, message: "Unsaved Auto-match suggestions are removed. Run Auto-match again to get them back.", confirm: "Discard", danger: true });
+  if (!ok || !S) return;
+  S.pending.clear();
+  renderFrame();
 }
 
 async function offerUnsaved() {
@@ -1128,7 +1259,7 @@ function editModal(c) {
   $("[data-save]", m.el).onclick = (e) => busy(e.currentTarget, async () => {
     const body = { name: $("#eName", m.el).value.trim(), number: $("#eNum", m.el).value.trim(), group: $("#eGroup", m.el).value.trim(), logo: $("#eLogo", m.el).value.trim() };
     if (!body.name) { toast("Name is required", "", "warn"); return; }
-    try { const r = await api.updateChannel(c.id, body); Object.assign(c, r && r.id ? r : body); m.close(); renderRows(); toast("Saved", c.name, "ok", 2000); }
+    try { const r = await api.updateChannel(c.id, body); Object.assign(c, r && r.id ? r : body); m.close(); renderFrame(); toast("Saved", c.name, "ok", 2000); }
     catch (err) { toastError("Could not save channel", err); }
   });
   $("[data-del]", m.el).onclick = async () => {
