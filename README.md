@@ -662,8 +662,9 @@ it unblocks the stream at once. *Disabled* means you turned it off.
   next enabled stream at once. Untick it to use the stream again. One stream of each channel always stays
   enabled. The same checkbox is in the channel's stream editor on the *Channels* page.
 - **Drag** a stream by its grip (or focus the grip and press Alt with the up or down arrow) to change the
-  channel's order. It is saved when you let go and is used from the next failover on; the stream playing now
-  keeps playing. Smart Standby still moves a stream that causes real trouble, as it does after any reorder.
+  channel's order. It is saved when you let go; the stream playing now keeps playing. The first enabled
+  stream is the main one for the next tune, and at a failover coax tries the backups by score (below), using
+  this order to break ties. Smart Standby still moves a stream that causes real trouble, as it does after any reorder.
 
 Use these when a stream is bad in a way coax cannot see, most often sound off the picture. coax does not
 detect that: no check tells a feed whose sound is off from a good one reliably enough to act on. A feed that is

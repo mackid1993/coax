@@ -120,8 +120,10 @@ function drawSessions(sessions) {
     if (det) openEvents.set(key, det.open);
     const ol = card.querySelector("details.events ol");
     const top = ol ? ol.scrollTop : 0;
+    const focused = focusOf(card);
     card.innerHTML = inner;
     card._html = inner;
+    refocus(card, focused);   // the card is redrawn every poll; keep the grip or button the user is on
     // Reopen the list before restoring its scroll: setting scrollTop forces a layout, and with the list still
     // closed the page is briefly shorter, so a page scrolled to the bottom got pulled up.
     const det2 = card.querySelector("details.events");
@@ -132,6 +134,19 @@ function drawSessions(sessions) {
   for (const card of [...el.querySelectorAll(".session-card")]) if (!keep.has(card.dataset.key)) card.remove();
 }
 const openEvents = new Map();
+const FOCUS_ROLES = ["data-feed-drag", "data-feed-switch", "data-feed-off", "data-unblock"];
+function focusOf(card) {
+  const a = document.activeElement;
+  if (!a || !card.contains(a)) return null;
+  const role = FOCUS_ROLES.find((r) => a.hasAttribute(r));
+  const row = a.closest(".feed");
+  return role && row ? { role, p: row.dataset.p, s: row.dataset.s } : null;
+}
+function refocus(card, f) {
+  if (!f) return;
+  const row = [...card.querySelectorAll(".feed")].find((r) => r.dataset.p === f.p && r.dataset.s === f.s);
+  row?.querySelector(`[${f.role}]`)?.focus();
+}
 function skey(x) { return `${x.uuid || x.channel_id}~${x.instance || 0}`; }
 function cardInner(x, key) {
   {
@@ -183,7 +198,8 @@ function feedsHtml(x) {
   </div>`).join("")}</div>`;
 }
 // Drag a stream by its grip to change the channel's order, as in the Streams dialog. Polls leave the card alone
-// while it is dragged; the order is saved on release and applies from the next failover on.
+// while it is dragged; the order is saved on release (the main stream for the next tune, and the order a failover
+// falls back on after streams proven to play cleanly).
 let fdrag = null;
 const feedRows = (list) => [...list.querySelectorAll(".feed")];
 const feedKeys = (list) => feedRows(list).map((r) => `${r.dataset.p}~${r.dataset.s}`).join();
@@ -229,7 +245,7 @@ async function saveFeedOrder(list) {
   const card = list.closest(".session-card");
   try {
     await api.setChannelStreams(rows[0].dataset.ch, rows.map((r) => ({ provider: r.dataset.p, stream_id: r.dataset.s })), "order");
-    toast("Stream order saved", "coax uses this order from the next failover on. The stream playing now keeps playing.", "ok", 5000);
+    toast("Stream order saved", "The stream playing now keeps playing. At a failover, coax tries streams that have played cleanly first, then this order.", "ok", 6000);
   } catch (err) { toastError("Could not save the stream order", err); }
   if (card) card._html = null;   // redraw from the server's order on the next poll
   poll();

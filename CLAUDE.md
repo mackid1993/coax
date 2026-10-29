@@ -214,7 +214,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   on every load and save (1.0.6-6; 143 of the owner's channels had both). Lineup-level "Both" (station, XMLTV
   for the channels without one) is unaffected.
 - **Reordering streams never switches.** Dragging a stream on the Status card (or reordering in the stream
-  editor) only saves the order for the next failover; switching is the deliberate **Switch** button.
+  editor) only saves the order (main stream at the next tune, tiebreak in the score-ranked failover list); switching is the deliberate **Switch** button.
 - **The UI works on a phone** (owner: "something you might need to fix really quick with on your phone").
   Check every page and dialog at phone width before shipping a UI change.
 - **Tuner sharing stays on.** A joining Channels device starts at the newest byte; coax gives each join a 5 s

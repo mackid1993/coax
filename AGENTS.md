@@ -298,8 +298,8 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
   keys). Dragging moves the row in the DOM only; a poll skips the card being dragged (`fdrag.card`). On release
   the order is saved with `POST /api/channels/<id>/streams` mode `order`, which sorts the channel's current
   streams by the given refs (flags kept, unlisted streams keep their order after them, unknown refs ignored),
-  so a stale list can never add or drop a stream. A reorder never switches the playing stream: engines read
-  the order at the next failover. Switching stays the deliberate **Switch** button (owner's decision).
+  so a stale list can never add or drop a stream. A reorder never switches the playing stream: the order sets the
+  main stream for the next tune and breaks ties in the score-ranked failover list (`backup_urls`). Switching stays the deliberate **Switch** button (owner's decision).
 - Layout: the sidebar is `position: fixed` (sticky moved at the end of a scroll on phones) and `.shell` pads
   for it. At 900 px or less the sidebar is icon-only and `app.js` moves the IP pill (with the country name) and
   the version into `#mobileBar` above the page; at 600 px or less cards, rows and dialogs restack (the phone
