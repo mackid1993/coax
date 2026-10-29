@@ -48,5 +48,43 @@ class StatusCardFixes(unittest.TestCase):
         self.assertEqual(self.card()["stream_no"], 1)
 
 
+class SmartStandbyUndo(unittest.TestCase):
+    def setUp(self):
+        self.cfg = config([provider("p1", 2)], [channel(1, [("p1", "A"), ("p1", "B"), ("p1", "C")])])
+        self.health = fh.FeedHealth(Store(self.cfg), tempfile.mkdtemp())
+
+    def order(self):
+        return [s["stream_id"] for s in self.cfg["channels"][0]["streams"]]
+
+    def test_undo_never_restores_an_old_order_over_a_newer_drag(self):
+        self.health.problem(1, ("p1", "B"), "placeholder")
+        note = self.health.list()["items"][0]
+        streams = self.cfg["channels"][0]["streams"]
+        streams.insert(0, streams.pop(2))                     # the user drags C to the top
+        before = self.order()
+        with self.assertRaises(ValueError):
+            self.health.undo(note["id"])
+        self.assertEqual(self.order(), before)
+
+    def test_undo_still_works_when_nothing_moved_since(self):
+        self.health.problem(1, ("p1", "B"), "placeholder")
+        self.health.undo(self.health.list()["items"][0]["id"])
+        self.assertEqual(self.order(), ["A", "B", "C"])
+
+    def test_an_unblocked_stream_is_not_blocked_again_at_its_next_failure(self):
+        import time
+        t = time.time() - 5 * 3600
+        for i in range(fh.DEAD_REPEAT):                       # dies three times while another takes over
+            now = t + i * (fh.DEAD_CONFIRM + 60)
+            self.health.problem(1, ("p1", "A"), "dead", now=now)
+            self.health.switched(1, ("p1", "A"), ("p1", "B"), now=now + 5)
+        self.assertTrue(self.health.is_blocked(1, ("p1", "A")))
+        self.health.unblock(1, ("p1", "A"))
+        now = time.time()
+        self.health.problem(1, ("p1", "A"), "dead", now=now)
+        self.health.switched(1, ("p1", "A"), ("p1", "B"), now=now + 5)
+        self.assertFalse(self.health.is_blocked(1, ("p1", "A"), now=now + 10))
+
+
 if __name__ == "__main__":
     unittest.main()

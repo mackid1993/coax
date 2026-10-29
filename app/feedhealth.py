@@ -169,9 +169,18 @@ class FeedHealth:
             if not rec or not any(b[1] > now for b in rec.get("blocks", [])):
                 return False
             rec["blocks"] = [[b[0], min(b[1], now), b[2]] for b in rec["blocks"]]
-            rec["ev"] = []
+            self._forgive(ch, key, rec)
             self._persist(now)
             return True
+
+    def _forgive(self, ch, key, rec):
+        """Clear a stream's strikes (unblocked or undone by hand), including the confirmed deaths that would
+        block it again at its next failure."""
+        rec["ev"] = []
+        rec.pop("confirmed", None)
+        p = self.pending.get(str(ch))
+        if p and tuple(key) in (tuple(p[0]), tuple(p[1])):
+            del self.pending[str(ch)]
 
     def is_blocked(self, ch, key, now=None):
         return self.blocked_until(ch, key, now) > 0
@@ -284,7 +293,7 @@ class FeedHealth:
                     "stable." % (_name(self.store, new), _name(self.store, old)))
         log.warning("[%s] %s", done["name"], text)
         self._note("promoted" if order[0] != keys[0] else "reordered", ch, done["name"], new, text,
-                   {"order": [list(k) for k in keys]}, now)
+                   {"order": [list(k) for k in keys], "after": [list(k) for k in order]}, now)
 
     RANK_W = {"desync": 100.0, "placeholder": 20.0, "dead": 10.0, "novideo": 8.0, "frozen": 5.0,
               "avsplit": 1.0, "stall": 0.5, "keepalive": 0.5}
@@ -384,7 +393,7 @@ class FeedHealth:
             text += " %s is now the main stream." % _cap(_name(self.store, main_new))
         log.warning("[%s] %s", done["name"], text)
         self._note("promoted" if main_new != main_old else "blocked", ch, done["name"], bad, text,
-                   {"order": [list(k) for k in old]}, now)
+                   {"order": [list(k) for k in old], "after": [list(k) for k in new]}, now)
 
     # -- the bell -----------------------------------------------------------------------------------
 
@@ -430,6 +439,7 @@ class FeedHealth:
             if note is None or note.get("undone") or not note.get("undo"):
                 raise KeyError(nid)
             order = [tuple(x) for x in note["undo"].get("order") or []]
+            after = note["undo"].get("after")   # the order this change left (notes from before 1.0.6-7 have none)
 
             def mutate(cfg):
                 chan = self._channel(cfg, note["channel_id"])
@@ -438,6 +448,8 @@ class FeedHealth:
                 streams = chan.get("streams") or []
                 if sorted(order) != sorted(_key(s) for s in streams):
                     return "changed"
+                if after is not None and [tuple(x) for x in after] != [_key(s) for s in streams]:
+                    return "reordered"   # restoring the old order would undo a newer drag or change
                 by = {_key(s): s for s in streams}
                 chan["streams"] = [by[k] for k in order]
                 return True
@@ -446,11 +458,15 @@ class FeedHealth:
                 raise KeyError(nid)
             if r == "changed":
                 raise ValueError("the channel's streams have changed since then, so the old order cannot be restored")
-            rec = self.feeds.get(self._k(note["channel_id"], (note["provider"], note["stream_id"])))
+            if r == "reordered":
+                raise ValueError("the channel's streams were reordered since then, so the old order is not restored; "
+                                 "drag them on the Status card instead")
+            key = (note["provider"], note["stream_id"])
+            rec = self.feeds.get(self._k(note["channel_id"], key))
             if rec:
                 now = time.time()
                 rec["blocks"] = [[b[0], min(b[1], now), b[2]] for b in rec.get("blocks", [])]
-                rec["ev"] = []
+                self._forgive(note["channel_id"], key, rec)
             note["undone"] = True
             note["read"] = True
             _save(self.npath, self.notes)
