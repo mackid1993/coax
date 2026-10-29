@@ -33,10 +33,22 @@ def _num_key(value):
 
 
 def _name_key(value):
-    """A to Z the way the Channels page sorts: accents and case ignored, numbers by value (PPV 2 before PPV 10)."""
+    """A to Z the way the Channels page sorts (localeCompare, numeric, base sensitivity): accents and case ignored,
+    numbers by value (PPV 2 before PPV 10), spaces before punctuation before digits before letters (ESPN before
+    ESPN2)."""
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(ch for ch in text if not unicodedata.combining(ch)).casefold()
-    return [(0, int(part), "") if part.isdigit() else (1, 0, part) for part in re.findall(r"\d+|\D+", text)]
+    key = []
+    for part in re.findall(r"\d+|\D", text):
+        if part.isdigit():
+            key.append((2, int(part), ""))
+        elif part.isspace():
+            key.append((0, 0, " "))
+        elif part.isalpha():
+            key.append((3, 0, part))
+        else:
+            key.append((1, 0, part))
+    return key
 
 
 def ordered_ids(lineup, channels):

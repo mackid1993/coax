@@ -21,9 +21,9 @@ class LineupOrder(unittest.TestCase):
         self.assertEqual(m3u_names(lineup_cfg(["CNN", "FOX", "ESPN"], [2, 3, 1])), ["CNN", "FOX", "ESPN"])
 
     def test_alphabetical_matches_the_channels_page(self):
-        names = ["PPV 10", "ESPN", "PPV 2", "Équipe 21", "ppv 1"]
-        self.assertEqual(m3u_names(lineup_cfg(names, [1, 2, 3, 4, 5], "alpha")),
-                         ["Équipe 21", "ESPN", "ppv 1", "PPV 2", "PPV 10"])
+        names = ["PPV 10", "ESPN2 ᴿᴬᵂ", "ESPN ᴿᴬᵂ", "PPV 2", "Équipe 21", "ppv 1", "NEWS 12", "NEW\xa0JERSEY"]
+        self.assertEqual(m3u_names(lineup_cfg(names, list(range(1, 9)), "alpha")),
+                         ["Équipe 21", "ESPN ᴿᴬᵂ", "ESPN2 ᴿᴬᵂ", "NEW\xa0JERSEY", "NEWS 12", "ppv 1", "PPV 2", "PPV 10"])
 
 
 class AuditFixes(ApiTestCase):
