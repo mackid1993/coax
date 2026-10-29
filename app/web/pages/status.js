@@ -24,7 +24,13 @@ export async function mount(el) {
       </div>
     </div>`;
   $("#follow", root).onchange = (e) => { follow = e.target.checked; if (follow) scrollLog(); };
-  if (!el._feedsBound) { el._feedsBound = true; el.addEventListener("click", onFeedClick); el.addEventListener("change", onFeedChange); }
+  if (!el._feedsBound) {
+    el._feedsBound = true;
+    el.addEventListener("click", onFeedClick); el.addEventListener("change", onFeedChange);
+    el.addEventListener("pointerdown", onFeedDown); el.addEventListener("pointermove", onFeedMove);
+    el.addEventListener("pointerup", onFeedUp); el.addEventListener("pointercancel", onFeedUp);
+    el.addEventListener("keydown", onFeedKey);
+  }
   $("#netRefresh", root).onclick = async (e) => {
     const b = e.currentTarget; b.classList.add("loading");
     try { await refreshNetwork(true); } catch (err) { toastError("Could not check public IP", err); } finally { b.classList.remove("loading"); }
@@ -91,7 +97,7 @@ const kpi = (label, value, ic, sub) => `<div class="card kpi"><div class="kpi-ic
 function drawSessions(sessions) {
   const el = $("#sessions", root);
   if (!sessions.length) {
-    el.style.gridTemplateColumns = "1fr";
+    el.style.gridTemplateColumns = "minmax(0, 1fr)";
     el.innerHTML = `<div class="card">${emptyState({ art: "signal", title: "Nothing is playing", text: "When a client tunes a channel, it appears here with its viewers, line and throughput." })}</div>`;
     return;
   }
@@ -109,7 +115,7 @@ function drawSessions(sessions) {
       card.dataset.key = key;
       el.appendChild(card);
     }
-    if (card._html === inner) continue;
+    if (card._html === inner || (fdrag && fdrag.card === card)) continue;
     const det = card.querySelector("details.events");
     if (det) openEvents.set(key, det.open);
     const ol = card.querySelector("details.events ol");
@@ -163,7 +169,8 @@ function feedsHtml(x) {
   const f = x.feeds || [];
   if (!f.length) return "";
   const at = (s) => `data-ch="${esc(x.channel_id)}" data-inst="${esc(x.instance || 0)}" data-p="${esc(s.provider)}" data-s="${esc(s.stream_id)}" data-n="${esc(s.name || "Stream " + s.stream_id)}" data-g="${esc(s.group || "")}" data-pn="${esc(s.provider_name)}"`;
-  return `<div class="feeds"><div class="stat-label">Streams for this channel</div>${f.map((s, i) => `<div class="feed${s.playing ? " playing" : ""}${s.disabled ? " off" : ""}">
+  return `<div class="feeds"><div class="stat-label">Streams for this channel</div>${f.map((s, i) => `<div class="feed${s.playing ? " playing" : ""}${s.disabled ? " off" : ""}" ${at(s)}>
+    <button type="button" class="drag-handle" data-feed-drag aria-label="Move ${esc(s.name || "stream " + s.stream_id)}, Alt plus arrow keys" title="Drag to change the order">${icon("grip")}</button>
     <span class="ord num">${i + 1}</span>
     <span class="f-main" data-pop="${esc(s.name || "Stream " + s.stream_id)}" data-pop-sub="${esc(`${s.provider_name}${s.group ? " · " + s.group : ""} · stream ${s.stream_id}`)}"><span class="ellip f-name">${esc(s.name || "Stream " + s.stream_id)}</span><span class="faint small ellip">${esc(s.provider_name)}${s.group ? ` · ${esc(s.group)}` : ""} · <span class="num">${esc(s.stream_id)}</span></span></span>
     ${s.playing ? `<span class="badge badge-ok"><span class="dot pulse"></span>Playing now</span>` : ""}
@@ -172,6 +179,58 @@ function feedsHtml(x) {
     <button class="btn btn-sm" data-feed-switch ${at(s)} ${s.playing || s.disabled ? "disabled" : ""}>Switch</button>
     <label class="f-off" title="A disabled stream is never played or used as a backup"><input type="checkbox" data-feed-off ${at(s)} ${s.disabled ? "checked" : ""}> Disable</label>
   </div>`).join("")}</div>`;
+}
+// Drag a stream by its grip to change the channel's order, as in the Streams dialog. Polls leave the card alone
+// while it is dragged; the order is saved on release and applies from the next failover on.
+let fdrag = null;
+const feedRows = (list) => [...list.querySelectorAll(".feed")];
+const feedKeys = (list) => feedRows(list).map((r) => `${r.dataset.p}~${r.dataset.s}`).join();
+function onFeedDown(e) {
+  const h = e.target.closest("[data-feed-drag]");
+  if (!h || e.button !== 0) return;
+  e.preventDefault();
+  const list = h.closest(".feeds"), row = h.closest(".feed");
+  fdrag = { list, row, id: e.pointerId, card: list.closest(".session-card"), before: feedKeys(list) };
+  try { h.setPointerCapture(e.pointerId); } catch {}
+  list.classList.add("reordering");
+  row.classList.add("dragging");
+}
+function onFeedMove(e) {
+  if (!fdrag || e.pointerId !== fdrag.id) return;
+  e.preventDefault();
+  const { list, row } = fdrag;
+  const next = feedRows(list).find((r) => r !== row && e.clientY < r.getBoundingClientRect().top + r.getBoundingClientRect().height / 2);
+  if (next ? next !== row.nextElementSibling : row !== list.lastElementChild) list.insertBefore(row, next || null);
+  feedRows(list).forEach((r, i) => { r.querySelector(".ord").textContent = i + 1; });
+}
+function onFeedUp(e) {
+  if (!fdrag || e.pointerId !== fdrag.id) return;
+  const { list, row, before } = fdrag;
+  fdrag = null;
+  list.classList.remove("reordering");
+  row.classList.remove("dragging");
+  if (feedKeys(list) !== before) saveFeedOrder(list);
+}
+function onFeedKey(e) {
+  const h = e.target.closest("[data-feed-drag]");
+  if (!h || !e.altKey || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+  e.preventDefault();
+  const row = h.closest(".feed"), list = row.parentElement;
+  const sib = e.key === "ArrowUp" ? row.previousElementSibling : row.nextElementSibling;
+  if (!sib || !sib.classList.contains("feed")) return;
+  if (e.key === "ArrowUp") list.insertBefore(row, sib); else list.insertBefore(sib, row);
+  h.focus();
+  saveFeedOrder(list);
+}
+async function saveFeedOrder(list) {
+  const rows = feedRows(list);
+  const card = list.closest(".session-card");
+  try {
+    await api.setChannelStreams(rows[0].dataset.ch, rows.map((r) => ({ provider: r.dataset.p, stream_id: r.dataset.s })), "order");
+    toast("Stream order saved", "coax uses this order from the next failover on. The stream playing now keeps playing.", "ok", 5000);
+  } catch (err) { toastError("Could not save the stream order", err); }
+  if (card) card._html = null;   // redraw from the server's order on the next poll
+  poll();
 }
 function timeLeft(t) {
   const m = Math.max(1, Math.round(((Number(t) || 0) * 1000 - Date.now()) / 60000));

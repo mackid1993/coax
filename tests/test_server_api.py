@@ -401,6 +401,13 @@ class ChannelRoutes(ApiTestCase):
         self.assertEqual(len(ch["streams"]), 2)
         self.assertTrue(ch["streams"][1]["missing"])
         self.assertEqual(ch["missing_streams"], 1)
+        # order mode reorders what is there: a stale or unknown ref changes nothing else, flags stay
+        self.app.store.update(lambda cfg: cfg["channels"][0]["streams"][0].update(disabled=True))
+        status, ch, _ = self.request("POST", "/api/channels/1/streams",
+                                     {"mode": "order", "streams": [{"provider": "p1", "stream_id": "77"},
+                                                                   {"provider": "p1", "stream_id": "99"}]})
+        self.assertEqual(status, 200, ch)
+        self.assertEqual([(s["stream_id"], bool(s.get("disabled"))) for s in ch["streams"]], [("77", False), ("1", True)])
         status, ch, _ = self.request("PUT", "/api/channels/1", {"name": "CNN", "enabled": False,
                                                               "guide": {"mode": "gracenote", "station_id": "5"}})
         self.assertEqual((ch["name"], ch["enabled"], ch["guide"]["mode"]), ("CNN", False, "gracenote"))

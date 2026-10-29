@@ -85,7 +85,8 @@ Channel names, providers and logos below are made up for the demo.
   (VAAPI), NVIDIA (NVENC), or the CPU.
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
-  channel lists all its streams, with **Switch** to move to another one now and **Disable** to stop using one.
+  channel lists all its streams, with **Switch** to move to another one now, **Disable** to stop using one, and
+  a grip to drag them into a new order. The UI works on a phone too.
 
 **User agent.** coax always identifies itself to providers as `TiviMate/5.1.6 (Android 12)`. This is
 hard-coded and the same for every provider; it is not a setting.
@@ -648,6 +649,9 @@ it unblocks the stream at once. *Disabled* means you turned it off.
   uses it as a backup and never moves it up. Disabling the stream that is playing moves the channel to the
   next enabled stream at once. Untick it to use the stream again. One stream of each channel always stays
   enabled. The same checkbox is in the channel's stream editor on the *Channels* page.
+- **Drag** a stream by its grip (or focus the grip and press Alt with the up or down arrow) to change the
+  channel's order. It is saved when you let go and is used from the next failover on; the stream playing now
+  keeps playing. Smart Standby still moves a stream that causes real trouble, as it does after any reorder.
 
 Use these when a stream is bad in a way coax cannot see, most often sound off the picture. coax does not
 detect that: no check tells a feed whose sound is off from a good one reliably enough to act on. A feed that is

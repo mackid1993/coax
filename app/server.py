@@ -1416,11 +1416,18 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body_object()
         refs = stream_refs(body.get("streams"))
         mode = body.get("mode", "append")
-        if mode not in ("append", "replace"):
-            raise bad_request("mode must be append or replace")
+        if mode not in ("append", "replace", "order"):
+            raise bad_request("mode must be append, replace or order")
 
         def mutate(cfg):
             channel = find_channel(cfg, channel_id)
+            if mode == "order":
+                # Reorder the channel's current streams (Status card drag): flags stay as saved, streams not
+                # in the list keep their order after it, and refs no longer on the channel are ignored.
+                rank = {(r["provider"], r["stream_id"]): i for i, r in enumerate(refs)}
+                channel["streams"] = sorted(channel["streams"],
+                                            key=lambda r: rank.get((r["provider"], r["stream_id"]), len(rank)))
+                return channel
             if mode == "replace":
                 channel["streams"] = []
             have = {(r["provider"], r["stream_id"]) for r in channel["streams"]}
