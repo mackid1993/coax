@@ -129,6 +129,8 @@ async function save() {
   if (!urlOk(d.base_url)) return toast("Base URL looks wrong", "Use http://IP:PORT", "warn");
   if (!urlOk(d.dvr)) return toast("DVR server URL looks wrong", "Use http://IP:8089", "warn");
   if (d.xmltv_sources.some((s) => !s.url || !urlOk(s.url))) return toast("Check XMLTV sources", "Every source needs an http(s) URL.", "warn");
+  // A region without a postal code was dropped on save, so Auto-match trusted stations from every country.
+  if (d.regions.some((r) => !String(r.postal || "").trim())) return toast("Check the Auto-match region", "Every region needs a postal code, or remove it.", "warn");
   // A new source goes without an id: the server picks one that no removed source used.
   const sources = d.xmltv_sources.map((s, i) => ({ id: s.id || "", name: s.name || `XMLTV ${i + 1}`, url: s.url, refresh_hours: Number(s.refresh_hours) || 24 }));
   try {
