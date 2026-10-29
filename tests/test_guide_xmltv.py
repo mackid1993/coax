@@ -197,11 +197,14 @@ class RefreshTests(XmltvTestBase):
         root = ET.parse(os.path.join(self.tmp.name, "xmltv-main.xml")).getroot()
         self.assertEqual([c.get("id") for c in root.findall("channel")], ["coax-2"])
 
-    def test_provider_without_url_needed_fails_lineup(self):
+    def test_provider_without_url_leaves_out_only_its_channels(self):
+        # Nothing to fetch is not a failure: the lineup is still rebuilt, without that provider's channels
+        # (it used to keep the previous file forever, freezing every other channel's guide in the lineup).
         config = make_config()
         config["providers"][1]["xmltv_url"] = ""
         summary, _ = self.run_refresh(self.default_mapping(), config)
-        self.assertFalse(summary["lineups"]["uk"]["ok"])
+        self.assertEqual(summary["providers"]["p2"]["missing"], ["bbc1.uk"])
+        self.assertTrue(summary["lineups"]["uk"]["ok"])
         self.assertTrue(summary["lineups"]["main"]["ok"])
 
     def test_lineup_without_xmltv_channels_gets_empty_guide(self):

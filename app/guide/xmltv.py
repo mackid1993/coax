@@ -335,11 +335,11 @@ def _refresh(config):
                 guide.check_id(pid, "provider id")
                 url = provider_xmltv_url(provider)
                 if not url:
-                    result["error"] = "no XMLTV URL"
-                    if pid in needs:
-                        failed.add(pid)
-                    else:
-                        result["ok"] = True   # nothing to fetch and nothing needed
+                    # Nothing to fetch: its channels have no XMLTV guide, but the rest of the lineup still does.
+                    result.update(ok=True, error="no XMLTV URL", missing=sorted(needs.get(pid, {})))
+                    if result["missing"]:
+                        log.warning("provider %s has no XMLTV URL; %d channels using it get no XMLTV guide",
+                                    pid, len(result["missing"]))
                     continue
                 wanted = needs.get(pid, {})
                 route = {}
@@ -372,6 +372,8 @@ def _refresh(config):
         for lineup_id, writer in writers.items():
             bad = sorted(lineup_providers[lineup_id] & failed)
             if bad:
+                log.warning("XMLTV guide for lineup %s not rebuilt; kept the previous one (failed: %s)",
+                            lineup_id, ", ".join(bad))
                 writer.discard()
                 summary["lineups"][lineup_id] = {
                     "ok": False, "error": "kept the previous guide; failed: " + ", ".join(bad)}
