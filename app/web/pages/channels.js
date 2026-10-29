@@ -966,7 +966,7 @@ function guideModal(c) {
   });
   const el = m.el;
   const summary = () => {
-    $("#gSummary", el).innerHTML = `Mode <b>${esc(g.mode)}</b>${g.station_id ? ` · station <span class="num">${esc(g.station_id)}</span>` : ""}${g.xmltv_id ? ` · xmltv <span class="mono">${esc(g.xmltv_id)}</span>` : ""}`;
+    $("#gSummary", el).innerHTML = `Mode <b>${esc(g.mode)}</b>${g.station_id ? ` · station <span class="num">${esc(g.station_id)}</span>` : ""}${g.mode === "xmltv" && g.xmltv_id ? ` · xmltv <span class="mono">${esc(g.xmltv_id)}</span>` : ""}`;
     $$("[data-pane]", el).forEach((pane) => {
       pane.style.opacity = "1";
     });
