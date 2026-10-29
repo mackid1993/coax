@@ -124,6 +124,7 @@ export const api = {
   streams: (params) => get(routes.streams(params)),
 
   listChannels: async () => list(await get(routes.channels()), "channels"),
+  getChannel: (id) => get(routes.channel(id)),
   createChannel: (c) => post(routes.channels(), c),
   updateChannel: (id, c) => put(routes.channel(id), c),
   setFeedDisabled: (id, b) => post(`/api/channels/${id}/feed`, b),
