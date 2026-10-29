@@ -65,6 +65,9 @@ usually after a mistake.
 - **Read results before tearing anything down.** Runs were lost to containers that expired first.
 - **Reviewers: fresh, read-only, time-capped.** Review rounds hit diminishing returns fast; act on observed
   evidence ("we are finding bugs that don't exist").
+- **Render UI changes before shipping.** Real server with scratch data, Playwright's cached Chromium at phone
+  and desktop size, screenshots read (AGENTS.md "Layout checks"). Do not download browsers for it: the owner
+  asked for a WebKit download to be removed.
 - **Never build a Status or card change after only a syntax check.** Run the changed function against the live
   config or a test.
 
@@ -201,6 +204,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   the README. (HISTORY 3.7, A.6, A.7)
 - **Hub = ah4c model:** one DVR connection, one engine, one line slot, kill then release. No fan-out (Channels
   shares its own tuner). Two DVR clients on one channel use two slots (accepted).
+- **Reordering streams never switches.** Dragging a stream on the Status card (or reordering in the stream
+  editor) only saves the order for the next failover; switching is the deliberate **Switch** button.
+- **The UI works on a phone** (owner: "something you might need to fix really quick with on your phone").
+  Check every page and dialog at phone width before shipping a UI change.
 - **Tuner sharing stays on.** A joining Channels device starts at the newest byte; coax gives each join a 5 s
   head start from the reserve.
 - **Recordings:** never alter the stream for a recording (a flush made live viewers jump 60 s). Extend the
@@ -350,7 +357,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 309 after 1.0.6-1, about 40 s.
+- **Tests:** 309 after 1.0.6-3, about 40 s.
 
 ---
 
@@ -395,9 +402,15 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   - HLS continues the output timeline over lost video (a skipped segment, or an outage longer than the
     playlist) instead of a freeze with silence; a busy answer to a backup probe no longer marks the backup;
   - build version stamped into the image, shown in the sidebar and the startup log.
-  Forum changelog for 1.0.6 and 1.0.6-1: `~/Desktop/coax-1.0.6-changelog.md` on Artemis. Short-form Xtream
+  Forum changelog for 1.0.6 and later follow-ups: `~/Desktop/coax-1.0.6-changelog.md` on Artemis. Short-form Xtream
   addresses (`/<user>/<pass>/<id>` without `/live/`) still play as MPEG-TS: they have no known HLS form, and
   guessing one could break streams that only look like that pattern.
+- **1.0.6-2** (Oct 28) phones: the sidebar fits the visible screen; the public IP (flag and country name) and
+  the version move to a bar above the page at 900 px or less.
+- **1.0.6-3** (Oct 29) phones: the sidebar is fixed (sticky moved at the end of a scroll); Providers buttons,
+  Settings (transcode help, region, backups, XMLTV sources), filters, stream rows and every dialog fit the
+  screen. Status card: drag streams into a new order (saved with the streams endpoint's `order` mode, never
+  switches). Checked by rendering every page and dialog at iPhone size against the real server.
 
 ---
 

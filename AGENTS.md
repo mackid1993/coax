@@ -284,6 +284,19 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
   cut-off text; a blocked stream shows a purple dashed `Blocked · 23h 12m` pill with the reason on hover that
   unblocks on click) and a corrections list that keeps its scroll position. The Channels stream editor and
   backup chips show disabled streams too.
+- Status card reorder: each feed row has a grip (`data-feed-drag`, pointer events with capture, Alt+arrow
+  keys). Dragging moves the row in the DOM only; a poll skips the card being dragged (`fdrag.card`). On release
+  the order is saved with `POST /api/channels/<id>/streams` mode `order`, which sorts the channel's current
+  streams by the given refs (flags kept, unlisted streams keep their order after them, unknown refs ignored),
+  so a stale list can never add or drop a stream. A reorder never switches the playing stream: engines read
+  the order at the next failover. Switching stays the deliberate **Switch** button (owner's decision).
+- Layout: the sidebar is `position: fixed` (sticky moved at the end of a scroll on phones) and `.shell` pads
+  for it. At 900 px or less the sidebar is icon-only and `app.js` moves the IP pill (with the country name) and
+  the version into `#mobileBar` above the page; at 600 px or less cards, rows and dialogs restack (the phone
+  block at the end of the responsive rules). Avoid fixed `grid-template-columns` in inline styles: use a class
+  with a phone override (`.line-row.region-row`, `.bk-row`, `.xs-row`), or rely on the rule that collapses
+  inline-styled `.grid`s to one `minmax(0, 1fr)` column. Grid tracks that must shrink use `minmax(0, 1fr)`,
+  not `1fr`.
 - Popovers via `data-pop` / `data-pop-sub`. Mono inputs disable ligatures (the `http://` slash bug).
 - The bell polls `/api/notifications` every 15 s.
 
@@ -295,6 +308,11 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 - UI checks: Gemini has no Node. Copy `app/web` to the Hermes container and drive the real page modules with
   jsdom against a fake `fetch` (set `"type": "module"` in a package.json next to them; stub `scrollTo`,
   `location`, `CSS.escape`).
+- Layout checks (Artemis): run the real server (`COAX_CONFIG=<scratch>/config.json python -m app.main`) with
+  made-up channels and a small fake Xtream panel, then render every page and dialog with Playwright's
+  Chromium at `devices["iPhone 13"]` and at desktop size, flag elements past their card or the viewport, and
+  look at the screenshots. Mock `/api/status` with `page.route` to get a session card without playing a stream.
+  Use the Playwright already in the cache; do not download browsers.
 - Image: `Dockerfile` (python:3.13-slim-trixie by digest, Debian snapshot, Jellyfin ffmpeg pinned by SHA-256; the
   build fails without `h264_vaapi`, `h264_nvenc` and the VAAPI/CUDA filters).
 - Release: `gh workflow run image.yml -f version=X -f tag=latest`; it tests, smoke-runs the image, then pushes
