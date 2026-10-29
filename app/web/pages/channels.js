@@ -1219,7 +1219,7 @@ function streamsModal(c) {
       if (streams.length && streams.every((s) => s.disabled)) { toast("Keep one stream enabled", "A channel needs at least one stream that is not disabled.", "warn"); return; }
       const r = await api.updateChannel(c.id, { streams: streams.map((s) => ({ provider: s.provider, stream_id: String(s.stream_id), ...(s.disabled ? { disabled: true } : {}) })) });
       Object.assign(chById(c.id) || c, r && r.id ? r : { streams });
-      if (S.pending.has(c.id)) { const pp = S.pending.get(c.id); pp.backups = []; if (!pp.guide?.cands?.length) S.pending.delete(c.id); }
+      settleHeld();   // drops only the held backups the channel now has; the others stay to review
       toast("Streams saved", c.name, "ok", 2500);
       m.close();
       renderFrame();
