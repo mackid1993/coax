@@ -121,11 +121,13 @@ function drawSessions(sessions) {
     const ol = card.querySelector("details.events ol");
     const top = ol ? ol.scrollTop : 0;
     card.innerHTML = inner;
-    const ol2 = card.querySelector("details.events ol");
-    if (ol2 && top) ol2.scrollTop = top;
     card._html = inner;
+    // Reopen the list before restoring its scroll: setting scrollTop forces a layout, and with the list still
+    // closed the page is briefly shorter, so a page scrolled to the bottom got pulled up.
     const det2 = card.querySelector("details.events");
     if (det2 && openEvents.has(key)) det2.open = openEvents.get(key);
+    const ol2 = card.querySelector("details.events ol");
+    if (ol2 && top) ol2.scrollTop = top;
   }
   for (const card of [...el.querySelectorAll(".session-card")]) if (!keep.has(card.dataset.key)) card.remove();
 }
