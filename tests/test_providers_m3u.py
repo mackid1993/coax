@@ -112,6 +112,19 @@ class ParseTests(unittest.TestCase):
 
 
 class StreamIdTests(unittest.TestCase):
+    def test_feeds_differing_only_by_a_query_id_keep_their_ids_when_reordered(self):
+        def ids(order, token):
+            entries = [{"name": "ESPN", "tvg_id": "espn.us", "group": "G", "logo": "",
+                        "url": "http://h/play.php?id=%s&token=%s" % (n, token)} for n in order]
+            saved, m3u.download = m3u.download, lambda provider: {"entries": entries}
+            try:
+                return {s["url"].split("id=")[1].split("&")[0]: s["stream_id"] for s in m3u.fetch_catalog({})["streams"]}
+            finally:
+                m3u.download = saved
+        first = ids(["101", "202", "303"], "aaaa1111bbbb2222")
+        self.assertEqual(ids(["202", "303", "101"], "cccc3333dddd4444"), first)
+        self.assertEqual(len(set(first.values())), 3)
+
     def entry(self, url, name="", tvg_id=""):
         return {"url": url, "name": name or url, "tvg_id": tvg_id}
 

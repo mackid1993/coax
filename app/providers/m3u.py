@@ -11,7 +11,7 @@ import logging
 import re
 import time
 import zlib
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import requests
 import urllib3
@@ -70,6 +70,18 @@ def normalized_url(url):
     return "%s://%s/%s" % (parts.scheme.lower(), host, "/".join(kept))
 
 
+# Query keys that carry logins, tokens or expiry times: they change between refreshes, so they never go into an id.
+_SECRET_KEYS = re.compile(r"(?i)^(token|auth.*|key|api_?key|sig|signature|hash|md5|exp|expires?|e|st|ts|t|time|"
+                          r"session|nonce|hdnts|wmsauthsign|pass|password|pwd|user|username|u|p)$")
+
+
+def query_identity(url):
+    """The query parameters that name the stream (play.php?id=101), without logins, tokens or expiry times."""
+    kept = sorted((k, v) for k, v in parse_qsl(urlsplit(url.strip()).query, keep_blank_values=True)
+                  if not _SECRET_KEYS.match(k) and not _credential_like(v))
+    return "&".join("%s=%s" % kv for kv in kept)
+
+
 def _digest(text):
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
@@ -79,7 +91,8 @@ def candidate_ids(entry):
 
     1. the Xtream numeric id from the URL path (survives credential and token rotation);
     2. a hash of tvg-id and name;
-    3. a hash of the URL without query string and credential-looking path parts.
+    3. a hash of the URL without query string and credential-looking path parts;
+    4. that hash plus the query parameters that name the stream (no logins or tokens).
     The caller takes the first one not already used in the playlist.
     """
     url = entry["url"]
@@ -93,6 +106,11 @@ def candidate_ids(entry):
     if entry.get("tvg_id") or name:
         out.append(_digest("tvg:%s\n%s" % (entry.get("tvg_id") or "", name)))
     out.append(_digest("url:" + normalized_url(url)))
+    query = query_identity(url)
+    if query:
+        # Last: tells apart feeds that share tvg-id, name and path and differ only by a query id, so they do
+        # not swap ids when the playlist is reordered.
+        out.append(_digest("query:%s?%s" % (normalized_url(url), query)))
     return out
 
 
