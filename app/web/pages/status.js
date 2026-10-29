@@ -245,7 +245,7 @@ async function saveFeedOrder(list) {
   const card = list.closest(".session-card");
   try {
     await api.setChannelStreams(rows[0].dataset.ch, rows.map((r) => ({ provider: r.dataset.p, stream_id: r.dataset.s })), "order");
-    toast("Stream order saved", "The stream playing now keeps playing. At a failover, coax tries streams that have played cleanly first, then this order.", "ok", 6000);
+    toast("Stream order saved", "The stream playing now keeps playing. At a failover, coax tries the most reliable stream first (by Smart Standby score) and uses this order when they tie.", "ok", 6000);
   } catch (err) { toastError("Could not save the stream order", err); }
   if (card) card._html = null;   // redraw from the server's order on the next poll
   poll();
