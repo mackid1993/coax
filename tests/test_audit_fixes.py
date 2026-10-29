@@ -101,6 +101,24 @@ class AuditFixes(ApiTestCase):
         status, r, _ = self.request("DELETE", "/api/providers/p1?force=1")
         self.assertEqual((status, r["only_disabled_streams"]), (200, ["CNN"]))
 
+    def test_renamed_stream_ids_carry_held_suggestions_and_smart_standby_blocks(self):
+        from app.feedhealth import FeedHealth
+        self.app.health = FeedHealth(self.store, self.dir)
+        self.refreshed_provider()
+        s, d, _ = self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p1", "stream_id": "1"}]})
+        cid = d["created"][0]
+        self.store.update(lambda cfg: cfg["channels"][0]["streams"].append({"provider": "p1", "stream_id": "3"}))
+        held = {str(cid): {"backups": [{"provider": "p1", "stream_id": "2", "checked": True}]}}
+        self.request("PUT", "/api/suggestions", {"rev": 0, "pending": held})
+        now = __import__("time").time()
+        self.app.health._block(cid, ("p1", "1"), "placeholder", "", now)
+        self.app._apply_renamed("p1", {"1": "101", "2": "102"})
+        self.assertIn("101", [r["stream_id"] for r in self.store.get()["channels"][0]["streams"]])
+        self.assertEqual(self.request("GET", "/api/suggestions")[1]["pending"][str(cid)]["backups"][0]["stream_id"],
+                         "102")
+        self.assertGreater(self.app.health.blocked_until(cid, ("p1", "101"), now=now + 1), now + 1)
+        self.assertEqual(self.app.health.blocked_until(cid, ("p1", "1"), now=now + 1), 0)
+
 
 class GuideRefreshRequests(unittest.TestCase):
     def test_a_changed_xmltv_source_refreshes_the_guide_now_and_at_its_own_interval(self):

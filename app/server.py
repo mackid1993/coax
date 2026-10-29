@@ -393,6 +393,19 @@ class App:
         """The provider gave a stream a new id but kept its URL: point channels at the new id, so the channel
         keeps playing the same stream (and keeps its order and Disable state)."""
         renamed = {str(k): str(v) for k, v in renamed.items()}
+        if not renamed:
+            return 0
+
+        def follow_held(pending):   # a held suggestion of a renamed stream would be saved as a vanished one
+            changed = False
+            for item in pending.values():
+                for b in item.get("backups") or []:
+                    if b.get("provider") == provider_id and str(b.get("stream_id")) in renamed:
+                        b["stream_id"], changed = renamed[str(b["stream_id"])], True
+            return changed
+        self.edit_held(follow_held)
+        if self.health is not None:
+            self.health.rename(provider_id, renamed)   # blocks and strikes follow the stream
         if not any(r["provider"] == provider_id and str(r["stream_id"]) in renamed
                    for c in self.store.get()["channels"] for r in c["streams"]):
             return 0   # no channel uses a renamed stream: leave the config file alone

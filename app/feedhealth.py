@@ -126,6 +126,25 @@ class FeedHealth:
                 del self.feeds[k]
         _save(self.path, {"feeds": self.feeds})
 
+    def rename(self, provider_id, renamed, now=None):
+        """The provider gave streams new ids (same URL): their blocks, strikes and proven time follow them."""
+        now = now or time.time()
+        pid = str(provider_id)
+        with self.lock:
+            moved = 0
+            for k in list(self.feeds):
+                ch, p, sid = k.split("|", 2)
+                new = renamed.get(sid) if p == pid else None
+                if new and self._k(ch, (pid, new)) not in self.feeds:
+                    self.feeds[self._k(ch, (pid, new))] = self.feeds.pop(k)
+                    moved += 1
+            follow = lambda key: (pid, renamed[key[1]]) if key and key[0] == pid and key[1] in renamed else key  # noqa: E731
+            for ch, (old, new, t) in list(self.pending.items()):
+                self.pending[ch] = (follow(old), follow(new), t)
+            if moved:
+                self._persist(now)
+            return moved
+
     def blocked_until(self, ch, key, now=None):
         now = now or time.time()
         rec = self.feeds.get(self._k(ch, key)) or {}
