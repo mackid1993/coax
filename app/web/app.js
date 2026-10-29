@@ -132,6 +132,11 @@ pollNotes();
 setInterval(pollNotes, 15000);
 
 // ---------- Public IP pill (lets users confirm they are behind their VPN) ----------
+const REGIONS = (() => { try { return new Intl.DisplayNames(["en"], { type: "region" }); } catch { return null; } })();
+function countryName(cc) {
+  try { return REGIONS?.of(cc.toUpperCase()) || cc; } catch { return cc; }
+}
+
 export async function refreshNetwork(fresh = false) {
   const pill = $("#netPill");
   pill.classList.add("checking");
@@ -139,7 +144,8 @@ export async function refreshNetwork(fresh = false) {
     const n = await api.network(fresh);
     pill.classList.toggle("bad", !!n?.error || !n?.ip);
     pill.querySelector(".np-ip").textContent = n?.ip || "unknown";
-    pill.querySelector(".np-cc").textContent = n?.country ? `${flag(n.country)} ${n.country}` : "";
+    pill.querySelector(".np-cc").innerHTML = n?.country
+      ? `${flag(n.country)} <span class="cc-code">${esc(n.country)}</span><span class="cc-name">${esc(countryName(n.country))}</span>` : "";
     pill.title = `Public IP of this container${n?.checked_at ? `, checked ${new Date(n.checked_at).toLocaleTimeString()}` : ""}${n?.error ? `. ${n.error}` : ""}. Click to check again.`;
     window.dispatchEvent(new CustomEvent("coax:network", { detail: n }));
     return n;
@@ -159,6 +165,17 @@ api.version().then((v) => {
   const el = $("#buildVer");
   if (v?.version) { el.textContent = `v${v.version}`; el.title = `coax ${v.version}`; }
 }).catch(() => {});
+
+// Narrow screens: the sidebar shows icons only, so the IP pill and the version move to a bar above the page.
+const narrow = matchMedia("(max-width: 900px)");
+function placeMeta() {
+  const pill = $("#netPill"), ver = $("#buildVer"), foot = $(".sidebar-foot");
+  if (narrow.matches) $("#mobileBar").append(pill, ver);
+  else { foot.before(pill); foot.after(ver); }
+}
+narrow.addEventListener("change", placeMeta);
+placeMeta();
+
 refreshNetwork().catch(() => {});
 setInterval(() => refreshNetwork().catch(() => {}), 300000);
 
