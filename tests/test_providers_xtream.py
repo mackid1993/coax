@@ -45,15 +45,13 @@ class XtreamTests(unittest.TestCase):
         self.assertEqual(result["groups"], ["US| NEWS", "US| SPORTS", "Category 3", "Uncategorized"])
         self.assertNotIn("url", by_id["101"])
 
-    def test_empty_categories_beside_categorized_streams_is_an_error(self):
-        # A hiccup must not replace a good catalog with one where every stream is Uncategorized.
+    def test_empty_categories_beside_categorized_streams_are_flagged(self):
+        # catalog.refresh keeps a good catalog over this; a panel with no categories at all is not flagged.
         self.fake.set("get_live_categories", (200, {}, b"[]"))
         self.fake.json("get_live_streams", "xtream_streams.json")
-        with self.assertRaises(net.ProviderError):
-            xtream.fetch_catalog(self.provider)
-        # A panel that has no categories at all still works.
+        self.assertTrue(xtream.fetch_catalog(self.provider)["categories_missing"])
         self.fake.set("get_live_streams", (200, {}, b'[{"stream_id": 1, "name": "A", "stream_type": "live"}]'))
-        self.assertEqual(xtream.fetch_catalog(self.provider)["groups"], ["Uncategorized"])
+        self.assertFalse(xtream.fetch_catalog(self.provider)["categories_missing"])
 
     def test_uses_first_line_and_user_agent(self):
         self.provider["user_agent"] = "MyAgent/1.0"

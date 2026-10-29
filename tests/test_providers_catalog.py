@@ -85,6 +85,21 @@ class CatalogTests(CatalogTestCase):
             catalog.refresh(self.provider)
         self.assertEqual(catalog.load("p1"), before)
 
+    def test_empty_categories_keep_a_catalog_with_named_groups(self):
+        self.set_streams(("1", "A", "1"))
+        catalog.refresh(self.provider)
+        before = catalog.load("p1")
+        self.fake.set("get_live_categories", (200, {}, b"[]"))   # a hiccup: streams still name category 1
+        with self.assertRaises(ProviderError):
+            catalog.refresh(self.provider)
+        self.assertEqual(catalog.load("p1"), before)
+
+    def test_a_new_provider_without_categories_still_gets_a_catalog(self):
+        self.fake.set("get_live_categories", (200, {}, b"[]"))
+        self.set_streams(("1", "A", "3"))
+        self.assertEqual(catalog.refresh(self.provider)["groups"], ["Uncategorized"])
+        self.assertEqual(catalog.refresh(self.provider)["groups"], ["Uncategorized"])   # and keeps refreshing
+
     def test_load_missing_and_corrupt(self):
         self.assertIsNone(catalog.load("nope"))
         os.makedirs(os.path.join(self.tmp, "cache"))

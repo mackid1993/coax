@@ -126,6 +126,10 @@ def refresh(provider):
         if not fresh.get("streams") and (previous or {}).get("streams"):
             # A panel hiccup can answer an empty list; never trade a good catalog for it.
             raise ProviderError("provider returned no streams; keeping the previous list")
+        if fresh.get("categories_missing") and any(g != xtream.UNCATEGORIZED for g in (previous or {}).get("groups") or []):
+            # Every stream would land in Uncategorized: selected groups would empty and new streams in them would
+            # never be auto-added. A panel that never had categories still refreshes.
+            raise ProviderError("provider returned no categories; keeping the previous list")
         catalog = {"fetched_at": now_iso(), "groups": fresh["groups"], "streams": fresh["streams"]}
         atomic_write_json(cache_path(provider_id), catalog)
 

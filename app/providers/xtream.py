@@ -197,11 +197,9 @@ def fetch_catalog(provider):
     """Download categories and live streams and return {"groups": [...], "streams": [...]}."""
     categories = get_live_categories(provider)
     streams = get_live_streams(provider)
-    if not categories and any(item["category_id"] for item in streams):
-        # A hiccup, not a panel without categories: storing it would put every stream in Uncategorized and
-        # replace the good catalog (selected groups would empty, new streams would never be auto-added).
-        raise ProviderError("Xtream get_live_categories came back empty while its streams name categories; "
-                            "keeping the previous list")
+    # Empty categories beside streams that name categories is usually a hiccup; catalog.refresh decides (it keeps a
+    # good catalog with named groups instead of filing everything under Uncategorized).
+    categories_missing = not categories and any(item["category_id"] for item in streams)
     names = {}
     groups = []
     for cat in categories:
@@ -226,7 +224,7 @@ def fetch_catalog(provider):
             "tvg_id": item["epg_channel_id"],
             "num": item.get("num") or "",
         })
-    return {"groups": groups, "streams": result}
+    return {"groups": groups, "streams": result, "categories_missing": categories_missing}
 
 
 def line_server(provider, line):
