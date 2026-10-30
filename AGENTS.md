@@ -157,8 +157,8 @@ threads). `hlsloop.py` is the recommended path.
   both engines). **Passthrough** (that is its name; do not rename it to "remux") is `-c copy -copyts`, no GPU.
   Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
   `scale_vaapi`, `h264_vaapi`; NVIDIA CUDA decode, `bwdif_cuda`, `scale_cuda`, `h264_nvenc`), falling back to CPU
-  decode (`GPUDEC`) if GPU decode fails; audio 48 kHz with the source's channel layout (no `-map`, so ffmpeg takes the audio track with the most channels; no `-ac`): AC-3 640k when the feed's PMT lists Dolby (`fmtprobe.dolby`, checked per segment; a change restarts the encoder at a keyframe, or at once before it has had data), else AAC 384k. ffmpeg stderr goes through `fferr`: decoder noise in an encoder's first 10 s is dropped, later decoder errors are summed once a minute.
-- **ffmpeg flags** (pinned by `FfmpegArgsTest` and `DropChangedTest` in `tests/test_engine_adapt.py`):
+  decode (`GPUDEC`) if GPU decode fails; audio: the feed's best track (`fmtprobe.tracks`/`pick`: most channels, then Dolby; mapped with `-map 0:i:<PID>?`, `APID`), in one format per DVR connection (`FMT`, chosen from the first segment before any output and kept across engine restarts and hand switches through the state file): AC-3 5.1 640k when that track is Dolby, else AAC 384k with its channels (2 or 6), 48 kHz. A provider switching between 5.1 and stereo, or a failover to a different feed, never restarts the encoder: ffmpeg rebuilds its audio filter and fits the audio to the fixed format (stereo in the front left and right of 5.1). A better track found later waits for the next restart the engine makes anyway. ffmpeg stderr goes through `fferr`: decoder noise in an encoder's first 10 s is dropped, later decoder errors are summed once a minute.
+- **ffmpeg flags** (pinned by `FfmpegArgsTest` and `TranscodeAudioTest` in `tests/test_engine_adapt.py`):
   - Probe: the base `-probesize 1000000 -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s). The
     1.0.4 5 s probe and `-muxdelay 0 -muxpreload 0` were removed in 1.0.5: they were believed to fix an HE-AAC
     lip-sync problem, but that feed was out of sync at the provider itself (see HISTORY.md 4.7). The test
@@ -166,11 +166,14 @@ threads). `hlsloop.py` is the recommended path.
     filter are gone too.
   - `-dts_delta_threshold 86400`: never let ffmpeg rewrite timestamps after a jump (a 10 s audio dropout
     became a permanent offset); the engine continues the timeline itself.
-  - Transcode audio `aresample=async=1:min_hard_comp=0.1` (plus `atempo` in a refill): corrects only real gaps
-    above 0.1 s. Never `async=1000`, which stretches audio to fit timestamps (5 s off offline). No `first_pts`:
-    when an audio parameter change makes ffmpeg rebuild the filter, `first_pts=0` inserts silence.
-  - Transcode input `-drop_changed:a 1` (right before `-i pipe:0`): audio frames whose parameters change are
-    dropped instead of rebuilding the filter. Guard: `silent(pid, b)` in both engines; if a transcode encoder
+  - Transcode audio `aresample=async=1:min_hard_comp=0.1` (plus `asetpts=PTS*x,atempo` in a refill): corrects
+    only real gaps above 0.1 s. Never `async=1000`, which stretches audio to fit timestamps (5 s off offline). No
+    `first_pts`: when an audio parameter change makes ffmpeg rebuild the filter, `first_pts=0` inserts silence.
+    In a refill both video (`setpts=PTS*x`) and audio (`asetpts=PTS*x` before `atempo`) scale timestamps from 0,
+    not from `STARTPTS`: a rebuilt audio filter (5.1 to stereo at an ad) would otherwise restart its stretch and
+    run ahead of the picture by 3% of the encoder's age.
+  - No `-drop_changed:a` since 1.0.7-4: the output format is fixed (`-ac`, `-ar`), so ffmpeg rebuilds the audio
+    filter on a parameter change instead of dropping frames (which went silent until a restart). Guard: `silent(pid, b)` in both engines; if a transcode encoder
     sends video but no audio for 10 s, at least 15 s after it started, it is killed so it restarts with the
     new format. At most once per encoder, then again only after 1, 2, 4 ... 10 minutes while sound stays
     missing; never for a feed that has had no sound since the engine started. Its kills are kept in `SK`, so
