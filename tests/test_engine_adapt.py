@@ -132,11 +132,12 @@ class LoadSettingsTest(unittest.TestCase):
         return extract(name, {"load_settings"}, base_namespace())["load_settings"](path)
 
     def test_reads_config_from_coax_config_env(self):
-        self.write({"server": {"port": 7999}, "channels_dvr": {"url": "http://192.168.1.50:8089"}, "transcode": "1080p60"})
+        self.write({"server": {"port": 7999}, "channels_dvr": {"url": "http://192.168.1.50:8089"}, "transcode": "1080p60",
+                    "transcode_dolby": True})
         os.environ["COAX_CONFIG"] = self.path
         for name in ENGINES:
             with self.subTest(engine=name):
-                self.assertEqual(self.load(name), ("http://192.168.1.50:8089", "1080p60", 7999))
+                self.assertEqual(self.load(name), ("http://192.168.1.50:8089", "1080p60", 7999, True))
 
     def test_safe_defaults(self):
         cases = {
@@ -146,6 +147,7 @@ class LoadSettingsTest(unittest.TestCase):
             "empty object": {},
             "wrong types": {"server": {"port": "abc"}, "channels_dvr": {"url": 5}, "transcode": None},
             "wrong containers": {"server": 7780, "channels_dvr": "http://x", "transcode": 3},
+            "dolby not a boolean": {"transcode_dolby": "yes"},
             "port out of range": {"server": {"port": 70000}},
         }
         for name in ENGINES:
@@ -156,13 +158,13 @@ class LoadSettingsTest(unittest.TestCase):
                     if data is not None:
                         self.write(data)
                     os.environ["COAX_CONFIG"] = self.path
-                    self.assertEqual(self.load(name), ("", "off", 7780))
+                    self.assertEqual(self.load(name), ("", "off", 7780, False))
 
     def test_port_as_string_number(self):
         self.write({"server": {"port": "8123"}})
         for name in ENGINES:
             with self.subTest(engine=name):
-                self.assertEqual(self.load(name, self.path), ("", "off", 8123))
+                self.assertEqual(self.load(name, self.path), ("", "off", 8123, False))
 
     def test_coax_port_env_overrides_config(self):
         self.write({"server": {"port": 7999}})
@@ -170,7 +172,7 @@ class LoadSettingsTest(unittest.TestCase):
             for env, want in (("8124", 8124), ("", 7999), ("abc", 7999), ("-5", 7999)):
                 with self.subTest(engine=name, env=env):
                     os.environ["COAX_PORT"] = env
-                    self.assertEqual(self.load(name, self.path), ("", "off", want))
+                    self.assertEqual(self.load(name, self.path), ("", "off", want, False))
 
 
 class EngineFilesTest(unittest.TestCase):

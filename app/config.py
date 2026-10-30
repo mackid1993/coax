@@ -44,6 +44,7 @@ def default_config():
         "server": {"port": 7780, "base_url": "", "new_client_behind_seconds": 30, "channel_shutdown_delay": 10},
         "channels_dvr": {"url": ""},
         "transcode": "off",
+        "transcode_dolby": False,   # always send Dolby Digital 5.1 at 640k while transcoding
         "providers": [],
         "channels": [],
         "lineups": [{"id": "main", "name": "Main", "guide": "per-channel", "channels": []}],
@@ -246,6 +247,7 @@ def validate(cfg):
     _url(cfg["channels_dvr"].get("url", ""), "channels_dvr.url")
     _require(cfg.get("transcode") in TRANSCODE_VALUES,
              "transcode must be one of: %s" % ", ".join(TRANSCODE_VALUES))
+    _require(isinstance(cfg.get("transcode_dolby", False), bool), "transcode_dolby must be true or false")
 
     providers = cfg.get("providers")
     _require(isinstance(providers, list), "providers must be a list")
