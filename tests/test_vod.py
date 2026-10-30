@@ -35,6 +35,7 @@ class FakePanel(ThreadingHTTPServer):
         self.requests = []
         self.strict = True
         self.busy_next = 0          # answer this many requests with 509 first
+        self.header_delay = 0       # seconds before answering (a slow panel)
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -56,6 +57,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        time.sleep(srv.header_delay)
         with srv.lock:
             srv.requests.append(self.headers.get("Range"))
             if srv.busy_next:
@@ -237,6 +239,21 @@ class ProxyTests(unittest.TestCase):
         conn.close()
         session.close()
 
+    def test_tune_does_not_wait_long_for_a_movie_connection_still_opening(self):
+        _s, _b, conn, _ = get(self.port, "/vod/p1/m/7.mp4", "bytes=0-", read=1000)
+        self.panel.header_delay = 5
+        seek = threading.Thread(target=lambda: self.assertRaises(Exception, get, self.port, "/vod/p1/m/7.mp4",
+                                                                 "bytes=5000000-", 1000), daemon=True)
+        seek.start()
+        time.sleep(0.6)   # the seek is now waiting on the slow panel
+        started = time.monotonic()
+        session = self.hub.open("uuid-1", "dvr", "ua")
+        self.assertIsNotNone(session)
+        self.assertLess(time.monotonic() - started, 3.5)
+        session.close()
+        conn.close()
+        self.panel.header_delay = 0
+
     def test_same_viewer_switching_title_keeps_the_line(self):
         get(self.port, "/vod/p1/m/7.mp4", "bytes=0-", read=1000)[2].close()
         status, body, conn, _ = get(self.port, "/vod/p1/e/9.mkv", "bytes=10-", read=1000)
@@ -282,6 +299,37 @@ class NameTests(unittest.TestCase):
         self.assertEqual(vod["series"][0]["name"], "Breaking Bad")
         ep = vod["episodes"][vod["series"][0]["id"]][0]
         self.assertEqual((ep["season"], ep["episode"], ep["id"]), (1, 2, "77"))
+
+
+class EpisodeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.saved = (vodcat.catalog.DATA_DIR, vodcat.EPISODE_PAUSE, vodcat.xtream.get_series_episodes)
+        vodcat.catalog.DATA_DIR = self.tmp
+        vodcat.EPISODE_PAUSE = 0
+
+    def tearDown(self):
+        vodcat.catalog.DATA_DIR, vodcat.EPISODE_PAUSE, vodcat.xtream.get_series_episodes = self.saved
+        shutil.rmtree(self.tmp)
+
+    def test_throttled_answers_are_not_cached_and_end_the_run(self):
+        calls = []
+
+        def answer(provider, sid):
+            calls.append(sid)
+            if sid == "a":
+                return [{"id": "1", "season": 1, "episode": 1, "title": "", "ext": "mkv"}]
+            raise vodcat.ProviderError("Xtream get_series_info returned no series info")
+        vodcat.xtream.get_series_episodes = answer
+        provider = {"id": "p9", "type": "xtream"}
+        shows = [{"id": sid, "modified": 5} for sid in "abcdefghij"]
+        out = vodcat.episodes_for(provider, shows)
+        self.assertEqual(len(out["a"]), 1)
+        self.assertEqual(calls, list("abcdef"))          # five failures in a row end the run
+        self.assertEqual(out["j"], [])
+        vodcat.xtream.get_series_episodes = lambda p, sid: [{"id": sid, "season": 1, "episode": 1, "ext": "mp4"}]
+        out = vodcat.episodes_for(provider, shows)       # the next run asks again for every failed one
+        self.assertEqual(out["j"][0]["id"], "j")
 
 
 class LibraryTests(unittest.TestCase):
@@ -378,6 +426,21 @@ class LibraryTests(unittest.TestCase):
             self.assertNotIn("p2", lib.state)
         finally:
             vodcat.load, vodcat.episodes_for = orig_load, orig_eps
+
+    def test_switched_off_provider_keeps_its_library(self):
+        cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": ""},
+               "providers": [dict(self.provider, enabled=False)]}
+
+        class Store:
+            def get(self):
+                return cfg
+        lib = vodlib.Library(Store(), self.tmp, imports_dir=self.imports, dvr_call=lambda *a: {})
+        rel = os.path.join(self.imports, "Movies", "coax", "p2", "Up (2009).strm")
+        os.makedirs(os.path.dirname(rel))
+        with open(rel, "w") as handle:
+            handle.write("x")
+        lib.sync("p2")
+        self.assertTrue(os.path.isfile(rel))
 
     def test_imports_check(self):
         self.assertEqual(vodlib.imports_ready(self.imports), (True, ""))

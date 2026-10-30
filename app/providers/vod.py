@@ -26,8 +26,10 @@ from .net import ProviderError
 
 log = logging.getLogger("coax.providers")
 
-_memo = {}
-_memo_guard = threading.Lock()
+EPISODE_PAUSE = 0.25        # seconds between get_series_info calls
+EPISODE_FAILURES = 5        # failed calls in a row that end a run (a throttling panel); the next sync carries on
+
+_locks_guard = threading.Lock()
 _locks = {}
 
 # A video file, not a live stream.
@@ -59,7 +61,7 @@ def cache_path(provider_id, suffix=""):
 
 
 def _lock_for(provider_id):
-    with _memo_guard:
+    with _locks_guard:
         return _locks.setdefault(str(provider_id), threading.Lock())
 
 
@@ -175,25 +177,17 @@ def catalog_digest(text):
 # -- cache ----------------------------------------------------------------------------------------------------------
 
 def _load_json(path):
+    """Parse a cache file. Never kept in memory: a large provider's VOD list is about 200 MB once parsed
+    (137,000 movies), so it is read when a sync or a play needs it and let go after."""
     import json
     try:
-        stat = os.stat(path)
-    except OSError:
-        return None
-    key = (path, stat.st_mtime_ns, stat.st_size)
-    with _memo_guard:
-        hit = _memo.get(path)
-        if hit and hit[0] == key:
-            return hit[1]
-    try:
         with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
+            return json.load(handle)
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError) as exc:
         log.warning("cannot read %s: %s", os.path.basename(path), exc)
         return None
-    with _memo_guard:
-        _memo[path] = (key, data)
-    return data
 
 
 def load(provider_id):
@@ -202,14 +196,30 @@ def load(provider_id):
     return data if isinstance(data, dict) else None
 
 
+def summary(provider_id):
+    """The small file beside the catalog: {"fetched_at", "movies": [{"name", "count"}], "series": [...]}."""
+    data = _load_json(cache_path(provider_id, "-groups"))
+    if isinstance(data, dict):
+        return data
+    vod = load(provider_id)   # a catalog from before the summary existed
+    if vod is None:
+        return None
+    data = dict(group_counts(vod), fetched_at=vod.get("fetched_at"))
+    catalog.atomic_write_json(cache_path(provider_id, "-groups"), data)
+    return data
+
+
 def save(provider_id, vod):
-    """Write a VOD catalog, unless it is empty and the cached one is not (a panel hiccup)."""
-    previous = load(provider_id) or {}
-    if not vod.get("movies") and not vod.get("series") and (previous.get("movies") or previous.get("series")):
-        raise ProviderError("provider returned no movies or series; keeping the previous list")
+    """Write a VOD catalog and its summary, unless it is empty and the cached one is not (a panel hiccup)."""
+    if not vod.get("movies") and not vod.get("series"):
+        previous = summary(provider_id) or {}
+        if any(g.get("count") for g in (previous.get("movies") or []) + (previous.get("series") or [])):
+            raise ProviderError("provider returned no movies or series; keeping the previous list")
     data = {"fetched_at": catalog.now_iso()}
     data.update(vod)
     catalog.atomic_write_json(cache_path(provider_id), data)
+    catalog.atomic_write_json(cache_path(provider_id, "-groups"),
+                              dict(group_counts(data), fetched_at=data["fetched_at"]))
     return data
 
 
@@ -266,22 +276,29 @@ def episodes_for(provider, series, deadline=None, progress=None):
         return {s["id"]: stored.get(s["id"]) or [] for s in series}
     path = cache_path(pid, "-episodes")
     cache = dict(_load_json(path) or {})
-    out, fetched, failed = {}, 0, 0
+    out, fetched, failed, in_row = {}, 0, 0, 0
     for index, show in enumerate(series):
         hit = cache.get(show["id"])
         if isinstance(hit, dict) and hit.get("modified") == show.get("modified") and show.get("modified"):
             out[show["id"]] = hit.get("episodes") or []
             continue
-        if deadline is not None and time.monotonic() > deadline:
-            out[show["id"]] = (hit or {}).get("episodes") or []   # next run carries on
+        if (deadline is not None and time.monotonic() > deadline) or in_row >= EPISODE_FAILURES:
+            out[show["id"]] = (hit or {}).get("episodes") or []   # the next run carries on
             continue
+        if fetched or failed:
+            time.sleep(EPISODE_PAUSE)   # one account, possibly thousands of calls: never a burst
         try:
             eps = xtream.get_series_episodes(provider, show["id"])
         except ProviderError as exc:
             failed += 1
+            in_row += 1
             log.warning("provider %s: episodes of series %s not read: %s", pid, show["id"], exc)
+            if in_row == EPISODE_FAILURES:
+                log.warning("provider %s: %d episode lists failed in a row; the rest wait for the next sync",
+                            pid, in_row)
             out[show["id"]] = (hit or {}).get("episodes") or []
             continue
+        in_row = 0
         cache[show["id"]] = {"modified": show.get("modified") or 0, "episodes": eps}
         out[show["id"]] = eps
         fetched += 1

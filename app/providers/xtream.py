@@ -349,7 +349,10 @@ def get_series_episodes(provider, series_id):
     keyed by season, a list of seasons, or not at all for a series without any."""
     data = _api(provider, "get_series_info", series_id=id_text(series_id))
     _check_auth(data, "Xtream get_series_info")
-    episodes = data.get("episodes") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        # An empty body is how some panels answer when they throttle: not "no episodes", so never cached as one.
+        raise ProviderError("Xtream get_series_info returned no series info")
+    episodes = data.get("episodes")
     if isinstance(episodes, dict):
         groups = list(episodes.items())
     elif isinstance(episodes, list):

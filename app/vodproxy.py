@@ -40,6 +40,7 @@ LINGER = 8.0                 # a play keeps its line this long after its last re
 BURST = 1.0                  # requests closer together than this are a burst of seeks...
 DEBOUNCE = 0.35              # ...and wait this long, so only the newest one connects
 RETRY_FOR = 10.0             # keep retrying a busy provider this long
+STOP_WAIT = 2.5              # a tune taking the line waits at most this long for the movie's connection to go
 CLOSE_WAIT = 20.0            # longest wait for an older connection of the play to open or close (slow panels: 5 s)
 TIMEOUT = (5, 30)
 CHUNK = 256 * 1024
@@ -107,6 +108,7 @@ class Play:
         self.size = None
         self.tail = None               # (offset, bytes) of the end of the file
         self.content_type = None
+        self.source = None             # an M3U title's provider address
         self.sent = 0
 
     def switch(self, item, name):
@@ -116,7 +118,7 @@ class Play:
             if self.upstream is not None:
                 _hard_close(self.upstream)
             self.item, self.name = item, name
-            self.size = self.tail = self.content_type = None
+            self.size = self.tail = self.content_type = self.source = None
             self.sent = 0
             if self.hold is not None:
                 self.hold.name = "VOD: " + name
@@ -130,9 +132,10 @@ class Play:
             self.gen += 1
             if self.upstream is not None:
                 _hard_close(self.upstream)
-            deadline = time.monotonic() + CLOSE_WAIT
+            # A connection still being opened is closed by its opener the moment it answers (it sees `stopped`).
+            deadline = time.monotonic() + STOP_WAIT
             while (self.upstream is not None or self.opening) and time.monotonic() < deadline:
-                self.cond.wait(0.2)
+                self.cond.wait(0.1)
         self.plays.forget(self)
         if self.hold is not None:
             self.plays.hub.vod_release(self.hold)
@@ -186,14 +189,17 @@ class Plays:
         return play
 
     # -- the provider -----------------------------------------------------------------------------------------------
-    def _url(self, provider, line, item):
-        kind, item_id, ext = item
+    def _url(self, provider, play):
+        kind, item_id, ext = play.item
+        line = play.hold.line
         if (provider.get("type") or "xtream").lower() == "m3u":
             from app.providers import m3u, vod
-            found = vod.find(provider["id"], kind, item_id)
-            if not found or not found.get("url"):
-                raise UpstreamError(404)
-            return m3u.apply_line_rewrite(found["url"], line)
+            if play.source is None:   # once per title: the M3U address is in the VOD list, read from disk
+                found = vod.find(provider["id"], kind, item_id)
+                if not found or not found.get("url"):
+                    raise UpstreamError(404)
+                play.source = found["url"]
+            return m3u.apply_line_rewrite(play.source, line)
         from app.providers import xtream
         return xtream.vod_url(provider, line, kind, item_id, ext)
 
@@ -257,8 +263,10 @@ class Plays:
     def serve(self, handler, provider_id, kind, item_id, ext):
         cfg = self.get_config() or {}
         provider = next((p for p in cfg.get("providers") or [] if p.get("id") == provider_id), None)
-        if provider is None or provider.get("enabled", True) is False:
+        if provider is None:
             return handler.send_error(404, "unknown provider")
+        if provider.get("enabled", True) is False:
+            return handler.send_error(503, "provider is switched off")
         item = ("episode" if kind == "e" else "movie", str(item_id), (ext or "mp4").lower())
         play = self._play_for(handler.client_address[0], provider, item)
         if play is None:
@@ -334,7 +342,7 @@ class Plays:
             play.opening = True
         resp = span = None
         try:
-            url = self._url(provider, play.hold.line, item)
+            url = self._url(provider, play)
             if play.size is None and (head or (wanted is not None and wanted[0] is None)):
                 self._learn_size(play, my, url)
             if head:

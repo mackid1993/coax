@@ -1226,20 +1226,21 @@ class Handler(BaseHTTPRequestHandler):
         ?refresh=1 downloads the lists first (the first time the dialog opens on an Xtream provider)."""
         from app.providers import vod as vodcat
         provider = find_provider(self.app.store.get(), provider_id)
-        data = vodcat.load(provider_id)
-        if self.query.get("refresh") in ("1", "true") or (data is None and provider["type"] == "xtream"):
+        counts = vodcat.summary(provider_id)
+        if provider["type"] == "xtream" and (counts is None or self.query.get("refresh") in ("1", "true")):
             try:
-                data = vodcat.refresh(provider) if provider["type"] == "xtream" else data
+                vodcat.refresh(provider)
             except Exception as exc:  # noqa: BLE001 - shown in the dialog
                 from app.providers.net import redact, secrets_of
                 raise ApiError(502, "could not read the provider's movies and series: %s"
                                % redact(getattr(exc, "args", [exc])[0], secrets_of(provider)))
-        counts = vodcat.group_counts(data)
+            counts = vodcat.summary(provider_id)
+        counts = counts or {}
         picks = provider.get("vod") or {}
-        out = {"provider": provider_id, "fetched_at": (data or {}).get("fetched_at")}
+        out = {"provider": provider_id, "fetched_at": counts.get("fetched_at")}
         for kind in ("movies", "series"):
             chosen = set(picks.get(kind) or [])
-            rows = [dict(row, selected=row["name"] in chosen) for row in counts[kind]]
+            rows = [dict(row, selected=row["name"] in chosen) for row in counts.get(kind) or []]
             rows += [{"name": g, "count": 0, "selected": True} for g in picks.get(kind) or []
                      if g not in {r["name"] for r in rows}]
             out[kind] = rows

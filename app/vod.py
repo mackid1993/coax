@@ -341,9 +341,11 @@ class Library:
         cfg = self.store.get()
         provider = next((p for p in cfg.get("providers") or [] if p.get("id") == pid), None)
         movie_groups, series_groups = selected(provider or {})
-        if provider is None or provider.get("enabled", True) is False or not (movie_groups or series_groups):
+        if provider is None or not (movie_groups or series_groups):
             self.remove(pid, cfg)
             return
+        if provider.get("enabled", True) is False:
+            return   # switched off is a pause: the library stays (watch state, resume), nothing is fetched
         ok, why = imports_ready(self.imports_dir)
         if not ok:
             raise RuntimeError(why)
