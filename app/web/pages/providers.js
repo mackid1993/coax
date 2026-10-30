@@ -320,16 +320,16 @@ async function vodModal(p) {
   const m = openModal({
     title: `On demand · ${p.name}`,
     wide: true,
-    body: `<p class="muted small" style="margin-bottom:10px">Pick the movie and series groups to bring into Channels DVR. Each group becomes a collection, and a <b>${esc(p.name)}</b> section holds them all. Turn on <b>In library</b> for a group to also list its titles in Movies and TV Shows with your own library; otherwise they stay out of the way, in their collection and the section. New titles the provider adds to a picked group follow on the provider's refresh schedule. Videos play exactly as the provider sends them, through coax, never transcoded.</p>
+    body: `<p class="muted small" style="margin-bottom:10px">Each group you pick becomes a collection in Channels DVR, all in a <b>${esc(p.name)}</b> section, and stays up to date with the provider. <b>In library</b> also lists a group's titles in Movies and TV Shows. Played as the provider sends them, never transcoded.</p>
       <div id="vLib" style="margin-bottom:12px"></div>
-      <div class="tabs" role="tablist" id="vTabs"><button role="tab" data-kind="movies" aria-selected="true">Movies <span class="badge num" data-n="movies"></span></button><button role="tab" data-kind="series" aria-selected="false">Series <span class="badge num" data-n="series"></span></button></div>
+      <div class="tabs" role="tablist" id="vTabs"><button role="tab" data-kind="movies" aria-selected="true">Movies <span class="badge num" data-n="movies" style="display:none"></span></button><button role="tab" data-kind="series" aria-selected="false">Series <span class="badge num" data-n="series" style="display:none"></span></button></div>
       <div class="row row-wrap" style="margin-bottom:12px">
         <label class="search" style="flex:1;min-width:220px"><span class="sr-only">Search groups</span>${icon("search")}<input class="input" id="vQ" placeholder="Search groups"></label>
         <button class="btn btn-sm" data-all>Select all</button><button class="btn btn-sm" data-none>Select none</button>
-        <span class="badge badge-accent num" id="vCount"></span></div>
-      <div class="row row-wrap small" style="margin-bottom:12px"><span class="faint">In library, for the picked groups shown:</span><button class="btn btn-sm" data-lib-all>All</button><button class="btn btn-sm" data-lib-none>None</button></div>
+        <span class="badge badge-accent num" id="vCount" style="display:none"></span></div>
+      <div class="row small" style="margin-bottom:12px"><span class="faint">In library:</span><button class="btn btn-sm" data-lib-all title="Every picked group shown">All</button><button class="btn btn-sm" data-lib-none title="Every picked group shown">None</button></div>
       <div class="group-list" id="vList">${Array.from({ length: 8 }, () => `<div class="group-item"><span class="skel" style="width:18px;height:18px"></span><span class="skel" style="flex:1"></span></div>`).join("")}</div>`,
-    foot: `<button class="btn" data-sync style="margin-right:auto">${icon("refresh")}Sync now</button><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save</button>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save</button>`,
   });
   const el = m.el;
   let data = null, kind = "movies";
@@ -339,17 +339,19 @@ async function vodModal(p) {
     if (!lib) return "";
     if (!lib.imports_ok) return `<div class="callout small">${icon("alert")}<div>${esc(lib.imports_message)}</div></div>`;
     const bits = [];
-    if (lib.running) bits.push(`<span class="badge badge-info"><span class="dot"></span>${esc(lib.running)}</span>`);
+    const running = lib.running ? `<div style="margin-bottom:6px"><span class="badge badge-info" style="white-space:normal"><span class="dot"></span>${esc(lib.running)}</span></div>` : "";
     if (lib.movies != null) bits.push(`Stream Files: ${fmtInt(lib.movies)} movies, ${fmtInt(lib.shows || 0)} shows (${fmtInt(lib.episodes || 0)} episodes)`);
     if (lib.last_sync) bits.push(`synced ${fmtAgo(new Date(lib.last_sync * 1000).toISOString())}`);
     const err = lib.error ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(lib.error)}</div>` : "";
     const note = lib.dvr_note ? `<div class="small" style="color:var(--warn);margin-top:6px">${esc(lib.dvr_note)}</div>` : "";
-    return bits.length || err || note ? `<div class="small faint">${bits.join(" · ")}</div>${err}${note}` : "";
+    const sync = `<button class="btn btn-sm" data-sync>${icon("refresh")}Sync now</button>`;
+    return `${running}<div class="row row-wrap small" style="gap:8px"><span class="faint" style="flex:1;min-width:0">${bits.join(" · ") || "Nothing in Channels DVR yet."}</span>${sync}</div>${err}${note}`;
   };
   const rows = () => (data && data[kind]) || [];
   const filtered = () => { const q = $("#vQ", el).value.trim().toLowerCase(); return q ? rows().filter((g) => g.name.toLowerCase().includes(q)) : rows(); };
   const counts = () => {
     $("#vCount", el).textContent = `${sel[kind].size} of ${rows().length} selected`;
+    $("#vCount", el).style.display = "";
     for (const k of ["movies", "series"]) {
       const b = $(`[data-n="${k}"]`, el);
       b.textContent = fmtInt(sel[k].size);
@@ -359,7 +361,7 @@ async function vodModal(p) {
   const draw = () => {
     const list = filtered();
     counts();
-    $("#vList", el).innerHTML = list.length ? list.map((g) => `<div class="group-item"><label class="vod-pick">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span></label><span class="gcount">${fmtInt(g.count)}</span>${sel[kind].has(g.name) ? switchHtml("", lib[kind].has(g.name), "In library", `data-lib="${esc(g.name)}"`) : ""}</div>`).join("")
+    $("#vList", el).innerHTML = list.length ? list.map((g) => `<div class="group-item vod-row"><label class="vod-pick">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span></label><span class="gcount">${fmtInt(g.count)}</span>${sel[kind].has(g.name) ? switchHtml("", lib[kind].has(g.name), "In library", `data-lib="${esc(g.name)}"`) : ""}</div>`).join("")
       : `<div class="empty" style="padding:28px"><p>${rows().length ? "No groups match." : `This provider has no ${kind === "movies" ? "movie" : "series"} groups.`}</p></div>`;
   };
   const fill = (d) => {
@@ -396,7 +398,8 @@ async function vodModal(p) {
   $("[data-lib-none]", el).onclick = () => { filtered().forEach((g) => lib[kind].delete(g.name)); draw(); };
   $("[data-all]", el).onclick = () => { filtered().forEach((g) => sel[kind].add(g.name)); draw(); };
   $("[data-none]", el).onclick = () => { filtered().forEach((g) => { sel[kind].delete(g.name); lib[kind].delete(g.name); }); draw(); };
-  $("[data-sync]", el).onclick = (e) => busy(e.currentTarget, async () => {
+  $("#vLib", el).onclick = (e) => { const b = e.target.closest("[data-sync]"); if (b) syncNow(b); };
+  const syncNow = (b) => busy(b, async () => {
     try {
       await api.syncVod(p.id);
       toast("Sync started", "Channels DVR picks the titles up as coax writes them.", "ok");
