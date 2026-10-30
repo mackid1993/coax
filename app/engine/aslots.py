@@ -178,7 +178,8 @@ STYPE = {"ac3": 0x81, "eac3": 0x87, "aac": 0x0F, "latm": 0x11, "mp2": 0x03, "dts
 SIDS = {"ac3": 0xBD, "eac3": 0xBD, "dts": 0xBD, "aac": 0xC0, "latm": 0xC0, "mp2": 0xC0, "pcm": 0xBD}
 DESC = {"pcm": b"\x05\x04BSSD"}   # SMPTE 302M PCM is private data with a BSSD registration
 WRAP = 1 << 33
-LAG = 45000            # silence on the video clock trails the picture by 0.5 s
+LAG = 270000           # silence on the video clock trails the picture by 3 s: audio that arrives up to 3 s behind
+                       # its pictures (a codec switch, a provider's loose interleave) still lands ahead of it
 GAP = 90000            # no frame from the playing track for 1 s of video: every input gets silence
 JUMP = 90000 * 10      # a clock jump (provider restart, wrap): an input's silence restarts there
 MAXPES = 60000
