@@ -305,13 +305,77 @@ class FfmpegArgsTest(unittest.TestCase):
             self.assertNotIn("async=1000", body, name)
 
 
-class DropChangedTest(unittest.TestCase):
-    def test_transcode_drops_changed_audio_frames(self):
+class TranscodeAudioTest(unittest.TestCase):
+    """One output audio format per DVR connection (Dolby Digital 5.1 640k, or AAC 384k with the source's channels):
+    ffmpeg rebuilds its audio filter when the provider switches between 5.1 and stereo instead of dropping frames,
+    and a slowdown scales audio timestamps from 0 like the video's so a rebuilt filter keeps the same stretch."""
+
+    def test_audio_arguments(self):
         import os
         for name in ("hlsloop", "tsloop"):
             src = open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", name + ".py")).read()
-            self.assertEqual(src.count('"-drop_changed:a", "1"'), 1, name)
+            self.assertNotIn("-drop_changed", src, name)
             self.assertNotIn("first_pts", src, name)
+            self.assertNotIn("STARTPTS", src, name)
+            self.assertIn('"-c:a", ac, "-b:a", "640k" if ac == "ac3" else "384k", "-ac", str(an), "-ar", "48000"', src, name)
+            self.assertIn('",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA)', src, name)
+
+    def test_tsloop_reconnect_quiet_time_is_a_number(self):
+        import ast
+        import os
+        tree = ast.parse(open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", "tsloop.py")).read())
+        values = [n.value for n in tree.body if isinstance(n, ast.Assign)
+                  for t in n.targets if isinstance(t, ast.Name) and t.id == "QUIET"]
+        self.assertEqual([type(v).__name__ for v in values], ["Constant"])   # never rebound to a set
+
+
+def _ts(pid, payload, start=True):
+    head = bytes([0x47, (0x40 if start else 0) | pid >> 8, pid & 0xFF, 0x10])
+    return (head + payload + b"\xff" * 184)[:188]
+
+
+def _pmt_feed(streams):
+    """PAT (program 1 on PID 0x100) and a PMT listing (stream_type, pid, descriptors) in order."""
+    pat = b"\x00" + b"\x00\xb0\x0d\x00\x01\xc1\x00\x00" + b"\x00\x01\xe1\x00" + b"\x00\x00\x00\x00"
+    es = b"".join(bytes([st, 0xE0 | pid >> 8, pid & 0xFF, 0xF0, len(d)]) + d for st, pid, d in streams)
+    n = 9 + len(es) + 4
+    pmt = b"\x00" + bytes([0x02, 0xB0 | n >> 8, n & 0xFF]) + b"\x00\x01\xc1\x00\x00\xe1\x01\xf0\x00" + es + b"\x00" * 4
+    return _ts(0, pat) + _ts(0x100, pmt)
+
+
+class BestAudioTrackTest(unittest.TestCase):
+    def setUp(self):
+        import sys
+        import os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app", "engine"))
+        import fmtprobe
+        self.fp = fmtprobe
+
+    def test_dolby_wins_over_aac_listed_first(self):
+        feed = _pmt_feed([(0x1B, 0x101, b""), (0x0F, 0x102, b""), (0x81, 0x103, b"")])
+        self.assertEqual(self.fp.best_audio(feed), 0x103)
+
+    def test_dvb_dolby_descriptor_counts_as_dolby(self):
+        feed = _pmt_feed([(0x0F, 0x102, b""), (0x06, 0x104, b"\x6a\x01\x00")])
+        self.assertEqual(self.fp.best_audio(feed), 0x104)
+
+    def test_more_channels_win_then_dolby(self):
+        def frame_feed(streams, frames):
+            return _pmt_feed(streams) + b"".join(
+                _ts(pid, b"\x00\x00\x01\xc0\x00\x00\x80\x00\x00" + f) for pid, f in frames)
+        ac3_stereo = b"\x0b\x77\x00\x00\x10\x40\x40\x00"   # bsid 8, acmod 2 (stereo), no LFE
+        adts_51 = b"\xff\xf1\x51\x80\x80\x00\x00\x00"      # channel config 6 (5.1)
+        adts_stereo = b"\xff\xf1\x50\x80\x80\x00\x00\x00"  # channel config 2
+        streams = [(0x0F, 0x102, b""), (0x81, 0x103, b"")]
+        self.assertEqual(self.fp.tracks(frame_feed(streams, [(0x102, adts_51), (0x103, ac3_stereo)])),
+                         {0x102: [False, 6], 0x103: [True, 2]})
+        self.assertEqual(self.fp.best_audio(frame_feed(streams, [(0x102, adts_51), (0x103, ac3_stereo)])), 0x102)
+        self.assertEqual(self.fp.best_audio(frame_feed(streams, [(0x102, adts_stereo), (0x103, ac3_stereo)])), 0x103)
+
+    def test_first_track_when_equal_and_none_without_pmt(self):
+        feed = _pmt_feed([(0x0F, 0x102, b""), (0x0F, 0x105, b"")])
+        self.assertEqual(self.fp.best_audio(feed), 0x102)
+        self.assertIsNone(self.fp.best_audio(_ts(0x101, b"\x00" * 10)))
 
 
 
