@@ -967,7 +967,7 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   Australia and others) use 50 or 25, since 60 or 30 there makes motion judder.
 - **Which size?** 1080p with a GPU, 720p on weak hardware or when encoding on the CPU. The bitrates match what
   IPTV providers typically send.
-- Audio is always stereo AAC at 48 kHz, 192 kbps. Interlaced sources are deinterlaced.
+- Audio is AAC at 48 kHz, 384 kbps, with the source's channels kept: 5.1 stays 5.1 and stereo stays stereo (when a feed has several audio tracks, the one with the most channels is used). Interlaced sources are deinterlaced.
 
 ### How the GPU is used
 

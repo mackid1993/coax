@@ -157,7 +157,7 @@ threads). `hlsloop.py` is the recommended path.
   both engines). **Passthrough** (that is its name; do not rename it to "remux") is `-c copy -copyts`, no GPU.
   Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
   `scale_vaapi`, `h264_vaapi`; NVIDIA CUDA decode, `bwdif_cuda`, `scale_cuda`, `h264_nvenc`), falling back to CPU
-  decode (`GPUDEC`) if GPU decode fails; audio always AAC 48 kHz stereo 192k.
+  decode (`GPUDEC`) if GPU decode fails; audio AAC 48 kHz 384k with the source's channel layout (no `-map`, so ffmpeg takes the audio track with the most channels; no `-ac`).
 - **ffmpeg flags** (pinned by `FfmpegArgsTest` and `DropChangedTest` in `tests/test_engine_adapt.py`):
   - Probe: the base `-probesize 1000000 -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s). The
     1.0.4 5 s probe and `-muxdelay 0 -muxpreload 0` were removed in 1.0.5: they were believed to fix an HE-AAC

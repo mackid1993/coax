@@ -358,7 +358,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **ffmpeg (1.0.6):** input `-dts_delta_threshold 86400 -fflags +discardcorrupt -probesize 1000000
   -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s); passthrough `-map 0:v? -map 0:a? -c copy
   -copyts`; transcode `-drop_changed:a 1 -i pipe:0 -map 0:v:0? -map 0:a:0?`, audio
-  `aresample=async=1:min_hard_comp=0.1`, AAC 192k stereo 48 kHz; output `-output_ts_offset ... -f mpegts`.
+  `aresample=async=1:min_hard_comp=0.1`, AAC 384k 48 kHz keeping the source's channels (1.0.7: the track with the most channels, 5.1 kept); output `-output_ts_offset ... -f mpegts`.
   Presets `1080p60` (6M), `1080p30`/`720p60` (4.5M), `720p30` (3M), plus 50 Hz variants. Jellyfin ffmpeg 8.1.3.
 - **Performance:** one 1080p60 VAAPI transcode about 10% of one core for the container; engine memory about
   78 MB. Overnight runs at 0% buffering on both the old profile and coax.
@@ -366,7 +366,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 338 after 1.0.6-8, about 45 s.
+- **Tests:** 342 after 1.0.7, about 50 s.
 
 ---
 
@@ -448,6 +448,14 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   tuned, guide-downloaded or offered as a backup; channels whose every stream is on it leave the playlists (a
   playing stream keeps going until the next tune). A lineup switched off serves an empty playlist, so Channels
   DVR drops its channels; they come back with the same numbers.
+- **1.0.6-9** (Oct 29) Channels page hides a provider switched off: its catalog streams, its pickers and every
+  channel whose streams are all on it.
+- **1.0.6-10** (Oct 29) lineups switched off are hidden on the Channels page and never get new channels (their
+  members are kept); with every lineup off, new channels go into a new lineup.
+- **1.0.7** (Oct 30) transcode keeps surround audio (the track with the most channels, 5.1 stays 5.1, AAC 384k).
+  Switched off means hidden: the Channels page and Status counts leave out channels that are only on providers or
+  only in lineups switched off; Status lists no lines (unless still holding a stream) or refreshes of a provider
+  switched off.
 
 ---
 
