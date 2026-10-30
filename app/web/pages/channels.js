@@ -119,7 +119,7 @@ async function reload() {
     if (!S) return;
     S.channels = channels;
     S.providers = providers;
-    S.lineups = onLineups(lineups);
+    setLineups(lineups);
     S.config = config;
     S.channelsLoaded = ok = true;
     if (draft.loaded) settleHeld(true);   // before drawing, so rows and held suggestions always match
@@ -187,10 +187,19 @@ function xmltvOnly(c) {
 // The lineup and group pickers set the scope; the counters count within it.
 // Providers switched off on the Providers page are hidden here, with every channel whose streams are all on them.
 // S.providers keeps them so names and held suggestions still resolve.
-// Lineups switched off are hidden too: no channels can be added to them (the server keeps their members).
-const onLineups = (ls) => ls.filter((l) => l.enabled !== false);
+// Lineups switched off are hidden too, with every channel that is only in lineups switched off: no channels can
+// be added to them (the server keeps their members). S.offLineups holds their ids.
+function setLineups(ls) {
+  S.lineups = ls.filter((l) => l.enabled !== false);
+  S.offLineups = new Set(ls.filter((l) => l.enabled === false).map((l) => l.id));
+}
 const onProviders = () => S.providers.filter((p) => p.enabled !== false);
-const offOnly = (c) => { const off = new Set(S.providers.filter((p) => p.enabled === false).map((p) => p.id)); return off.size > 0 && (c.streams || []).length > 0 && c.streams.every((r) => off.has(r.provider)); };
+const offOnly = (c) => {
+  const ls = lineupsOf(c);
+  if (S.offLineups?.size && ls.length && ls.every((id) => S.offLineups.has(id))) return true;
+  const off = new Set(S.providers.filter((p) => p.enabled === false).map((p) => p.id));
+  return off.size > 0 && (c.streams || []).length > 0 && c.streams.every((r) => off.has(r.provider));
+};
 const inScope = (c) => !offOnly(c) && (!S.lineup || lineupsOf(c).includes(S.lineup)) && (!S.group || (c.group || "") === S.group);
 function visibleChannels() {
   const q = S.q.trim().toLowerCase();
@@ -472,7 +481,7 @@ function backupsCell(c, p) {
   return `<div class="bchips"><button class="btn btn-sm edit-bk" data-act="streams" aria-label="Edit backup streams for ${esc(c.name)}" data-pop="Edit backups" data-pop-sub="Add, search, reorder or remove backup streams" data-pop-always>${icon("layers")}Backups</button>${chips}${more}${pend}${none}</div>`;
 }
 function lineupCell(c) {
-  const ids = lineupsOf(c);
+  const ids = lineupsOf(c).filter((id) => !S.offLineups?.has(id));
   const chips = ids.map((id) => {
     const l = S.lineups.find((x) => x.id === id);
     return `<span class="lchip">${esc(l?.name || id)}</span>`;
@@ -1268,7 +1277,7 @@ function lineupModal(ids) {
         c.lineups = r?.lineups || [...cur];
       }
       invalidate("lineups");
-      S.lineups = onLineups(await loadLineups(true).catch(() => S.lineups));
+      try { setLineups(await loadLineups(true)); } catch {}
       toast("Lineups updated", "", "ok", 2000);
       m.close();
       renderFrame();

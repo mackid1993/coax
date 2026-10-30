@@ -97,3 +97,21 @@ class LineupOffTests(ApiTestCase):
         self.assertEqual(status, 200)
         lineups = {l["id"]: (l["enabled"], l["channels"]) for l in self.store.get()["lineups"]}
         self.assertEqual(lineups, {"main": (False, []), "main-2": (True, [created["id"]])})
+
+
+class StatusTests(ApiTestCase):
+    def test_status_leaves_out_what_is_switched_off(self):
+        self.add_provider()
+        self.add_provider(name="Provider B")
+        self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p1", "stream_id": "1"}]})
+        self.request("POST", "/api/channels/bulk-add", {"streams": [{"provider": "p2", "stream_id": "2"}]})
+        self.request("POST", "/api/channels", {"name": "Test only"})
+        self.request("POST", "/api/lineups", {"name": "Test", "channels": [3]})
+        self.request("PUT", "/api/channels/3", {"lineups": ["test"]})
+        status = self.request("GET", "/api/status")[1]
+        self.assertEqual((status["channels"]["total"], len(status["lines"])), (3, 2))
+        self.request("PUT", "/api/providers/p2", {"enabled": False})
+        self.request("PUT", "/api/lineups/test", {"enabled": False})
+        status = self.request("GET", "/api/status")[1]
+        self.assertEqual(status["channels"]["total"], 1)
+        self.assertEqual([l["provider"] for l in status["lines"]], ["p1"])

@@ -2194,13 +2194,15 @@ class Handler(BaseHTTPRequestHandler):
                 sessions = hub.status() or []
             except Exception as exc:  # noqa: BLE001
                 log.warning("hub status failed: %s", exc)
+        off = {p["id"] for p in cfg["providers"] if p.get("enabled", True) is False}
+        shown = [c for c in cfg["channels"] if not switched_off(cfg, c, off)]
         return {
             "uptime": round(time.time() - self.app.started, 1),
             "hub_running": hub is not None,
             "sessions": sessions,
             "lines": line_usage(cfg, hub, sessions),
-            "refresh": self.app.refresh_status(),
-            "channels": {"total": len(cfg["channels"]), "enabled": sum(1 for c in cfg["channels"] if c["enabled"])},
+            "refresh": {pid: r for pid, r in self.app.refresh_status().items() if pid not in off},
+            "channels": {"total": len(shown), "enabled": sum(1 for c in shown if c["enabled"])},
         }
 
     def h_log(self):
@@ -2245,6 +2247,16 @@ def fallback_stream_urls(cfg, channel):
     return urls
 
 
+def switched_off(cfg, channel, off):
+    """A channel hidden because of the on/off switches: every stream is on a provider switched off, or it is only in
+    lineups switched off. off is the set of provider ids switched off."""
+    refs = channel.get("streams") or []
+    if refs and all(str(r.get("provider")) in off for r in refs):
+        return True
+    mine = [l for l in cfg["lineups"] if channel["id"] in l["channels"]]
+    return bool(mine) and all(l.get("enabled", True) is False for l in mine)
+
+
 def line_usage(cfg, hub, sessions):
     """Every line with used/max slots and which channels hold them.
 
@@ -2272,6 +2284,8 @@ def line_usage(cfg, hub, sessions):
     for provider in cfg["providers"]:
         for line in provider["lines"]:
             holders = held.get((provider["id"], line["id"]), [])
+            if provider.get("enabled", True) is False and not holders:
+                continue   # switched off: shown only while a stream that started before still holds the line
             out.append({"provider": provider["id"], "provider_name": provider["name"], "line": line["id"],
                         "line_name": line["name"], "max": line["max_streams"], "used": len(holders),
                         "channels": holders})
