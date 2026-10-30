@@ -125,6 +125,13 @@ class XtreamTests(unittest.TestCase):
             xtream.get_live_categories(provider)
         self.assertNotIn("secret1", str(ctx.exception))
 
+    def test_plan_expiry(self):
+        for value, want in ((None, None), ("null", None), ("", None), ("0", None), (0, None), ("-1", None),
+                            ("1", None), ("unlimited", None), ("inf", None), ("1798675200", 1798675200),
+                            (1798675200, 1798675200), ("1798675200.0", 1798675200), ("1798675200000", 1798675200),
+                            ("2026-12-01 00:00:00", 1796083200), ("2026-12-01", 1796083200)):
+            self.assertEqual(xtream.expiry(value), want, value)
+
     def test_auth_zero_raises(self):
         self.fake.set("get_live_streams", (200, {}, b'{"user_info": {"auth": 0}}'))
         with self.assertRaises(ProviderError):

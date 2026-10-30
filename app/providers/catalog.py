@@ -131,8 +131,11 @@ def refresh(provider):
             # never be auto-added. A panel that never had categories still refreshes.
             raise ProviderError("provider returned no categories; keeping the previous list")
         catalog = {"fetched_at": now_iso(), "groups": fresh["groups"], "streams": fresh["streams"]}
-        if fresh.get("expires"):
-            catalog["expires"] = fresh["expires"]   # Xtream plan expiry (Unix time)
+        expires = fresh.get("expires")
+        if "expires" not in fresh and (provider.get("type") or "xtream").lower() == "xtream":
+            expires = (previous or {}).get("expires")   # the expiry read failed this time: keep the last one
+        if expires:
+            catalog["expires"] = expires   # Xtream plan expiry (Unix time)
         atomic_write_json(cache_path(provider_id), catalog)
 
     report = diff(previous, catalog, provider.get("groups") or [])

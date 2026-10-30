@@ -8,6 +8,7 @@ normalized to plain strings before it reaches the catalog.
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from urllib.parse import quote, urlencode
 
 import requests
@@ -20,6 +21,8 @@ log = logging.getLogger("coax.providers")
 UNCATEGORIZED = "Uncategorized"
 # Overall wall-clock limit per player_api.php call, on top of the per-read timeout.
 API_DEADLINE = 120
+EXPIRY_DEADLINE = 10   # the plan expiry read at a catalog refresh: a slow answer must not hold the refresh (the
+                       # last read can run past it by up to its own timeout, so about 20 s at worst)
 
 
 def base_url(server):
@@ -86,14 +89,14 @@ def to_int(value, default=0):
         return default
 
 
-def _api(provider, action=None):
+def _api(provider, action=None, limit=None):
     """Call player_api.php with the first line's credentials and return parsed JSON."""
     line = first_line(provider)
     params = {"username": line.get("username") or "", "password": line.get("password") or ""}
     if action:
         params["action"] = action
     label = "Xtream %s" % (action or "account info")
-    deadline = time.monotonic() + API_DEADLINE
+    deadline = time.monotonic() + (API_DEADLINE if limit is None else limit)
     resp = get(base_url(line_server(provider, line)) + "/player_api.php", provider, params=params, label=label,
                stream=True, deadline=deadline)
     try:
@@ -139,9 +142,9 @@ def _as_list(data, label):
     raise ProviderError("%s returned an unexpected response" % label)
 
 
-def account_info(provider):
+def account_info(provider, limit=None):
     """Fetch account info for "test connection". Raises ProviderError on a rejected login."""
-    data = _api(provider)
+    data = _api(provider, limit=limit)
     if not isinstance(data, dict) or not isinstance(data.get("user_info"), dict):
         raise ProviderError("Xtream account info: login rejected or unexpected response")
     _check_auth(data, "Xtream account info")
@@ -157,6 +160,26 @@ def account_info(provider):
         "timezone": text(server.get("timezone")),
         "server_url": text(server.get("url")),
     }
+
+
+def expiry(value):
+    """A plan's exp_date as Unix seconds, or None when the panel reports none (null, 0, unlimited) or a value
+    that cannot be a date: a sentinel such as -1 or 1, milliseconds are converted, a date string is read as UTC."""
+    value = text(value)
+    try:
+        n = float(value)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return int(datetime.strptime(value, fmt).replace(tzinfo=timezone.utc).timestamp())
+            except ValueError:
+                pass
+        return None
+    if n != n or n in (float("inf"), float("-inf")):
+        return None
+    if n > 1e11:
+        n /= 1000                        # milliseconds
+    return int(n) if 1e9 <= n < 1e11 else None   # 2001 to 5138: anything else is not a real date
 
 
 def get_live_categories(provider):
@@ -224,11 +247,12 @@ def fetch_catalog(provider):
             "tvg_id": item["epg_channel_id"],
             "num": item.get("num") or "",
         })
-    try:   # the plan's expiry for the provider card; panels without one (or a failed answer) just leave it out
-        expires = to_int(account_info(provider).get("exp_date")) or None
+    out = {"groups": groups, "streams": result, "categories_missing": categories_missing}
+    try:   # the plan's expiry for the provider card (None: the panel reports none); a failed read leaves the key out
+        out["expires"] = expiry(account_info(provider, limit=EXPIRY_DEADLINE).get("exp_date"))
     except Exception:  # noqa: BLE001
-        expires = None
-    return {"groups": groups, "streams": result, "categories_missing": categories_missing, "expires": expires}
+        log.info("provider %s: plan expiry not read this refresh; keeping the last one", provider.get("id"))
+    return out
 
 
 def line_server(provider, line):

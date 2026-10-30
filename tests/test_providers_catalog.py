@@ -85,6 +85,23 @@ class CatalogTests(CatalogTestCase):
             catalog.refresh(self.provider)
         self.assertEqual(catalog.load("p1"), before)
 
+    def test_plan_expiry_is_kept_when_its_read_fails(self):
+        self.set_streams(("1", "A", "1"))
+        self.fake.set("account", (200, {}, b'{"user_info": {"auth": 1, "exp_date": "1798675200"}}'))
+        self.assertEqual(catalog.refresh(self.provider)["expires"], 1798675200)
+        self.fake.set("account", (500, {}, b"down"))
+        self.assertEqual(catalog.refresh(self.provider)["expires"], 1798675200)
+        self.fake.set("account", (200, {}, b'{"user_info": {"auth": 1, "exp_date": null}}'))
+        self.assertNotIn("expires", catalog.refresh(self.provider))
+
+    def test_a_provider_switched_to_m3u_drops_its_plan_expiry(self):
+        self.set_streams(("1", "A", "1"))
+        self.fake.set("account", (200, {}, b'{"user_info": {"auth": 1, "exp_date": "1798675200"}}'))
+        catalog.refresh(self.provider)
+        with mock.patch.object(catalog, "fetch", return_value={"groups": ["News"], "streams": [
+                {"stream_id": "1", "name": "A", "group": "News", "logo": "", "tvg_id": "", "url": "http://x/1"}]}):
+            self.assertNotIn("expires", catalog.refresh(dict(self.provider, type="m3u")))
+
     def test_empty_categories_keep_a_catalog_with_named_groups(self):
         self.set_streams(("1", "A", "1"))
         catalog.refresh(self.provider)

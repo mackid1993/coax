@@ -97,6 +97,7 @@ def test_connection(provider):
             parsed = m3u.download(provider)
             return {"ok": True, "streams": len(parsed["entries"])}
         info = xtream.account_info(provider)
+        info["expires"] = xtream.expiry(info["exp_date"])   # Unix seconds, or None (none reported, or not a date)
         info["ok"] = info["status"].lower() == "active"
         if not info["ok"]:
             info["error"] = "account status is %s" % info["status"]

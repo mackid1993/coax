@@ -55,7 +55,7 @@ function cardHtml(p) {
   const host = p.type === "m3u" ? p.m3u_url : p.server;
   const on = p.enabled !== false;
   // Xtream plan expiry, when the panel reports one: warns in the last week, red once it has passed.
-  const exp = Number(cat.expires) ? new Date(Number(cat.expires) * 1000) : null;
+  const exp = Number(cat.expires) > 0 ? new Date(Number(cat.expires) * 1000) : null;
   const days = exp ? (exp - Date.now()) / 864e5 : null;
   const expires = exp ? `<span class="badge ${days < 0 ? "badge-bad" : days < 7 ? "badge-warn" : ""}" title="Plan expiry reported by the provider">${days < 0 ? "Expired" : "Expires"} ${esc(exp.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }))}</span>` : "";
   return `<article class="card provider-card${on ? "" : " is-off"}" data-id="${esc(p.id)}">
@@ -156,7 +156,7 @@ function showTest(r) {
   const bits = [];
   if (r.status) bits.push(`status ${r.status}`);
   if (r.max_connections != null) bits.push(`${r.active_connections ?? r.active_cons ?? 0}/${r.max_connections} connections`);
-  if (r.exp_date) { const d = Number(r.exp_date) ? new Date(Number(r.exp_date) * 1000) : new Date(r.exp_date); if (!isNaN(d)) bits.push(`expires ${d.toLocaleDateString()}`); }
+  if (Number(r.expires) > 0) bits.push(`expires ${new Date(Number(r.expires) * 1000).toLocaleDateString()}`);
   if (r.streams != null) bits.push(`${fmtInt(r.streams)} streams`);
   toast("Connection OK", bits.join(" · ") || r.message || "connected", "ok", 6000);
 }
