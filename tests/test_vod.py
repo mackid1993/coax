@@ -383,8 +383,10 @@ class LibraryTests(unittest.TestCase):
                 return [{"id": "f%d" % i, "path": "/tv/DVR/Imports/" + rel} for i, rel in enumerate(sorted(dvr_files))
                         if rel.startswith("Movies/")]
             if path.startswith("/api/v1/episodes"):
-                return [{"id": "x", "show_id": "g1", "path": "/tv/DVR/Imports/" + rel} for rel in dvr_files
-                        if rel.startswith("TV/")]
+                return [{"id": "e%d" % i, "show_id": "g1", "path": "/tv/DVR/Imports/" + rel}
+                        for i, rel in enumerate(sorted(dvr_files)) if rel.startswith("TV/")]
+            if path == "/dvr/groups/g1":
+                return {"ID": "g1", "FileID": ["e2", "e3"]}
             if path == "/dvr/collections/content":
                 return [{"ID": c, "Name": "", "Items": []} for c in made]
             if path == "/dvr/custom_sections":
@@ -417,6 +419,13 @@ class LibraryTests(unittest.TestCase):
             names = [b["Name"] for m, p, b in calls if p == "/dvr/collections/content/new"]
             self.assertEqual(names, ["TPS · Action", "TPS · 4K", "TPS · Drama"])
             self.assertEqual([r["ParentID"] for r in sections[0]["Rows"]], ["1", "2", "3"])
+            hidden = sorted(p for m, p, b in calls if p.endswith("/visibility/hidden"))
+            self.assertEqual(hidden, ["/dvr/files/e2/visibility/hidden", "/dvr/files/e3/visibility/hidden",
+                                      "/dvr/files/f0/visibility/hidden", "/dvr/files/f1/visibility/hidden",
+                                      "/dvr/groups/g1/visibility/hidden"])
+            calls.clear()
+            lib.sync("p2")   # already hidden: nothing asked again
+            self.assertFalse([p for m, p, b in calls if p.endswith("/visibility/hidden")])
             # picks cleared: files, collections and section go; the user's own file stays
             self.provider["vod"] = {"movies": [], "series": []}
             lib.sync("p2")

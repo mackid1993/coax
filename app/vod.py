@@ -12,8 +12,8 @@ stays out of the DVR, and every play goes through coax, which holds a line slot 
 scanner reads the files only; it never opens the address.
 
 After writing, coax asks the DVR to scan (and to prune what it deleted), then keeps one DVR collection per picked
-group and one Personal Section per provider showing them, so the provider's titles are easy to find apart from the
-user's own library. The sync runs when the picks change and on the provider's refresh schedule (default daily).
+group and one Personal Section per provider showing them. The titles themselves are set to Hidden, so they stay out
+of the main Movies and TV Shows listings and the user's own library: the provider's titles live in their section. The sync runs when the picks change and on the provider's refresh schedule (default daily).
 Nothing outside Movies/coax and TV/coax is ever written or removed.
 """
 
@@ -192,25 +192,52 @@ class Library:
         return False
 
     def _dvr_ids(self, cfg, pid):
-        """DVR ids of this provider's imported files: {relative path: file id} and {relative path: show id}."""
-        movies, shows = {}, {}
+        """DVR ids of this provider's imported files: {relative path: file id} for movies, and
+        {relative path: (file id, show id)} for episodes."""
+        movies, episodes = {}, {}
         mark = "Imports/"
-        for kind, out, field in (("movies", movies, "id"), ("episodes", shows, "show_id")):
+        for kind in ("movies", "episodes"):
             for item in self._call(cfg, "GET", "/api/v1/%s?source=stream-files" % kind, timeout=300) or []:
                 path = str(item.get("path") or "")
                 at = path.find(mark)
                 if at < 0:
                     continue
                 rel = path[at + len(mark):]
-                if rel.startswith(("Movies/%s/%s/" % (SUBDIR, pid), "TV/%s/%s/" % (SUBDIR, pid))):
-                    out[rel] = str(item.get(field) or "")
-        return movies, shows
+                if not rel.startswith(("Movies/%s/%s/" % (SUBDIR, pid), "TV/%s/%s/" % (SUBDIR, pid))):
+                    continue
+                if kind == "movies":
+                    movies[rel] = str(item.get("id") or "")
+                else:
+                    episodes[rel] = (str(item.get("id") or ""), str(item.get("show_id") or ""))
+        return movies, episodes
+
+    def _hide(self, cfg, pid, movie_ids, episodes):
+        """Keep the provider's titles out of the main Movies and TV Shows listings: they live in their collections
+        and section. Each movie and episode is set to Hidden once (Channels keeps it). A show is hidden as a whole
+        only when every one of its files is coax's; a show of the user's own with coax episodes in it stays."""
+        st = self._pstate(pid)
+        done = set(st.get("hidden") or [])
+        files = set(movie_ids.values()) | {fid for fid, _show in episodes.values()}
+        for fid in sorted(files - done):
+            self._call(cfg, "PUT", "/dvr/files/%s/visibility/hidden" % fid)
+            done.add(fid)
+        shows_done = set(st.get("hidden_shows") or [])
+        mine = {fid for fid, _show in episodes.values()}
+        for show in sorted({show for _fid, show in episodes.values() if show} - shows_done):
+            group = self._call(cfg, "GET", "/dvr/groups/%s" % show) or {}
+            if set(str(f) for f in group.get("FileID") or []) <= mine:
+                self._call(cfg, "PUT", "/dvr/groups/%s/visibility/hidden" % show)
+            shows_done.add(show)
+        st["hidden"] = sorted(done & files)
+        st["hidden_shows"] = sorted(shows_done & {show for _fid, show in episodes.values()})
 
     def _collections(self, cfg, provider, members):
         """One DVR collection per picked group, one Personal Section with a row for each."""
         pid = provider["id"]
         st = self._pstate(pid)
-        movie_ids, show_ids = self._dvr_ids(cfg, pid)
+        movie_ids, episodes = self._dvr_ids(cfg, pid)
+        show_ids = {rel: show for rel, (_fid, show) in episodes.items()}
+        self._hide(cfg, pid, movie_ids, episodes)
         existing = {str(c.get("ID")): c for c in self._call(cfg, "GET", "/dvr/collections/content") or []}
         kept = {}
         rows = []
