@@ -500,6 +500,12 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **1.0.7-9** (Oct 30) the upmix no longer generates an LFE channel (`lfe=0`): at about 29 dB down plus the
   receiver's +10 dB LFE gain it drove the owner's sub hot on ads (heard as clipping). Nothing clipped digitally
   (upmix peaks 3 dB under the source; loudness about 2 dB under the stereo).
+- **1.0.7-10** (Oct 30) PCM fallback on: formats with no open input are decoded by a helper ffmpeg to 5.1 SMPTE
+  302M PCM on a fixed input (no restart). It had left 10 s holes offline: other inputs were not moved along
+  during PCM, `-fflags nobuffer` dropped the helper's probed frames, a 32 KB probe delayed its start 0.8 s, and
+  its tail was sent after the next audio. Paced like the engine, rare formats (AC-3 3.0, 44.1 kHz) and a six-codec
+  chain now play with no gaps and no restarts; an unpaced burst at the switch can still leave about 0.3 s. Also: an
+  E-AC-3 parser crash on short buffers, ID3 in encoder planning, and the From provider line follows the audio.
 
 ---
 
