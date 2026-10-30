@@ -21,6 +21,8 @@ export const routes = {
   providerTest: (id) => `/api/providers/${enc(id)}/test`,
   providerRefresh: (id) => `/api/providers/${enc(id)}/refresh?wait=1`,
   providerGroups: (id) => `/api/providers/${enc(id)}/groups`,
+  providerVod: (id, refresh) => `/api/providers/${enc(id)}/vod${refresh ? "?refresh=1" : ""}`,
+  providerVodSync: (id) => `/api/providers/${enc(id)}/vod/sync`,
   // {provider, group, q, offset, limit, all_groups}
   streams: (p) => `/api/catalog/streams${qs(p)}`,
   channels: () => "/api/channels",
@@ -120,6 +122,9 @@ export const api = {
   refreshProvider: (id) => post(routes.providerRefresh(id), { wait: true }, { timeout: 300000 }),
   getGroups: (id) => get(routes.providerGroups(id), { timeout: 120000 }),
   setGroups: (id, groups) => put(routes.providerGroups(id), { groups }),
+  getVod: (id, refresh = false) => get(routes.providerVod(id, refresh), { timeout: 600000 }),
+  setVod: (id, picks) => put(routes.providerVod(id), picks, { timeout: 600000 }),
+  syncVod: (id) => post(routes.providerVodSync(id), {}),
 
   streams: (params) => get(routes.streams(params)),
 

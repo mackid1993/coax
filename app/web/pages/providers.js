@@ -73,6 +73,7 @@ function cardHtml(p) {
         <button class="btn btn-sm" data-act="test">${icon("plug")}Test</button>
         <button class="btn btn-sm" data-act="refresh">${icon("refresh")}Refresh</button>
         <button class="btn btn-sm" data-act="groups">${icon("filter")}Groups</button>
+        <button class="btn btn-sm" data-act="vod">${icon("film")}On demand</button>
         <button class="btn btn-sm btn-ghost btn-icon" data-act="edit" aria-label="Edit ${esc(p.name)}">${icon("edit")}</button>
         <button class="btn btn-sm btn-ghost btn-icon btn-danger" data-act="delete" aria-label="Delete ${esc(p.name)}">${icon("trash")}</button>
       </div>
@@ -96,6 +97,7 @@ async function onClick(e) {
     case "add": editModal(null); break;
     case "edit": editModal(p); break;
     case "groups": groupsModal(p); break;
+    case "vod": vodModal(p); break;
     case "test":
       busy(a, async () => {
         try { showTest(await api.testProvider(p.id)); } catch (err) { toastError(`Test failed: ${p.name}`, err); }
@@ -308,5 +310,92 @@ async function groupsModal(p) {
       m.close();
       await load();
     } catch (err) { toastError("Could not save groups", err); }
+  });
+}
+
+// ---------- Video on demand ----------
+// The provider's movie and series groups. Picked groups go to Channels DVR as Stream Files (Movies and TV Shows),
+// with a collection per group and a section for the provider; played straight from the provider through coax.
+async function vodModal(p) {
+  const m = openModal({
+    title: `On demand · ${p.name}`,
+    wide: true,
+    body: `<p class="muted small" style="margin-bottom:10px">Pick the movie and series groups to bring into Channels DVR. They show up in Movies and TV Shows, with a collection for each group and a <b>${esc(p.name)}</b> section that holds them all. New titles the provider adds to a picked group follow on the provider's refresh schedule. Videos play exactly as the provider sends them, through coax, never transcoded.</p>
+      <div id="vLib" style="margin-bottom:12px"></div>
+      <div class="tabs" role="tablist" id="vTabs"><button role="tab" data-kind="movies" aria-selected="true">Movies <span class="badge num" data-n="movies"></span></button><button role="tab" data-kind="series" aria-selected="false">Series <span class="badge num" data-n="series"></span></button></div>
+      <div class="row row-wrap" style="margin-bottom:12px">
+        <label class="search" style="flex:1;min-width:220px"><span class="sr-only">Search groups</span>${icon("search")}<input class="input" id="vQ" placeholder="Search groups"></label>
+        <button class="btn btn-sm" data-all>Select all</button><button class="btn btn-sm" data-none>Select none</button>
+        <span class="badge badge-accent num" id="vCount"></span></div>
+      <div class="group-list" id="vList">${Array.from({ length: 8 }, () => `<div class="group-item"><span class="skel" style="width:18px;height:18px"></span><span class="skel" style="flex:1"></span></div>`).join("")}</div>`,
+    foot: `<button class="btn" data-sync style="margin-right:auto">${icon("refresh")}Sync now</button><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save</button>`,
+  });
+  const el = m.el;
+  let data = null, kind = "movies";
+  const sel = { movies: new Set(), series: new Set() };
+  const libHtml = (lib) => {
+    if (!lib) return "";
+    if (!lib.imports_ok) return `<div class="callout small">${icon("alert")}<div>${esc(lib.imports_message)}</div></div>`;
+    const bits = [];
+    if (lib.running) bits.push(`<span class="badge badge-info"><span class="dot"></span>${esc(lib.running)}</span>`);
+    if (lib.movies != null) bits.push(`Stream Files: ${fmtInt(lib.movies)} movies, ${fmtInt(lib.shows || 0)} shows (${fmtInt(lib.episodes || 0)} episodes)`);
+    if (lib.last_sync) bits.push(`synced ${fmtAgo(new Date(lib.last_sync * 1000).toISOString())}`);
+    const err = lib.error ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(lib.error)}</div>` : "";
+    const note = lib.dvr_note ? `<div class="small" style="color:var(--warn);margin-top:6px">${esc(lib.dvr_note)}</div>` : "";
+    return bits.length || err || note ? `<div class="small faint">${bits.join(" · ")}</div>${err}${note}` : "";
+  };
+  const rows = () => (data && data[kind]) || [];
+  const filtered = () => { const q = $("#vQ", el).value.trim().toLowerCase(); return q ? rows().filter((g) => g.name.toLowerCase().includes(q)) : rows(); };
+  const counts = () => {
+    $("#vCount", el).textContent = `${sel[kind].size} of ${rows().length} selected`;
+    for (const k of ["movies", "series"]) {
+      const b = $(`[data-n="${k}"]`, el);
+      b.textContent = fmtInt(sel[k].size);
+      b.style.display = sel[k].size ? "" : "none";
+    }
+  };
+  const draw = () => {
+    const list = filtered();
+    counts();
+    $("#vList", el).innerHTML = list.length ? list.map((g) => `<label class="group-item">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span><span class="gcount">${fmtInt(g.count)}</span></label>`).join("")
+      : `<div class="empty" style="padding:28px"><p>${rows().length ? "No groups match." : `This provider has no ${kind === "movies" ? "movie" : "series"} groups.`}</p></div>`;
+  };
+  const fill = (d) => {
+    data = d;
+    for (const k of ["movies", "series"]) sel[k] = new Set((d[k] || []).filter((g) => g.selected).map((g) => g.name));
+    $("#vLib", el).innerHTML = libHtml(d.library);
+    draw();
+  };
+  try {
+    fill(await api.getVod(p.id));
+  } catch (err) {
+    $("#vList", el).innerHTML = `<div class="empty" style="padding:28px">${icon("alert", 'style="width:28px;height:28px;color:var(--bad)"')}<p>${esc(err.message)}</p></div>`;
+    return;
+  }
+  $("#vTabs", el).onclick = (e) => {
+    const b = e.target.closest("[data-kind]");
+    if (!b) return;
+    kind = b.dataset.kind;
+    $$("#vTabs [role=tab]", el).forEach((t) => t.setAttribute("aria-selected", String(t === b)));
+    draw();
+  };
+  $("#vQ", el).addEventListener("input", debounce(draw, 80));
+  $("#vList", el).addEventListener("change", (e) => { const g = e.target.dataset.g; if (g == null) return; e.target.checked ? sel[kind].add(g) : sel[kind].delete(g); counts(); });
+  $("[data-all]", el).onclick = () => { filtered().forEach((g) => sel[kind].add(g.name)); draw(); };
+  $("[data-none]", el).onclick = () => { filtered().forEach((g) => sel[kind].delete(g.name)); draw(); };
+  $("[data-sync]", el).onclick = (e) => busy(e.currentTarget, async () => {
+    try {
+      await api.syncVod(p.id);
+      toast("Sync started", "Channels DVR picks the titles up as coax writes them.", "ok");
+    } catch (err) { toastError("Could not start the sync", err); }
+  });
+  $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
+    try {
+      const picks = {};
+      for (const k of ["movies", "series"]) picks[k] = (data[k] || []).map((g) => g.name).filter((n) => sel[k].has(n));
+      await api.setVod(p.id, picks);
+      toast("On demand saved", `${picks.movies.length} movie and ${picks.series.length} series group${picks.series.length === 1 ? "" : "s"}. Channels DVR fills in as coax writes them.`, "ok");
+      m.close();
+    } catch (err) { toastError("Could not save", err); }
   });
 }

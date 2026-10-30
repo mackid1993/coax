@@ -51,6 +51,7 @@ const P = {
   arrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   filter: '<path d="M4 5h16l-6 8v6l-4-2v-4z"/>',
+  film: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
 };
 export function icon(name, extra = "") {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${P[name] || ""}</svg>`;
