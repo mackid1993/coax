@@ -289,3 +289,24 @@ class LookupFixTests(unittest.TestCase):
 
     def test_nyc_is_new_york(self):
         self.assertEqual(gracenote.tokens("News12+ New York"), gracenote.tokens("News 12+ NYC"))
+
+
+class DeepSearchTests(unittest.TestCase):
+    def test_queries_cover_spellings(self):
+        qs = [q.lower() for q in gracenote.deep_queries("US: News12+ New York")]
+        self.assertIn("news12+ nyc", qs)
+        self.assertIn("news 12+ nyc", qs)
+        self.assertNotIn("york", qs)
+        self.assertLessEqual(len(qs), gracenote.DEEP_MAX_QUERIES)
+        self.assertIn("gustotv", [q.lower() for q in gracenote.deep_queries("Gusto TV")])
+
+    def test_deep_search_finds_station_only_one_spelling_returns(self):
+        def fake(url, q):
+            if "nyc" in q.lower():
+                return [{"station_id": "112734", "call_sign": "N12PNYC", "name": "News 12+ NYC", "type": "Cable Only",
+                         "affiliate": "", "logo": "", "langs": ["en"], "lineups": [], "countries": [], "outside": True}]
+            return [{"station_id": "49603", "call_sign": "SNY", "name": "SportsNet New York", "type": "Cable Only",
+                     "affiliate": "", "logo": "", "langs": ["en"], "lineups": [], "countries": [], "outside": True}]
+        out = gracenote.deep_search(CDVR, "News12+ New York", search_fn=fake)
+        self.assertEqual(out[0]["station_id"], "112734")
+        self.assertTrue(all(c["reason"].startswith("deep search") for c in out))

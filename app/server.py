@@ -1612,7 +1612,9 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning("gracenote: local lineup search failed: %s", exc)
         if self.query.get("local") != "1" and len(query) >= 2:
             try:
-                wide = gracenote.search(cdvr, query)
+                # deep=1: the fuzzy fallback (many spellings, ranked), for channels normal search cannot find.
+                wide = gracenote.deep_search(cdvr, query) if self.query.get("deep") == "1" \
+                    else gracenote.search(cdvr, query)
             except Exception as exc:  # noqa: BLE001
                 problem = "Channels DVR search failed: %s" % exc
         seen = {s["station_id"] for s in local}

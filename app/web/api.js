@@ -36,7 +36,7 @@ export const routes = {
   automatchStart: () => "/api/automatch/start",
   automatchJob: (result) => `/api/automatch/job${result ? "?result=1" : ""}`,
   suggestions: () => "/api/suggestions",
-  gracenoteSearch: (q, local) => `/api/gracenote/search${qs(local ? { q, local: 1 } : { q })}`,
+  gracenoteSearch: (q, local, deep) => `/api/gracenote/search${qs(local ? { q, local: 1 } : deep ? { q, deep: 1 } : { q })}`,
   gracenoteSuggest: (p) => `/api/gracenote/suggest${qs(p)}`,
   gracenoteBulkSuggest: () => "/api/gracenote/bulk-suggest",
   xmltvIds: (provider, q, limit = 200, context = "") => `/api/xmltv/ids${qs({ provider, q, limit, context })}`,
@@ -146,7 +146,7 @@ export const api = {
   // {channels: [{id, guide: {...}, streams: [...]}]}
   applyChannels: (channels) => post(routes.channelsApply(), { channels }, { timeout: 60000 }),
 
-  gracenoteSearch: async (q, local = false) => list(await get(routes.gracenoteSearch(q, local), { timeout: local ? 15000 : 30000 }), "results"),
+  gracenoteSearch: async (q, local = false, deep = false) => list(await get(routes.gracenoteSearch(q, local, deep), { timeout: local ? 15000 : deep ? 90000 : 30000 }), "results"),
   gracenoteSuggest: (p) => get(routes.gracenoteSuggest(p), { timeout: 60000 }),
   xmltvIds: async (provider, q, context = "") => list(await get(routes.xmltvIds(provider, q, 200, context)), "items"),
 

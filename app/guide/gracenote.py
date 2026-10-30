@@ -764,3 +764,89 @@ def bulk_suggest(channels, cdvr_url="", index=None, countries=None, limit=5,
             except Exception:  # noqa: BLE001
                 pass
     return results
+
+
+# ----------------------------------------------------------------------
+# Deep search (opt-in fallback)
+# ----------------------------------------------------------------------
+
+# Spelling variants Gracenote names use; each side is tried for the other.
+SWAPS = [("new york", "nyc"), ("+", " plus"), (" plus", "+"), ("&", " and "), (" and ", " & "),
+         ("television", "tv"), (" tv", ""), ("network", ""), ("channel", ""), ("east", ""), ("hd", "")]
+DEEP_MAX_QUERIES = 24
+
+
+def deep_queries(text):
+    """Every reasonable way Gracenote might spell a channel, best first, at most DEEP_MAX_QUERIES.
+
+    Gracenote search only returns stations whose names contain all the query words (about 10 at most, in a
+    fixed order), so a missing or extra word hides the station. This tries the name, its spelling variants,
+    the run-together form, word pairs and single distinctive words."""
+    base = clean_query(search_phrase(text)) or clean_query(text)
+    out = []
+
+    def add(q):
+        q = re.sub(r"\s+", " ", q).strip(" -:|")
+        if len(q) >= 2 and q.lower() not in (x.lower() for x in out):
+            out.append(q)
+
+    add(base)
+    low = base.lower()
+    split = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", low)      # News12 -> News 12
+    for form in (low, split):
+        add(form)
+        for a, b in SWAPS:                                                 # NYC for New York, + for Plus ...
+            if a in form:
+                add(re.sub(re.escape(a), b, form))
+    add(re.sub(r"[^a-z0-9]", "", low))                                     # GustoTV
+    # Multi-word places count as one word, so "new york" is never split into "new" and "york".
+    words = [w.replace("_", " ") for w in re.findall(r"[a-z0-9+_]+", re.sub(r"\bnew york\b", "new_york", split))
+             if w not in DROP_WORDS]
+
+    def useful(ws):
+        return any(len(w) >= 4 and w not in GENERIC and not w.isdigit() for w in ws)
+
+    if len(words) > 1:
+        for i in range(len(words)):                                        # drop one word at a time
+            rest = words[:i] + words[i + 1:]
+            if useful(rest):
+                add(" ".join(rest))
+    for w in sorted(words, key=len, reverse=True):                         # single distinctive words
+        if useful([w]) and " " not in w:
+            add(w)
+    return out[:DEEP_MAX_QUERIES]
+
+
+def deep_search(cdvr_url, text, limit=40, search_fn=None, workers=6):
+    """Fuzzy fallback for a channel that normal matching cannot find: run every deep_queries() form, merge,
+    and rank by name similarity times language (US English first). Slower: up to DEEP_MAX_QUERIES requests."""
+    search_fn = search_fn or search
+    queries = deep_queries(text)
+
+    def one(q):
+        try:
+            return search_fn(cdvr_url, q)
+        except GracenoteUnreachable:
+            raise
+        except GracenoteError:
+            return []
+
+    found = {}
+    with concurrent.futures.ThreadPoolExecutor(workers) as pool:
+        for results in pool.map(one, queries):
+            for st in results:
+                if st["station_id"] and st["type"] != "VODProvider" and not JUNK.search(st["name"]):
+                    found.setdefault(st["station_id"], st)
+    scored = []
+    for st in found.values():
+        score = name_score(text, st["name"], bare_call(st)) * language_weight(st)
+        if score >= 0.3:
+            scored.append((score, st))
+    scored.sort(key=lambda x: (-x[0], x[1]["name"]))
+    out = []
+    for score, st in scored[:limit]:
+        reason = "deep search"
+        if foreign_label(st):
+            reason += ", " + foreign_label(st)
+        out.append(dict(st, confidence=round(min(score, 1.0), 2), reason=reason))
+    return out

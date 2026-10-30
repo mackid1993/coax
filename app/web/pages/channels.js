@@ -972,6 +972,7 @@ function guideModal(c) {
         <div class="stack" data-pane="gn">
           <div class="label">Gracenote station <button type="button" class="btn btn-ghost btn-sm" data-gclear style="padding:0 6px">Clear</button> <span class="faint" id="gnCur">${g.station_id ? `· current <span class="num">${esc(g.station_id)}</span>` : ""}</span></div>
           <label class="search"><span class="sr-only">Search stations</span>${icon("search")}<input class="input" id="gnQ" placeholder="Call sign, name or station id" value="${esc(c.name)}"></label>
+          <label class="row small" style="gap:6px;margin-top:6px" title="Tries many spellings of the name (NYC for New York, run-together names, fewer words). Slower; use it when a channel cannot be found."><input type="checkbox" id="gnDeep"> Deep search</label>
           <div class="row" style="gap:8px"><input class="input input-sm mono" id="gnManual" inputmode="numeric" placeholder="Or type a station ID" value="${esc(g.station_id || "")}" style="flex:1"><button type="button" class="btn btn-sm" data-manual>Use this ID</button></div>
           <div class="result-list" id="gnList">${p?.guide?.cands?.length ? candList(p.guide.cands, g.station_id) : `<div class="faint small">Search to see stations.</div>`}</div>
         </div>
@@ -1045,12 +1046,15 @@ function guideModal(c) {
       const quick = await api.gracenoteSearch(q, true).catch(() => []);
       if (seq !== gnSeq) return;
       if (quick.length) list.innerHTML = candList(quick, g.station_id) + `<div class="faint small" style="padding:6px 2px">Searching all of Gracenote…</div>`;
-      const r = await api.gracenoteSearch(q);
+      const deep = $("#gnDeep", el).checked;
+      if (deep) list.innerHTML = (quick.length ? candList(quick, g.station_id) : "") + `<div class="faint small" style="padding:6px 2px">Deep search: trying many spellings…</div>`;
+      const r = await api.gracenoteSearch(q, false, deep);
       if (seq !== gnSeq) return;
       list.innerHTML = r.length ? candList(r, g.station_id) : `<div class="faint small">No stations found for “${esc(q)}”.</div>`;
     } catch (e) { if (seq === gnSeq) list.innerHTML = `<div class="callout">${icon("alert")}<div>${esc(e.message)}</div></div>`; }
   }, 200);
   $("#gnQ", el).addEventListener("input", searchGn);
+  $("#gnDeep", el).addEventListener("change", searchGn);
   if (!p?.guide?.cands?.length) searchGn();
   let xmSeq = 0;
   const searchXm = debounce(async () => {
