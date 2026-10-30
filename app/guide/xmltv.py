@@ -333,13 +333,16 @@ def _refresh(config):
             summary["providers"][pid] = result
             try:
                 guide.check_id(pid, "provider id")
-                url = provider_xmltv_url(provider)
+                off = provider.get("enabled", True) is False
+                url = "" if off else provider_xmltv_url(provider)
                 if not url:
-                    # Nothing to fetch: its channels have no XMLTV guide, but the rest of the lineup still does.
-                    result.update(ok=True, error="no XMLTV URL", missing=sorted(needs.get(pid, {})))
+                    # Nothing to fetch (no URL, or the provider is switched off): its channels have no XMLTV guide,
+                    # but the rest of the lineup still does.
+                    why = "switched off" if off else "no XMLTV URL"
+                    result.update(ok=True, error=why, missing=sorted(needs.get(pid, {})))
                     if result["missing"]:
-                        log.warning("provider %s has no XMLTV URL; %d channels using it get no XMLTV guide",
-                                    pid, len(result["missing"]))
+                        log.warning("provider %s: %s; %d channels using it get no XMLTV guide",
+                                    pid, why, len(result["missing"]))
                     continue
                 wanted = needs.get(pid, {})
                 route = {}

@@ -1,6 +1,6 @@
 // Lineups: named profiles, each its own DVR custom source with its own M3U and XMLTV URLs and guide source.
 import { api, routes } from "../api.js";
-import { $, $$, esc, icon, toast, toastError, openModal, confirmDialog, emptyState, skeletonCards, busy, copyText, fmtInt, fmtAgo } from "../ui.js";
+import { $, $$, esc, icon, toast, toastError, openModal, confirmDialog, emptyState, skeletonCards, busy, copyText, fmtInt, fmtAgo, switchHtml } from "../ui.js";
 import { invalidate, loadConfig } from "../state.js";
 
 let root, lineups = [], channels = [], base = "";
@@ -28,6 +28,7 @@ export async function mount(el) {
     <div class="page-actions"><button class="btn btn-primary" data-act="add">${icon("plus")}New lineup</button></div></div>
     <div class="grid grid-auto" id="lList">${skeletonCards(2, 220)}</div>`;
   root.onclick = onClick;
+  root.onchange = onPower;
   await load();
 }
 export function unmount() {}
@@ -93,9 +94,10 @@ function render() {
       : g === "gracenote"
         ? `In the DVR add a custom M3U source with the playlist URL. Station IDs map the guide automatically.`
         : `Add a custom M3U source with the playlist URL, and set its XMLTV guide URL for channels without a station ID.`;
-    return `<article class="card lineup-card" data-id="${esc(l.id)}">
-      <div class="card-head lineup-head"><div class="lineup-title"><h3 class="ellip" data-pop="${esc(l.name)}">${esc(l.name)}</h3><div class="lineup-pills"><span class="badge ${guideBadge(g)}">${esc(g)}</span><span data-dvr-badge>${dvr[l.id]?.in_dvr ? `<span class="badge badge-ok"><span class="dot"></span>In Channels DVR</span>` : ""}</span></div></div>
-        <div class="row"><button class="btn btn-ghost btn-sm btn-icon" data-act="edit" aria-label="Edit ${esc(l.name)}">${icon("edit")}</button><button class="btn btn-ghost btn-sm btn-icon btn-danger" data-act="delete" aria-label="Delete ${esc(l.name)}">${icon("trash")}</button></div></div>
+    const on = l.enabled !== false;
+    return `<article class="card lineup-card${on ? "" : " is-off"}" data-id="${esc(l.id)}">
+      <div class="card-head lineup-head"><div class="lineup-title"><h3 class="ellip" data-pop="${esc(l.name)}">${esc(l.name)}</h3><div class="lineup-pills">${on ? "" : `<span class="badge badge-warn"><span class="dot"></span>Off</span>`}<span class="badge ${guideBadge(g)}">${esc(g)}</span><span data-dvr-badge>${dvr[l.id]?.in_dvr ? `<span class="badge badge-ok"><span class="dot"></span>In Channels DVR</span>` : ""}</span></div></div>
+        <div class="row">${switchHtml("", on, "", `data-power aria-label="${esc(l.name)} on or off" title="${on ? "On" : "Off"}"`)}<button class="btn btn-ghost btn-sm btn-icon" data-act="edit" aria-label="Edit ${esc(l.name)}">${icon("edit")}</button><button class="btn btn-ghost btn-sm btn-icon btn-danger" data-act="delete" aria-label="Delete ${esc(l.name)}">${icon("trash")}</button></div></div>
       <div class="card-body stack" style="gap:12px">
         <div class="row" style="gap:24px"><div><div class="stat-label">Channels</div><div class="stat-value">${fmtInt(n)}</div></div><div><div class="stat-label">Enabled</div><div class="stat-value">${fmtInt(enabled)}</div></div><div><div class="stat-label">Id</div><div class="stat-value" style="font-size:14px;margin-top:5px">${esc(l.id)}</div></div></div>
         <div class="copy-field"><span class="tag">M3U</span><code title="${esc(m3u)}">${esc(m3u)}</code><button class="btn btn-ghost btn-sm btn-icon" data-copy="${esc(m3u)}" aria-label="Copy M3U URL">${icon("copy")}</button></div>
@@ -128,6 +130,22 @@ async function onClick(e) {
     if (!(await confirmDialog({ title: `Delete ${l.name}?`, message: "Channels stay; only this lineup and its URLs go away. Remove the source from your DVR too.", confirm: "Delete", danger: true }))) return;
     try { await api.deleteLineup(l.id); invalidate("lineups"); toast("Lineup deleted", l.name, "ok"); await load(); } catch (err) { toastError("Delete failed", err); }
   }
+}
+
+// The on/off switch: a lineup switched off serves an empty playlist, so Channels DVR drops its channels (same
+// numbers when it comes back on).
+async function onPower(e) {
+  const t = e.target.closest("[data-power]");
+  if (!t) return;
+  const l = lineups.find((x) => x.id === t.closest("[data-id]")?.dataset.id);
+  if (!l) return;
+  t.disabled = true;
+  try {
+    await api.updateLineup(l.id, { enabled: t.checked });
+    toast(t.checked ? "Lineup on" : "Lineup off", t.checked ? `${l.name}: its channels come back in Channels DVR.` : `${l.name}: its channels leave Channels DVR.`, t.checked ? "ok" : "warn", 8000);
+    invalidate("lineups");
+  } catch (err) { toastError("Could not switch the lineup", err); }
+  await load();
 }
 
 function editModal(l) {

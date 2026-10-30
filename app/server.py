@@ -1024,7 +1024,7 @@ class Handler(BaseHTTPRequestHandler):
             raise bad_request("provider must be a JSON object")
         provider = copy.deepcopy(existing) if existing else configmod.default_provider()
         for key in ("name", "type", "server", "m3u_url", "xmltv_url", "user_agent", "format", "refresh_hours",
-                    "auto_add", "groups", "lines", "max_streams"):
+                    "auto_add", "groups", "lines", "max_streams", "enabled"):
             if key in body:
                 provider[key] = body[key]
         for key in ("name", "server", "m3u_url", "xmltv_url", "user_agent"):
@@ -1861,6 +1861,8 @@ class Handler(BaseHTTPRequestHandler):
         if callable(suggest):
             catalogs = {}
             for provider in cfg["providers"]:
+                if provider.get("enabled", True) is False:
+                    continue   # switched off: none of its streams become backups
                 try:
                     entry = self.app.catalogs.get(provider["id"])
                 except ApiError:
@@ -1990,6 +1992,10 @@ class Handler(BaseHTTPRequestHandler):
                 lineup["channels"] = body["channels"]
             if "guide" in body:
                 lineup["guide"] = body["guide"]
+            if "enabled" in body:
+                if not isinstance(body["enabled"], bool):
+                    raise bad_request("enabled must be true or false")
+                lineup["enabled"] = body["enabled"]
             if "sort" in body:
                 if body["sort"] not in configmod.LINEUP_SORTS:
                     raise bad_request("sort must be one of " + ", ".join(configmod.LINEUP_SORTS))

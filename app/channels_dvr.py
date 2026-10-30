@@ -273,10 +273,14 @@ def add_or_update(store, lineup_id, opts):
 
 def _snapshot(cfg, lineup_id, m3u_func):
     """What the DVR cares about for one lineup: playlist text, member channels and guide fields."""
+    from app.guide import output
     lineup = _find_lineup(cfg, lineup_id)
     by_id = {c.get("id"): c for c in cfg.get("channels") or []}
-    # Only channels that are in the playlist: adding a disabled channel (auto-add) changes nothing for the DVR.
-    members = [cid for cid in lineup.get("channels") or [] if (by_id.get(cid) or {}).get("enabled", True)]
+    # Only channels that are in the playlist: adding a disabled channel (auto-add) changes nothing for the DVR,
+    # and switching a lineup or provider back on downloads the guide for the channels it brings back.
+    off = output.off_providers(cfg)
+    members = [] if lineup.get("enabled", True) is False else [
+        cid for cid in lineup.get("channels") or [] if output.listed(by_id.get(cid) or {}, off)]
     guide_fields = []
     for cid in members:
         g = (by_id.get(cid) or {}).get("guide") or {}

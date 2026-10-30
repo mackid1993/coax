@@ -73,6 +73,18 @@ def ordered_ids(lineup, channels):
     return ids
 
 
+def off_providers(config):
+    """Ids of the providers switched off on the Providers page."""
+    return {str(p.get("id")) for p in config.get("providers") or [] if p.get("enabled", True) is False}
+
+
+def listed(ch, off):
+    """Whether a channel goes into a playlist: enabled, and not one whose every stream is on a provider that is
+    switched off (a channel without streams is listed as before)."""
+    refs = ch.get("streams") or []
+    return ch.get("enabled", True) and not (refs and all(str(r.get("provider")) in off for r in refs))
+
+
 def find_lineup(config, lineup_id):
     for lineup in config.get("lineups") or []:
         if str(lineup.get("id")) == str(lineup_id):
@@ -83,7 +95,7 @@ def find_lineup(config, lineup_id):
 def m3u(config, lineup_id):
     """M3U text for one lineup. Raises KeyError if the lineup does not exist.
 
-    One entry per enabled channel, in lineup order:
+    One entry per enabled channel (see listed; none when the lineup is switched off), in lineup order:
       #EXTINF:-1 channel-id="coax-<id>" tvg-id="coax-<id>" tvg-name=".." tvg-logo=".."
         group-title=".." channel-number=".." tvc-guide-stationid="..",<name>
       {base_url}/stream/{uuid}.ts
@@ -100,13 +112,17 @@ def m3u(config, lineup_id):
 
     lineup_guide = lineup.get("guide") or "per-channel"
     lines = ["#EXTM3U"]
+    if lineup.get("enabled", True) is False:
+        # A lineup switched off lists no channels, so Channels DVR drops them until it is switched on again.
+        return "\n".join(lines) + "\n"
+    off = off_providers(config)
     seen = set()
     start = lineup.get("start_number")
     start = start if isinstance(start, int) and not isinstance(start, bool) else None
     position = 0
     for cid in ordered_ids(lineup, channels):
         ch = channels.get(str(cid))
-        if ch is None or str(cid) in seen or not ch.get("enabled", True) or not ch.get("uuid"):
+        if ch is None or str(cid) in seen or not listed(ch, off) or not ch.get("uuid"):
             continue
         seen.add(str(cid))
         position += 1

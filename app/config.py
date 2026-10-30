@@ -61,7 +61,7 @@ def default_provider():
     return {
         "id": "", "name": "", "type": "xtream", "server": "", "m3u_url": "", "xmltv_url": "",
         "user_agent": "", "format": "hls", "refresh_hours": 24, "lines": [], "auto_add": False, "groups": [],
-        "max_streams": 0,
+        "max_streams": 0, "enabled": True,
     }
 
 
@@ -155,6 +155,7 @@ def fill_defaults(cfg):
             if lineup.get("sort") not in LINEUP_SORTS:
                 lineup["sort"] = "manual"
             lineup.setdefault("start_number", None)
+            lineup.setdefault("enabled", True)
     guides = {}   # channel id -> the guides of the lineups it is in
     for lineup in cfg.get("lineups") or []:
         if isinstance(lineup, dict):
@@ -269,6 +270,7 @@ def validate(cfg):
         _int_in(provider.get("max_streams", 0), 0, 1000, label + ": max streams")
         _num_in(provider.get("refresh_hours"), 0, 24 * 30, label + ": refresh hours (0 = manual only)")
         _require(isinstance(provider.get("auto_add"), bool), label + ": auto_add must be true or false")
+        _require(isinstance(provider.get("enabled", True), bool), label + ": enabled must be true or false")
         groups = provider.get("groups")
         _require(isinstance(groups, list) and all(isinstance(g, str) for g in groups),
                  label + ": groups must be a list of names")
@@ -373,6 +375,7 @@ def validate(cfg):
                  "lineup %s: start number must be a whole number" % lid)
         _require(lineup.get("guide") in LINEUP_GUIDES,
                  "lineup %s: guide must be one of %s" % (lid, ", ".join(LINEUP_GUIDES)))
+        _require(isinstance(lineup.get("enabled", True), bool), "lineup %s: enabled must be true or false" % lid)
         members = lineup.get("channels")
         _require(isinstance(members, list), "lineup %s: channels must be a list" % lid)
         for cid in members:

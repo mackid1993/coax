@@ -15,6 +15,7 @@ export async function mount(el) {
     </div>
     <div class="grid" id="pList">${skeletonCards(2, 200)}</div>`;
   root.onclick = onClick;
+  root.onchange = onPower;
   await load();
 }
 export function unmount() {}
@@ -52,17 +53,19 @@ function cardHtml(p) {
     : cat.fetched_at ? `<span class="badge badge-ok"><span class="dot"></span>Catalog ready</span>`
     : `<span class="badge badge-warn"><span class="dot"></span>Not fetched</span>`;
   const host = p.type === "m3u" ? p.m3u_url : p.server;
-  return `<article class="card provider-card" data-id="${esc(p.id)}">
+  const on = p.enabled !== false;
+  return `<article class="card provider-card${on ? "" : " is-off"}" data-id="${esc(p.id)}">
     <div class="provider-top">
       <div class="provider-glyph ${p.type === "m3u" ? "m3u" : ""}">${icon(p.type === "m3u" ? "lineups" : "signal")}</div>
       <div style="flex:1;min-width:0">
         <div class="row row-wrap" style="gap:8px"><span class="provider-title">${esc(p.name)}</span>
-          <span class="badge">${p.type === "m3u" ? "M3U" : "Xtream"}</span><span class="badge">${esc((p.format || "hls").toUpperCase())}</span>${state}</div>
+          <span class="badge">${p.type === "m3u" ? "M3U" : "Xtream"}</span><span class="badge">${esc((p.format || "hls").toUpperCase())}</span>${on ? state : `<span class="badge badge-warn"><span class="dot"></span>Off</span>`}</div>
         <div class="faint small mono ellip" style="margin-top:4px">${esc(redact(host || ""))}</div>
         ${r.state === "error" && r.error ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(r.error)}</div>` : ""}
         ${r.vanished_count ? `<div class="small" style="color:var(--warn);margin-top:6px">${fmtInt(r.vanished_count)} streams vanished in the last refresh. Affected channels are flagged on the Channels page.</div>` : ""}
       </div>
       <div class="row" style="flex:none">
+        ${switchHtml("", on, on ? "On" : "Off", `data-power aria-label="${esc(p.name)} on or off"`)}
         <button class="btn btn-sm" data-act="test">${icon("plug")}Test</button>
         <button class="btn btn-sm" data-act="refresh">${icon("refresh")}Refresh</button>
         <button class="btn btn-sm" data-act="groups">${icon("filter")}Groups</button>
@@ -126,6 +129,22 @@ async function onClick(e) {
       break;
     }
   }
+}
+
+// The on/off switch: a provider switched off is never played, refreshed or used for guide data or backups, and
+// channels whose every stream is on it leave the lineups until it is switched on again.
+async function onPower(e) {
+  const t = e.target.closest("[data-power]");
+  if (!t) return;
+  const p = providers.find((x) => x.id === t.closest("[data-id]")?.dataset.id);
+  if (!p) return;
+  t.disabled = true;
+  try {
+    await api.updateProvider(p.id, { enabled: t.checked });
+    toast(t.checked ? "Provider on" : "Provider off", t.checked ? p.name : `${p.name}: its streams stop at the next tune and channels with no other provider leave the lineups.`, t.checked ? "ok" : "warn", 8000);
+    invalidate("providers");
+  } catch (err) { toastError("Could not switch the provider", err); }
+  await load();
 }
 
 function showTest(r) {
