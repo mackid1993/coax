@@ -36,7 +36,7 @@ def summarize(streams, nbytes, dur):
     if a:
         c = a.get("codec_name")
         p = [AAC.get(a.get("profile"), "AAC") if c == "aac" else ACODEC.get(c, str(c or "?").upper())]
-        if a.get("sample_rate"):
+        if int(a.get("sample_rate") or 0) > 0 and a.get("channels"):   # a short probe can report 0 for both
             p.append(("%.1f" % (int(a["sample_rate"]) / 1000)).rstrip("0").rstrip(".") + " kHz " +
                      LAYOUT.get(a.get("channels"), "%s ch" % a.get("channels")))
         if abr:
