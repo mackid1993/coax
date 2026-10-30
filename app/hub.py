@@ -544,6 +544,21 @@ class Session:
                  self.provider_name, self.line_name)
 
 
+class VodHold:
+    """A line slot held by a VOD play. It sits in Hub._slots beside the Sessions, so tunes, catalog calls and the
+    Status page count it like any stream."""
+
+    def __init__(self, provider, line, name, stop):
+        self.provider_id = provider.get("id")
+        self.line_id = line.get("id")
+        self.provider_name = provider.get("name") or self.provider_id
+        self.line_name = line.get("name") or self.line_id
+        self.line = line
+        self.channel_id = None
+        self.name = name
+        self.stop = stop
+
+
 class Hub:
     def __init__(self, get_config, stream_url=None, engine_command=None):
         self._get_config = get_config
@@ -795,7 +810,10 @@ class Hub:
     # -- tune (ah4c tune()) ---------------------------------------------------------
 
     def open(self, uuid, client_ip, user_agent):
-        """Take a line slot for this channel. None means answer 503."""
+        """Take a line slot for this channel. None means answer 503.
+
+        With every line busy, a VOD play on one of the channel's providers gives its line up: a tune or a recording
+        always wins over a movie."""
         cfg = self._config()
         channel_cfg = next((c for c in cfg.get("channels") or [] if str(c.get("uuid")) == str(uuid)), None)
         if channel_cfg is None or not channel_cfg.get("enabled", True):
@@ -804,6 +822,15 @@ class Hub:
         cands = sorted(self._candidates(channel_cfg, providers),
                        key=lambda sp: (self._blocked(channel_cfg.get("id"), sp),
                                        self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
+        session = self._open(channel_cfg, cands, client_ip, user_agent)
+        if session is None and self._evict_vod({p.get("id") for _s, p in cands if p.get("enabled", True)},
+                                               channel_cfg.get("name")):
+            session = self._open(channel_cfg, cands, client_ip, user_agent)
+        if session is None:
+            log.warning("[%s] no free line for any stream of this channel", channel_cfg.get("name"))
+        return session
+
+    def _open(self, channel_cfg, cands, client_ip, user_agent):
         for stream, provider in cands:
             if not provider.get("enabled", True):
                 continue
@@ -834,8 +861,43 @@ class Hub:
                 log.info("[%s] %s tuned stream %s on %s / %s", session.name, client_ip, session.stream_id,
                          session.provider_name, session.line_name)
                 return session
-        log.warning("[%s] no free line for any stream of this channel", channel_cfg.get("name"))
         return None
+
+    # -- video on demand (app/vodproxy.py) --------------------------------------------------------------------------
+
+    def vod_hold(self, provider_id, name, stop):
+        """Take a line slot for a VOD play, like a tune does. None when every line of the provider is busy.
+        `stop` ends the play's provider connection; the hub calls it (then releases) to free the line for a tune."""
+        provider = self._providers(self._config()).get(provider_id)
+        if provider is None or not provider.get("enabled", True):
+            return None
+        for line in self._lines(provider):
+            with self._lock:
+                if self._free_locked(provider, line):
+                    hold = VodHold(provider, line, name, stop)
+                    self._hold_locked(hold, (hold.provider_id, hold.line_id))
+                    return hold
+        return None
+
+    def vod_release(self, hold):
+        with self._lock:
+            self._drop_locked(hold, (hold.provider_id, hold.line_id))
+
+    def _evict_vod(self, provider_ids, for_name):
+        """Stop one VOD play holding a line of these providers. True when a line was freed."""
+        with self._lock:
+            holds = [h for (pid, _lid), holders in self._slots.items() if pid in provider_ids
+                     for h in holders if isinstance(h, VodHold)]
+        for hold in holds:
+            log.info("[%s] every line is busy: stopping VOD %s on %s / %s to free its line", for_name, hold.name,
+                     hold.provider_name, hold.line_name)
+            try:
+                hold.stop()
+            except Exception:  # noqa: BLE001
+                log.exception("could not stop VOD %s", hold.name)
+            self.vod_release(hold)   # idempotent: stop() normally released it already
+            return True
+        return False
 
     # -- queries --------------------------------------------------------------------
 
