@@ -22,7 +22,7 @@ DTS_RATES = (0, 8000, 16000, 32000, 0, 0, 11025, 22050, 44100, 0, 0, 12000, 2400
 
 SYNC = {"ac3": b"\x0b\x77", "eac3": b"\x0b\x77", "aac": b"\xff", "latm": b"\x56", "mp2": b"\xff",
         "dts": b"\x7f\xfe\x80\x01"}
-HEAD = {"ac3": 8, "eac3": 6, "aac": 7, "latm": 3, "mp2": 4, "dts": 11}
+HEAD = {"ac3": 8, "eac3": 8, "aac": 7, "latm": 3, "mp2": 4, "dts": 11}   # eac3: 8, an AC-3 frame can appear there
 
 
 def frame(fam, b, i):

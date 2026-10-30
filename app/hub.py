@@ -320,7 +320,9 @@ class Session:
         m = re.search(r"provider format: (\{.*\})$", line)
         if m:
             try:
-                self.input_fmt = {k: str(v) for k, v in json.loads(m.group(1)).items() if k in ("video", "audio")}
+                # A later line may carry only the audio (the provider switched format, say a stereo ad): merge it.
+                self.input_fmt = dict(self.input_fmt or {}, **{k: str(v) for k, v in json.loads(m.group(1)).items()
+                                                               if k in ("video", "audio")})
             except ValueError:
                 pass
         m = re.search(r"transcoding with (.+)$", line)
