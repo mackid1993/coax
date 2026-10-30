@@ -60,5 +60,5 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
       - ${HOST_DIR:-.}/data:/data # Everything coax keeps (settings, backups, caches) goes in a data folder inside HOST_DIR. Created on first start; coax fixes its ownership itself
-      - ${CHANNELS_DVR_IMPORTS:-/dev/null}:/imports # Video on demand only. The Imports folder inside Channels DVR's storage folder (Unraid example: /mnt/user/TV/DVR/Imports). The default /dev/null leaves video on demand off
+      - ${CHANNELS_DVR_IMPORTS:-/dev/null}:/imports # Video on demand only. Set CHANNELS_DVR_IMPORTS to the Imports folder inside Channels DVR's recordings folder. The default /dev/null always exists and leaves video on demand off
     restart: unless-stopped
