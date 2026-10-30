@@ -515,6 +515,7 @@ class Feeder:
         self.seen, self.ch = {}, {}
         self.vclk = self.aclk = None
         self.vadv = 0               # picture time since the playing track's last frame (gaps and jumps not counted)
+        self.vmax = None            # the newest picture timestamp seen (pictures arrive out of order with B-frames)
         self.rest = b""
         self.cur = self.pend = None
         self.up = [None, 0]
@@ -928,10 +929,17 @@ class Feeder:
                     self.log("audio: the provider's format %s has no open input; using %s" % (key, SLOTS[fb]["name"]))
                 s = fb
             c = self.now()
-            if c is not None and abs(dif(pts, c)) > JUMP:   # far from the picture's clock: a stale or bad frame
-                self.npts = None
-                i += size_all
-                continue
+            if c is not None and abs(dif(pts, c)) > JUMP:
+                if self.vclk is not None and abs(dif(pts, self.vclk)) < JUMP:
+                    # The provider's clock moved (a jump in a running stream) and the pictures moved with it: the
+                    # audio follows, and every input starts again on the new clock.
+                    out.append(self._flush())
+                    self.end = [None] * len(SLOTS)
+                    self.aclk, self.vadv = pts, 0
+                else:                           # far from both clocks: a stale or bad frame
+                    self.npts = None
+                    i += size_all
+                    continue
             self.npts = pts + dur
             self.aclk, self.vadv = pts, 0
             if s == PCM:
@@ -1093,8 +1101,13 @@ class Feeder:
                         and p[o + 7] & 0x80:
                     q = p[o + 9:o + 14]
                     v = ((q[0] >> 1) & 7) << 30 | q[1] << 22 | (q[2] >> 1) << 15 | q[3] << 7 | q[4] >> 1
-                    if self.vclk is not None and 0 < dif(v, self.vclk) < 27000:
-                        self.vadv += dif(v, self.vclk)      # a jump or a gap in the pictures is not audio time
+                    # Picture time moves on only past the newest timestamp seen: B-frames arrive out of order, and
+                    # counting every step forward would run this clock fast. A jump or a gap is not audio time.
+                    step = dif(v, self.vmax) if self.vmax is not None else 0
+                    if 0 < step < 27000:
+                        self.vadv += step
+                    if self.vmax is None or step > 0 or step < -JUMP:
+                        self.vmax = v
                     self.vclk = v
                     if self.aclk is None or self.vadv > GAP:
                         # No audio playing (none on this stream, or the track stopped): silence on every input,
