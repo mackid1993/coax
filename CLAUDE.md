@@ -483,6 +483,13 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   a direct transcode, codec switches included; was up to a frame off), fMP4 HLS passes through, ID3 and split
   packets resynced, no backward timestamps from the video-clock fill, E-AC-3 dependents kept, exact 44.1 kHz
   silence durations. PCM fallback for rare formats written but off (its PCM reached the mix late offline).
+- **1.0.7-6** (Oct 30) stereo upmixed to 5.1 when the output is Dolby 5.1 (stereo and mono inputs mixed apart,
+  then `surround=chl_out=5.1`): the owner's Neural:X never engaged on ads, since coax always sends 5.1, so ads
+  played quietly from the front pair only. From three parallel audits: a failover to a backup with another codec
+  family starved the encoder (the feeder kept the old stream's tracks), an encoder rebuilt before its first byte
+  lost the restart's timeline offset, audio 1.2 s or more off its video stayed silent, audio description could
+  win over the main track, the video-clock silence overwrote unsent audio, long ID3 tags lost a chunk; all fixed.
+  A codec family with no open input now asks for a keyframe restart instead of feeding another decoder.
 
 ---
 

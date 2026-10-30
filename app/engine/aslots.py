@@ -238,12 +238,14 @@ def _languages():
 
 
 ALIASES = _languages()
-SAME = {"fil": "tgl", "nob": "nor", "nno": "nor"}   # codes providers use for the same spoken language
+# Codes providers use for the same spoken language, including common non-standard ones (esp for Spanish...).
+SAME = {"fil": "tgl", "nob": "nor", "nno": "nor", "esp": "spa", "jap": "jpn", "chn": "zho", "sve": "swe", "arb": "ara"}
 
 
 def canon(code):
     """A language tag as its ISO 639-2 code ("spa" for "es", "fra" for "fre"), or "" when it names no language."""
     c = (code or "").strip().lower()
+    c = SAME.get(c, c)
     c = ALIASES.get(c, c if len(c) == 3 and c.isalpha() else "")
     if c in ("und", "mul", "mis", "zxx") or "qaa" <= c <= "qtz":
         return ""
@@ -330,7 +332,7 @@ def _crc(data):
 
 def sync(d):
     """Where 188-byte packets start in d (three sync bytes in a row), or None."""
-    for k in range(min(len(d), 188 * 2)):
+    for k in range(min(len(d), 188 * 64)):
         if d[k] == 0x47 and (k + 188 >= len(d) or d[k + 188] == 0x47) and (k + 376 >= len(d) or d[k + 376] == 0x47):
             if k + 188 < len(d):
                 return k
@@ -511,12 +513,17 @@ class Feeder:
         self.end = [None] * len(SLOTS)
         self.frac = [0.0] * len(SLOTS)  # fraction of a 90 kHz tick each input's silence is owed
         self.seen, self.ch = {}, {}
-        self.vclk = self.aclk = self.va = None
+        self.vclk = self.aclk = None
+        self.vadv = 0               # picture time since the playing track's last frame (gaps and jumps not counted)
+        self.rest = b""
         self.cur = self.pend = None
         self.up = [None, 0]
         self.said = None
         self.t0 = None              # the first audio PTS heard on this stream
         self.pre = True             # a new encoder: its inputs start where its first audio or picture does
+        self.tracks, self.fam, self.keys = [], {}, {}   # a new stream lists its own tracks (its table is read
+        self.sec = None                                  # again from its first bytes, before its encoder starts)
+        self.missing = None         # a format family with no open input appeared: the engine restarts at a keyframe
         self._end_helper()
         self._drop()
 
@@ -548,6 +555,7 @@ class Feeder:
                     want.add(BYKEY[k])
         self.active = tuple(sorted(want))
         self.built_bypass = self.bypass
+        self.missing = None
         if self.last_sec:
             self._build()
         return None if self.bypass else [SLOTS[x] for x in self.active]
@@ -574,6 +582,11 @@ class Feeder:
             want.update(BYKEY[k] for k in ks if k in BYKEY)
         return not want <= set(self.active)
 
+    def learn(self, d):
+        """Read tracks and formats from bytes about to go to a new encoder (the whole segment, keyframe or not)."""
+        if not self.bypass:
+            self._learn(d)
+
     def _learn(self, d):
         """Tracks and formats from raw bytes, without sending anything (for wants_more)."""
         for i in range(0, len(d) - 187, 188):
@@ -587,14 +600,14 @@ class Feeder:
             o = 5 + p[4] if af == 3 else 4
             if o >= 188:
                 continue
-            if pid == 0 and self.pmt_pid is None:
+            if pid == 0:
                 q = o + 1 + p[o]
                 if q + 16 <= 188 and p[q] == 0:
                     for j in range(q + 8, min(q + 3 + ((p[q + 1] & 15) << 8 | p[q + 2]) - 4, 184), 4):
                         if p[j] << 8 | p[j + 1]:
                             self.pmt_pid = (p[j + 2] & 31) << 8 | p[j + 3]
                             break
-            elif pid == self.pmt_pid and not self.tracks:
+            elif pid == self.pmt_pid:
                 q = o + 1 + p[o]
                 if q + 3 <= 188 and p[q] == 2:
                     need = 3 + ((p[q + 1] & 15) << 8 | p[q + 2])
@@ -619,7 +632,8 @@ class Feeder:
         self.end = [None] * len(SLOTS)
         self.frac = [0.0] * len(SLOTS)
         self.grp = None
-        self.aclk = self.va = None
+        self.aclk = None
+        self.vadv = 0
         self.pre = True
         self._end_helper(now=True)
         return self.pat + self.pmt_out
@@ -733,14 +747,17 @@ class Feeder:
     def now(self):
         """The audio clock now: the playing track's last frame moved on by the video time since (the provider's
         audio and video timestamps may sit apart), or the video clock before any audio."""
-        if self.aclk is not None and self.va is not None and self.vclk is not None:
-            return (self.aclk + dif(self.vclk, self.va)) % WRAP
-        return self.vclk if self.aclk is None else self.aclk
+        if self.aclk is not None:
+            return (self.aclk + self.vadv) % WRAP
+        return self.vclk
 
     def _group(self, live):
         """The tracks that may play, best group first: the preferred language, else the main track's language
         (untagged tracks count as it), else everything; extra tracks (audio description...) only if nothing else."""
-        main_lang = self.tracks[0]["lang"] if self.tracks else ""
+        mains = [t for t in self.tracks if t["main"]]
+        main_lang = (mains or self.tracks or [{"lang": ""}])[0]["lang"]
+        if any(t["main"] for t in live):
+            live = [t for t in live if t["main"]]   # an extra track never wins while a main one plays
         groups = []
         if self.pref:
             groups.append([t for t in live if t["lang"] == self.pref])
@@ -748,11 +765,22 @@ class Feeder:
         groups.append(live)
         for g in groups:
             if g:
-                return [t for t in g if t["main"]] or g
+                return g
         return []
 
+    def _aclock(self):
+        """The audio clock for liveness: the playing track's, or before any track plays the newest audio heard
+        (the provider's audio timestamps may sit seconds away from its pictures')."""
+        if self.aclk is not None:
+            return self.now()
+        best = None
+        for t in self.seen.values():
+            if best is None or dif(t, best) > 0:
+                best = t
+        return best
+
     def _choose(self, first=False):
-        clk = self.now()
+        clk = self._aclock()
         if first or clk is None or not self.seen:
             live = list(self.tracks)            # nothing heard yet: every listed track may deliver
         else:
@@ -809,7 +837,7 @@ class Feeder:
                 self.helper = None
                 return
         self.helper.advance(dur)
-        self.aclk, self.va = pts, self.vclk
+        self.aclk, self.vadv = pts, 0
 
     def _helper_out(self):
         """PCM the helper has decoded, on the PCM input; a helper that fell far behind or ended is dropped."""
@@ -883,9 +911,18 @@ class Feeder:
             self.keys.setdefault(self.cur, set()).add(key)
             s = BYKEY.get(key)
             if s is None or s not in self.active:
-                fb = PCM if PCM_FALLBACK else FIRST.get(fam)
+                fb = PCM if PCM_FALLBACK else None
+                if fb is None:   # the open input of the same family closest in channels (5.1 to 5.1, 2.0 to 2.0)
+                    same = [x for x in self.active if SLOTS[x]["fam"] == fam]
+                    fb = min(same, key=lambda x: abs(chans(SLOTS[x]["key"]) - chans(key))) if same else None
                 if fb not in self.active:
-                    fb = self.active[0]
+                    # No input of this family at all (a codec this encoder was not built for): never give it to
+                    # another family's decoder; drop it and ask for an encoder with the input, at a keyframe.
+                    if self.missing is None:
+                        self.missing = fam
+                        self.log("audio: the provider switched to %s, which this encoder has no input for" % fam)
+                    i += size_all
+                    continue
                 if key not in self.said_keys:
                     self.said_keys.add(key)
                     self.log("audio: the provider's format %s has no open input; using %s" % (key, SLOTS[fb]["name"]))
@@ -896,7 +933,7 @@ class Feeder:
                 i += size_all
                 continue
             self.npts = pts + dur
-            self.aclk, self.va = pts, self.vclk
+            self.aclk, self.vadv = pts, 0
             if s == PCM:
                 if self.grp:
                     out.append(self._flush())
@@ -911,7 +948,7 @@ class Feeder:
                 if lag < -JUMP:                 # the provider's clock restarted: every input starts on the new one
                     out.append(self._flush())
                     self.end = [None] * len(SLOTS)
-                elif lag < -9000:               # overlaps audio already sent (silence that ran ahead): skip it,
+                elif lag < -6000:               # overlaps audio already sent (silence that ran ahead): skip it,
                     i += size_all               # never send a timestamp that goes back
                     continue
             if self.grp and (self.grp[0] != s or len(self.grp[2]) > 40 or
@@ -967,6 +1004,12 @@ class Feeder:
             return d
         d = self.rest + d
         k = 0
+        if d[:3] == b"ID3" and len(d) >= 10:   # an ID3 tag in front of a segment's packets, any length
+            n = 10 + ((d[6] & 127) << 21 | (d[7] & 127) << 14 | (d[8] & 127) << 7 | (d[9] & 127))
+            if len(d) < n + 188:
+                self.rest = d
+                return b""
+            d = d[n:]
         if not (len(d) >= 188 and d[0] == 0x47 and (len(d) < 376 or d[188] == 0x47)):
             k = sync(d)                 # an ID3 tag before the packets, or a chunk that split a packet
             if k is None:
@@ -1010,6 +1053,7 @@ class Feeder:
                         self.sec = None
                     elif len(self.sec) >= need:
                         sec, self.sec = bytes(self.sec[:need]), None
+                        out.append(self._flush())   # what was cut before the table goes out before any change
                         self._pmt(sec)
                         out.append(self.pmt_out)
             elif pid in self.fam:
@@ -1031,7 +1075,8 @@ class Feeder:
                         if self.said is None or abs(dif(pts, self.said)) > 45000:   # look again every half second
                             self.said = pts
                             self._choose()
-                    if pid == self.pend and (pts is None or self.now() is None or abs(dif(pts, self.now())) < GAP):
+                    c = self._aclock()
+                    if pid == self.pend and (pts is None or c is None or abs(dif(pts, c)) < GAP):
                         self.cur, self.pend = pid, None
                         out.append(self._flush())
                         self._drop()
@@ -1048,10 +1093,13 @@ class Feeder:
                         and p[o + 7] & 0x80:
                     q = p[o + 9:o + 14]
                     v = ((q[0] >> 1) & 7) << 30 | q[1] << 22 | (q[2] >> 1) << 15 | q[3] << 7 | q[4] >> 1
+                    if self.vclk is not None and 0 < dif(v, self.vclk) < 27000:
+                        self.vadv += dif(v, self.vclk)      # a jump or a gap in the pictures is not audio time
                     self.vclk = v
-                    if self.aclk is None or self.va is None or dif(v, self.va) > GAP:
+                    if self.aclk is None or self.vadv > GAP:
                         # No audio playing (none on this stream, or the track stopped): silence on every input,
                         # moving with the picture, so the mix and the picture never wait for it.
+                        out.append(self._flush())   # audio cut in this chunk goes out first, never behind silence
                         out.append(self._fill_all((self.now() - LAG) % WRAP))
                         if self.aclk is not None and (self.said is None or abs(dif(v, self.said)) > 45000):
                             self.said = v

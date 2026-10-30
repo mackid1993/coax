@@ -356,8 +356,21 @@ def ffcmd():
         return b + ["-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", "aresample=async=1:min_hard_comp=0.1" + tempo] + ar
     # Each input corrects its own timing to 10 ms: silence comes in whole frames, so where it meets real audio
     # the two can sit up to a frame apart, which 0.1 s would leave in place (audio that much off the picture).
-    fc = ";".join("[0:i:%d]aresample=async=1:min_hard_comp=0.01,aformat=sample_rates=48000:channel_layouts=%s[s%d]" % (x["pid"], lay, k) for k, x in enumerate(slots))
-    fc += ";" + "".join("[s%d]" % k for k in range(len(slots))) + "amix=inputs=%d:normalize=0:duration=longest" % len(slots) + tempo + "[ao]"
+    rs = "aresample=async=1:min_hard_comp=0.01,aformat=sample_rates=48000:channel_layouts="
+    if lay == "5.1":
+        # Surround inputs mix as they are; stereo and mono inputs (ads, stereo channels) are mixed apart and upmixed
+        # to 5.1 (dialog to the center, ambience to the surrounds), as a receiver's own upmixer (Neural:X, Dolby
+        # Surround) would do with a stereo signal: it never gets the chance, because coax always sends 5.1.
+        su = [x for x in slots if aslots.chans(x["key"]) >= 3 or x["fam"] == "pcm"]
+        st = [x for x in slots if x not in su]
+        fc = ";".join(["[0:i:%d]%s5.1[a%d]" % (x["pid"], rs, k) for k, x in enumerate(su)] +
+                      ["[0:i:%d]%sstereo[b%d]" % (x["pid"], rs, k) for k, x in enumerate(st)])
+        fc += ";" + "".join("[a%d]" % k for k in range(len(su))) + "amix=inputs=%d:normalize=0:duration=longest[su]" % len(su)
+        fc += ";" + "".join("[b%d]" % k for k in range(len(st))) + "amix=inputs=%d:normalize=0:duration=longest,surround=chl_out=5.1[st]" % len(st)
+        fc += ";[su][st]amix=inputs=2:normalize=0:duration=longest" + tempo + "[ao]"
+    else:
+        fc = ";".join("[0:i:%d]%s%s[s%d]" % (x["pid"], rs, lay, k) for k, x in enumerate(slots))
+        fc += ";" + "".join("[s%d]" % k for k in range(len(slots))) + "amix=inputs=%d:normalize=0:duration=longest" % len(slots) + tempo + "[ao]"
     return b + ["-i", "pipe:0", "-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]", "-sn", "-dn"] + vc + ar
 
 def rtgt():
@@ -545,7 +558,11 @@ def gone():
 def put(b):
     if FEED:
         if NB[0] == 0 and FEED.wants_more(b):
-            remux()   # this encoder has had nothing yet: build the one these bytes need (nobody sees it)
+            remux(ofs=OFS[0])   # this encoder has had nothing yet: build the one these bytes need (nobody sees
+                                # it), on the same output timeline
+        if FEED.missing and not RP[0]:
+            RP[0] = "the provider's audio switched to %s; adding its input" % FEED.missing   # at the next keyframe
+            RP[1] = mono()
         b = (FEED.psi() if NB[0] == 0 else b"") + FEED.feed(b)   # a new encoder learns the audio inputs at once
     NB[0] += len(b)
     if TRANSCODE:
@@ -1269,6 +1286,8 @@ def writer():
             if RP[0]:
                 k_ = kfo(d, it[5], e) if now - RP[1] < 10 else it[5]
                 if k_ is not None:
+                    if FEED:
+                        FEED.learn(d)   # the new encoder is built for the audio this stream really has
                     if k_ > it[5] and (not SWP[0]):
                         put(d[it[5]:k_])
                     w_ = RP[0]

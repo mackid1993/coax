@@ -271,8 +271,9 @@ def validate(cfg):
     _require(cfg.get("transcode") in TRANSCODE_VALUES,
              "transcode must be one of: %s" % ", ".join(TRANSCODE_VALUES))
     _require(isinstance(cfg.get("transcode_dolby", False), bool), "transcode_dolby must be true or false")
-    _require(cfg.get("audio_language", "") in ("",) + language_codes(),
-             "audio_language must be empty or a language code from the list")
+    al = cfg.get("audio_language", "")
+    _require(isinstance(al, str) and (al == "" or re.fullmatch(r"[A-Za-z]{2,3}", al) is not None),
+             "audio_language must be empty or a 2 or 3 letter language code")
 
     providers = cfg.get("providers")
     _require(isinstance(providers, list), "providers must be a list")

@@ -970,8 +970,9 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
 - **Audio.** Two settings under Transcode decide what Channels DVR gets, the same for every channel and every
   second:
   - **Always send Dolby Digital 5.1 (640 kbps)**, for providers with Dolby audio: every channel goes out as Dolby
-    Digital 5.1 at 640 kbps, the most Dolby Digital allows. Stereo channels and stereo ads play in the front left
-    and right speakers, so your receiver never switches formats. Off (the default): AAC stereo at 192 kbps.
+    Digital 5.1 at 640 kbps, the most Dolby Digital allows, so your receiver never switches formats. Stereo
+    channels and stereo ads are upmixed to 5.1 (dialog to the center, ambience to the surrounds), the way your
+    receiver's own upmixer (Neural:X, Dolby Surround) would: it never sees stereo, so it cannot do it itself. Off (the default): AAC stereo at 192 kbps.
   - **Audio language**: when a channel carries that language, coax plays it; otherwise the provider's main
     track. The list has every ISO 639-2 language, the most spoken first.
 

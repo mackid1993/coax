@@ -294,8 +294,21 @@ def ffcmd():
         return b + ["-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", "aresample=async=1:min_hard_comp=0.1" + tempo] + ar
     # Each input corrects its own timing to 10 ms: silence comes in whole frames, so where it meets real audio
     # the two can sit up to a frame apart, which 0.1 s would leave in place (audio that much off the picture).
-    fc = ";".join("[0:i:%d]aresample=async=1:min_hard_comp=0.01,aformat=sample_rates=48000:channel_layouts=%s[s%d]" % (x["pid"], lay, k) for k, x in enumerate(slots))
-    fc += ";" + "".join("[s%d]" % k for k in range(len(slots))) + "amix=inputs=%d:normalize=0:duration=longest" % len(slots) + tempo + "[ao]"
+    rs = "aresample=async=1:min_hard_comp=0.01,aformat=sample_rates=48000:channel_layouts="
+    if lay == "5.1":
+        # Surround inputs mix as they are; stereo and mono inputs (ads, stereo channels) are mixed apart and upmixed
+        # to 5.1 (dialog to the center, ambience to the surrounds), as a receiver's own upmixer (Neural:X, Dolby
+        # Surround) would do with a stereo signal: it never gets the chance, because coax always sends 5.1.
+        su = [x for x in slots if aslots.chans(x["key"]) >= 3 or x["fam"] == "pcm"]
+        st = [x for x in slots if x not in su]
+        fc = ";".join(["[0:i:%d]%s5.1[a%d]" % (x["pid"], rs, k) for k, x in enumerate(su)] +
+                      ["[0:i:%d]%sstereo[b%d]" % (x["pid"], rs, k) for k, x in enumerate(st)])
+        fc += ";" + "".join("[a%d]" % k for k in range(len(su))) + "amix=inputs=%d:normalize=0:duration=longest[su]" % len(su)
+        fc += ";" + "".join("[b%d]" % k for k in range(len(st))) + "amix=inputs=%d:normalize=0:duration=longest,surround=chl_out=5.1[st]" % len(st)
+        fc += ";[su][st]amix=inputs=2:normalize=0:duration=longest" + tempo + "[ao]"
+    else:
+        fc = ";".join("[0:i:%d]%s%s[s%d]" % (x["pid"], rs, lay, k) for k, x in enumerate(slots))
+        fc += ";" + "".join("[s%d]" % k for k in range(len(slots))) + "amix=inputs=%d:normalize=0:duration=longest" % len(slots) + tempo + "[ao]"
     return b + ["-i", "pipe:0", "-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]", "-sn", "-dn"] + vc + ar
 
 def rtgt():
@@ -315,6 +328,7 @@ def remux(why=None):
         QF.add(old.pid)   # replaced before any input: its 'no input' errors are expected
         SK.add(old.pid)
     NB[0] = 0
+    OADJ[0] = ADJ[0]
     ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
     threading.Thread(target=fferr, args=(ff,), daemon=True).start()
     FST[0] = mono()
@@ -334,6 +348,7 @@ AQ = {"pid": None, "t0": 0.0, "a": None, "told": False, "ever": False, "n": 0, "
 SK = set()   # encoders coax itself killed (not a GPU decoding failure)
 
 NB = [0]        # bytes sent to the running encoder
+OADJ = [0.0]    # the audio lead the running encoder was started with (a rebuild before any input keeps it)
 AOUT = [("ac3", 6, "5.1") if DOLBY51 else ("aac", 2, "stereo")]   # output audio of this DVR connection
 FEED = aslots.Feeder(ALANG, log, FF) if TRANSCODE else None
 
@@ -483,7 +498,11 @@ def gone():
 def put(b):
     if FEED:
         if NB[0] == 0 and FEED.wants_more(b):
+            ADJ[0] = OADJ[0]   # the same output timeline as the encoder it replaces
             remux()   # this encoder has had nothing yet: build the one these bytes need (nobody sees it)
+        if FEED.missing and not RP[0]:
+            RP[0] = "the provider's audio switched to %s; adding its input" % FEED.missing   # at the next keyframe
+            RP[1] = mono()
         b = (FEED.psi() if NB[0] == 0 else b"") + FEED.feed(b)   # a new encoder learns the audio inputs at once
     NB[0] += len(b)
     try:
@@ -1067,6 +1086,8 @@ def writer():
             if RP[0] and it[7] < en:
                 k_ = kfo(d, it[7], en) if now - RP[1] < 10 else it[7]
                 if k_ is not None:
+                    if FEED:
+                        FEED.learn(d)   # the new encoder is built for the audio this stream really has
                     if k_ > it[7] and (not SWP[0]):
                         put(d[it[7]:k_])
                     it[7] = k_
