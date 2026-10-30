@@ -967,7 +967,23 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   Australia and others) use 50 or 25, since 60 or 30 there makes motion judder.
 - **Which size?** 1080p with a GPU, 720p on weak hardware or when encoding on the CPU. The bitrates match what
   IPTV providers typically send.
-- Audio uses the feed's best track (the most channels, Dolby when there is a tie). When that track is Dolby Digital or Dolby Digital Plus, coax sends Dolby Digital 5.1 at 640 kbps, the highest Dolby Digital allows; otherwise AAC at 384 kbps with the source's channels, so stereo stays stereo. The format is picked when you tune and never changes while you watch: when a channel switches between 5.1 and stereo for ads, or coax fails over to a backup, the sound simply follows (stereo plays in the front left and right), with no hiccup and nothing for your receiver to re-sync. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep working. Interlaced sources are deinterlaced.
+- **Audio.** Two settings under Transcode decide what Channels DVR gets, the same for every channel and every
+  second:
+  - **Always send Dolby Digital 5.1 (640 kbps)**, for providers with Dolby audio: every channel goes out as Dolby
+    Digital 5.1 at 640 kbps, the most Dolby Digital allows. Stereo channels and stereo ads play in the front left
+    and right speakers, so your receiver never switches formats. Off (the default): AAC stereo at 384 kbps.
+  - **Audio language**: when a channel carries that language, coax plays it; otherwise the provider's main
+    track. The list has every ISO 639-2 language, the most spoken first.
+
+  coax picks the channel's track (your language, else the provider's main one; never an audio-description track
+  when there is another) and keeps it. Whatever the provider does with its audio, nothing restarts and the sound
+  never drops: a switch between 5.1 and stereo for ads, a different codec for an ad (Dolby to AAC and back), the
+  audio moving to another track, a track that stops, a backup with other audio. coax cuts the provider's audio
+  into frames and gives ffmpeg one input per exact format (Dolby Digital 2.0 and 5.1, Dolby Digital Plus, AAC
+  and HE-AAC, MPEG audio, DTS), each fed silence when it is not playing, so the decoder and its filters never
+  see a change. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep
+  working. Passthrough sends the provider's audio untouched.
+- Interlaced sources are deinterlaced.
 
 ### How the GPU is used
 

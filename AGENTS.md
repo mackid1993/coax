@@ -157,7 +157,22 @@ threads). `hlsloop.py` is the recommended path.
   both engines). **Passthrough** (that is its name; do not rename it to "remux") is `-c copy -copyts`, no GPU.
   Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
   `scale_vaapi`, `h264_vaapi`; NVIDIA CUDA decode, `bwdif_cuda`, `scale_cuda`, `h264_nvenc`), falling back to CPU
-  decode (`GPUDEC`) if GPU decode fails; audio: the feed's best track (`fmtprobe.tracks`/`pick`: most channels, then Dolby; mapped with `-map 0:i:<PID>?`, `APID`), in one format per DVR connection (`FMT`, chosen from the first segment before any output and kept across engine restarts and hand switches through the state file): AC-3 5.1 640k when that track is Dolby, else AAC 384k with its channels (2 or 6), 48 kHz. A provider switching between 5.1 and stereo, or a failover to a different feed, never restarts the encoder: ffmpeg rebuilds its audio filter and fits the audio to the fixed format (stereo in the front left and right of 5.1). A better track found later waits for the next restart the engine makes anyway. ffmpeg stderr goes through `fferr`: decoder noise in an encoder's first 10 s is dropped, later decoder errors are summed once a minute.
+  decode (`GPUDEC`) if GPU decode fails. Audio goes through `aslots.Feeder` (in `put()`): it rewrites the PMT so
+  the provider's audio tracks are replaced by 17 fixed inputs, one per exact decoded format (`aslots.SLOTS`:
+  AC-3 2.0/5.1/1.0/5.0, E-AC-3 2.0/5.1, AAC LC 2.0 48/44.1 kHz, 5.1, mono, HE-AAC 48/44.1, HE-AAC v2, MPEG audio
+  2.0/mono, LATM, DTS 5.1; PIDs 0x1FC0+), cuts the chosen track into frames (`aframes.frame`) and sends each to
+  the input of its format with its own PTS, and fills every other input with silent frames on the same clock
+  (on the video clock when no audio plays). A new encoder gets `Feeder.psi()` first and every input starts at the
+  chunk's earliest timestamp (the probe always finds them; ffmpeg's start time is unchanged). ffmpeg decodes all
+  inputs and mixes them (`amix=normalize=0`) into `AOUT`: AC-3 5.1 640k with `transcode_dolby`, else AAC stereo
+  384k, fixed per DVR connection (state file `aout`). Track choice (`Feeder._choose`): `audio_language` (ISO
+  639-2, `languages.json`), else the first-listed track's language (untagged counts as it); audio description
+  and similar extra tracks only if nothing else; only tracks delivering in the last second; most channels, then
+  Dolby; sticky (a stereo ad never trades the 5.1 track away; another track replaces it only after carrying
+  surround for several checks). Rules that keep ffmpeg's timeline sane: never send a PTS that goes back on an
+  input (overlap is skipped, a frame far from the picture clock is dropped as stale, a real clock restart resets
+  every input), and a codec switch only drops the half-cut buffer. With the feeder the engine's own
+  "stream layout changed" restart ignores audio-only changes (hlsloop `tsig`).
 - **ffmpeg flags** (pinned by `FfmpegArgsTest` and `TranscodeAudioTest` in `tests/test_engine_adapt.py`):
   - Probe: the base `-probesize 1000000 -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s). The
     1.0.4 5 s probe and `-muxdelay 0 -muxpreload 0` were removed in 1.0.5: they were believed to fix an HE-AAC
@@ -172,8 +187,8 @@ threads). `hlsloop.py` is the recommended path.
     In a refill both video (`setpts=PTS*x`) and audio (`asetpts=PTS*x` before `atempo`) scale timestamps from 0,
     not from `STARTPTS`: a rebuilt audio filter (5.1 to stereo at an ad) would otherwise restart its stretch and
     run ahead of the picture by 3% of the encoder's age.
-  - No `-drop_changed:a` since 1.0.7-4: the output format is fixed (`-ac`, `-ar`), so ffmpeg rebuilds the audio
-    filter on a parameter change instead of dropping frames (which went silent until a restart). Guard: `silent(pid, b)` in both engines; if a transcode encoder
+  - No `-drop_changed:a` since 1.0.7-4: every audio input has one fixed format (aslots), so ffmpeg never
+    rebuilds an audio filter; a rebuild in a multi-input graph could drop a fraction of a second. Guard: `silent(pid, b)` in both engines; if a transcode encoder
     sends video but no audio for 10 s, at least 15 s after it started, it is killed so it restarts with the
     new format. At most once per encoder, then again only after 1, 2, 4 ... 10 minutes while sound stays
     missing; never for a feed that has had no sound since the engine started. Its kills are kept in `SK`, so

@@ -188,13 +188,15 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   by hand with Switch and Disable on the Status card. (HISTORY 4.7, 4.8)
 - **ffmpeg probe stays at 1 MB / 1 s.** The 5 s probe and `-muxdelay 0 -muxpreload 0` of 1.0.4 were believed to
   fix an HE-AAC lip-sync bug; the feed was out of sync at the provider and both were removed. (HISTORY 4.6, 4.7)
-- **Transcode audio:** `aresample=async=1:min_hard_comp=0.1` (plus `asetpts=PTS*x,atempo` in a refill, with
-  video `setpts=PTS*x`, both from 0), no `first_pts`, never `async=1000` (it stretched audio 5 s off on a healthy
-  feed). One output format per DVR connection (AC-3 5.1 640k for a Dolby source, else AAC 384k with the source's
-  channels), chosen before any output and never changed: audio changes (ads switching 5.1 and stereo, failovers)
-  are absorbed by ffmpeg rebuilding its filter, never by an encoder restart (owner: restarts show on screen).
-  `-drop_changed:a` is gone (1.0.7-4). `-dts_delta_threshold 86400`: ffmpeg never rewrites timestamps after a
-  jump; the engine continues the timeline itself. `FfmpegArgsTest` and `TranscodeAudioTest` pin these.
+- **Transcode audio:** `aresample=async=1:min_hard_comp=0.1` per input (plus `asetpts=PTS*x,atempo` in a refill,
+  with video `setpts=PTS*x`, both from 0), no `first_pts`, never `async=1000` (it stretched audio 5 s off on a
+  healthy feed). Output fixed per DVR connection by the owner's setting (Dolby Digital 5.1 640k, or AAC stereo
+  384k). Never an encoder restart or filter rebuild for an audio change (owner: restarts show on screen; "I
+  can't accept any gaps"): the audio feeder (aslots) gives ffmpeg one input per exact format, so 5.1/stereo ads,
+  codec switches, track moves and dropouts only move the audio between inputs. A rebuild in a multi-input graph
+  dropped 0.13 s at random (7 of 15 runs); with fixed-format inputs, 0 of 30. `-drop_changed:a` is gone.
+  `-dts_delta_threshold 86400`: ffmpeg never rewrites timestamps after a jump; the engine continues the
+  timeline itself. `FfmpegArgsTest`, `TranscodeAudioTest` and `tests/test_audio_slots.py` pin these.
 - **Passthrough is called passthrough** (`-c copy -copyts`). Do not rename it to "remux".
 - **Transcoding is the right tool** for a fixed output format across feeds and for the 3% refill. Every
   passthrough alternative failed: a new MPEG-TS program at a switch froze the Apple TV permanently; dropping
@@ -369,7 +371,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 347 after 1.0.7-4, about 50 s.
+- **Tests:** 353 after the audio inputs (1.0.7-4), about 50 s.
 
 ---
 
@@ -465,14 +467,18 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   (Dolby from the first byte; AAC to Dolby mid-stream with a continuous timeline).
 - **1.0.7-2, -3** (Oct 30, the other agent) audio layout changes no longer freeze; Dolby channels always send 5.1,
   stereo ads in the front left and right; quieter logs; CDN session tokens masked.
-- **1.0.7-4** (Oct 30) from an adversarial audit of the Dolby work: one audio format per DVR connection (Dolby
-  5.1 640k for a Dolby source, else AAC 384k with the source's channels, so stereo channels are unchanged),
-  chosen before any output and kept through engine restarts and hand switches; the best audio track (most
-  channels, then Dolby) mapped by PID; no encoder restart for audio changes (`-drop_changed` gone, ffmpeg
-  rebuilds the filter); a refill scales audio and video timestamps from 0, so a 5.1/stereo switch during a
-  refill no longer puts the sound ahead of the picture (reproduced: 1.2 s ahead 40 s in); MPEG-TS engine no
-  longer crashes on every reconnect (`QUIET` name clash from 1.0.7-2). Tested offline end to end (HLS and TS:
-  stereo, Dolby 5.1/stereo flips, AAC 5.1/stereo flips, two tracks, a TS dropout).
+- **1.0.7-4** (Oct 30) audio rebuilt so a transcode never restarts or drops sound for an audio change: one
+  ffmpeg input per exact audio format (aslots), the provider's track cut into frames and routed to its input,
+  silence elsewhere. Settings > Transcode: "Always send Dolby Digital 5.1 (640 kbps)" (else AAC stereo 384k) and
+  "Audio language" (all 482 ISO 639-2 languages, most spoken first). Track choice: preferred language, else the
+  main track's, never audio description when there is another, sticky through stereo ads. Refill timestamps
+  scaled from 0, so a 5.1/stereo switch during a refill no longer puts the sound ahead (it did, 1.2 s at 40 s in).
+  MPEG-TS engine no longer crashes on every reconnect (`QUIET` clash from 1.0.7-2). Tested offline, each case
+  repeated, gaps counted: 5.1/stereo flips (Dolby, AAC), Dolby to AAC on one track, a six-codec chain (E-AC-3,
+  MP2, HE-AAC, AC-3, AAC, DTS), no audio, late audio, a 30 s dropout, two languages, audio description, an empty
+  second track, an encoder starting mid-stream, a PTS wrap, a two-packet PMT, the refill, stereo with the setting
+  off; end to end with the real hub on HLS and MPEG-TS (with a reconnect). GPU paths not tested (no GPU on
+  Artemis); live test on Apollo pending.
 
 ---
 
