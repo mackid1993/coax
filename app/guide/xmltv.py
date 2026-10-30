@@ -4,7 +4,8 @@ refresh(config) downloads every provider's XMLTV source (gzip or plain), parses 
 with a streaming iterparse that clears each element after use, and writes one file
 per lineup, /data/cache/xmltv-<lineup_id>.xml, holding only the channels that
 enabled coax channels with guide mode "xmltv" or "both" point at. Channel ids are
-rewritten to coax-<channel id> in both <channel id> and <programme channel>.
+rewritten to coax-<channel id> in both <channel id> and <programme channel>. Channels with no guide of their own
+whose stream is an event channel get airings read from the stream's name (app.guide.events).
 
 It also caches every channel id and display name each provider offers, in
 /data/cache/xmltv-ids-<provider_id>.json, for the UI picker.
@@ -381,6 +382,7 @@ def _refresh(config):
                 summary["lineups"][lineup_id] = {
                     "ok": False, "error": "kept the previous guide; failed: " + ", ".join(bad)}
                 continue
+            _add_events(config, lineup_id, writer)
             try:
                 writer.finish(guide_path(lineup_id))
                 summary["lineups"][lineup_id] = {
@@ -394,6 +396,22 @@ def _refresh(config):
             writer.discard()
     summary["finished_at"] = _now()
     return summary
+
+
+def _add_events(config, lineup_id, writer):
+    """Airings read from event channels' stream names (app.guide.events), for channels with no guide of their own.
+    A failure leaves them out and keeps the rest of the guide."""
+    from app.guide import events
+    try:
+        channels, programmes = events.entries(config, lineup_id)
+    except Exception:  # noqa: BLE001
+        log.exception("event guide entries for lineup %s failed", lineup_id)
+        return
+    for elem, out in [(c, writer.channels) for c in channels] + [(p, writer.programmes) for p in programmes]:
+        elem.tail = "\n"
+        out.write("  " + ET.tostring(elem, encoding="unicode"))
+    writer.channel_count += len(channels)
+    writer.programme_count += len(programmes)
 
 
 def _fetch_and_parse(url, provider, wanted, route, folder):
