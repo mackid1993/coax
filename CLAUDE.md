@@ -490,6 +490,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   lost the restart's timeline offset, audio 1.2 s or more off its video stayed silent, audio description could
   win over the main track, the video-clock silence overwrote unsent audio, long ID3 tags lost a chunk; all fixed.
   A codec family with no open input now asks for a keyframe restart instead of feeding another decoder.
+- **1.0.7-7** (Oct 30) fix of a 1.0.7-6 regression: the feeder's audio clock counted every forward step between
+  video timestamps, and B-frames (nearly all broadcast H.264) made it run about 1.65x fast: after a 5 s audio
+  dropout the sound came back 3.5 s late, after a 20 s one never. Now it advances only past the newest video
+  timestamp, and a provider clock jump shared by the pictures is followed.
 
 ---
 
