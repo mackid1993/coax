@@ -21,7 +21,8 @@ def parse(name, now=NOW):
 
 
 class ParseTests(unittest.TestCase):
-    """Names as providers write them (the first group from a real Xtream panel, the rest from epg3r's fixtures)."""
+    """Names as providers write them: shapes seen on a real Xtream panel, and the formats epg3r's source comments
+    describe (the team names are made up)."""
 
     def test_dated_event(self):
         p = parse("NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET")
@@ -124,20 +125,20 @@ class ParseTests(unittest.TestCase):
                          "The Rich Eisen Show")
 
 
-class HasGuideTests(unittest.TestCase):
+class GuideSourceTests(unittest.TestCase):
     def test_rules(self):
         station = {"mode": "gracenote", "station_id": "123"}
-        empty_gn = {"mode": "gracenote", "station_id": ""}
+        hint = {"mode": "gracenote", "station_id": "", "xmltv_id": "NHL01.us"}   # a new channel's provider tvg-id
         xml = {"mode": "xmltv", "xmltv_id": "x.us"}
         none = {"mode": "none"}
-        self.assertTrue(events.has_guide("gracenote", none))         # no XMLTV in that lineup at all
-        self.assertTrue(events.has_guide("per-channel", station))
-        self.assertTrue(events.has_guide("per-channel", xml))
-        self.assertFalse(events.has_guide("per-channel", empty_gn))
-        self.assertFalse(events.has_guide("per-channel", none))
-        self.assertFalse(events.has_guide("xmltv", station))           # an xmltv lineup sends no station
-        self.assertTrue(events.has_guide("both", station))
-        self.assertFalse(events.has_guide("both", none))
+        self.assertEqual(events.guide_source("per-channel", station), "gracenote")
+        self.assertEqual(events.guide_source("per-channel", xml), "xmltv")
+        self.assertEqual(events.guide_source("per-channel", hint), "")      # the hint is not a guide there
+        self.assertEqual(events.guide_source("per-channel", none), "")
+        self.assertEqual(events.guide_source("xmltv", station), "")         # an xmltv lineup sends no station
+        self.assertEqual(events.guide_source("both", station), "gracenote")
+        self.assertEqual(events.guide_source("both", hint), "xmltv")        # a both lineup sends the hint
+        self.assertEqual(events.guide_source("both", none), "")
 
 
 STREAMS = {
@@ -215,6 +216,21 @@ class EntriesTests(unittest.TestCase):
         self.assertEqual(events.lineup_events(cfg, "main", NOW)[0][1]["slot"], "01")
         cfg["providers"][0]["enabled"] = False
         self.assertEqual(events.lineup_events(cfg, "main", NOW), [])
+
+    def test_xmltv_id_without_programmes_gets_entries(self):
+        from app import server
+        cfg = make_config()
+        cfg["lineups"][0]["guide"] = "both"
+        # Channel 1 made the way coax makes a channel from a stream: Gracenote, the tvg-id kept as a hint.
+        fields = server.channel_fields_from_stream("p1", {"stream_id": "1", "name": STREAMS[("p1", "1")],
+                                                          "tvg_id": "BossSports.NHL.01"})
+        cfg["channels"][0]["guide"] = fields["guide"]
+        self.assertEqual(fields["guide"]["xmltv_id"], "BossSports.NHL.01")
+        chans, progs = events.entries(cfg, "main", NOW, covered=set(), listed={1})
+        self.assertIn("coax-1", {p.get("channel") for p in progs})
+        self.assertNotIn("coax-1", {c.get("id") for c in chans})   # the provider's <channel> is already there
+        _chans, progs = events.entries(cfg, "main", NOW, covered={1}, listed={1})
+        self.assertNotIn("coax-1", {p.get("channel") for p in progs})   # the provider's XMLTV has programmes
 
     def test_gracenote_lineup_has_no_entries(self):
         cfg = make_config()

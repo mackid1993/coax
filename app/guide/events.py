@@ -20,12 +20,13 @@ written in Go and ported here in coax's own terms:
     them as sports and passes that record only new airings see them.
   * A time with no day is not evidence of a day: providers keep a game's name on a channel long after it
     ended, and reading it as today puts last night's game on tonight. Such a name gets no airing.
-  * A time that names no zone ("19:30", "2026-10-30 13:00:00") is not read: the numbers do not say which clock
-    they are on, and one provider writing them was five hours off another's for the same games. A guessed zone
-    would put the airing, and its recording, at the wrong time. In a "start: ... stop: ..." window the stop is
-    the provider's block length, not the game's end, so the window is never read.
+  * A "start: ... stop: ..." window states no zone (epg3r found one provider's five hours off the others' for
+    the same games) and its stop is the provider's block length, not the game's end, so it is never read. coax
+    goes one step further: no time that names no zone ("19:30", "2026-10-30 13:00:00") is read, because a
+    guessed zone puts the airing, and its recording, hours off.
   * A block with nothing on still gets an entry: an empty guide cell looks broken rather than empty.
-  * Game lengths per league (NFL 3 h 30 min, NBA 3 h, ...) for the airing's end.
+  * Game lengths per league (NFL 3 h 30 min, NBA 3 h, ...) for the airing's end, and the airing titles, from
+    epg3r's league table (the only data taken from it; its team roster and Gracenote ids are not used).
 """
 
 import datetime
@@ -241,17 +242,20 @@ def parse(name, zone, now):
 # Which channels, and their XMLTV
 # ----------------------------------------------------------------------
 
-def has_guide(lineup_guide, g):
-    """Whether a channel has guide data of its own in a lineup with this guide setting."""
+def guide_source(lineup_guide, g):
+    """Where a channel's guide comes from in a lineup with this guide setting: "gracenote" (a station), "xmltv"
+    (an XMLTV id the lineup sends, a new channel's provider tvg-id included) or "" (none)."""
     station, xmltv_id = (g.get("station_id") or "").strip(), (g.get("xmltv_id") or "").strip()
-    if lineup_guide == "gracenote":
-        return True       # the lineup takes no XMLTV at all
     if lineup_guide == "xmltv":
-        return bool(xmltv_id)
-    if lineup_guide == "both":
-        return bool(station or xmltv_id)
+        return "xmltv" if xmltv_id else ""
+    if lineup_guide in ("gracenote", "both"):
+        if station:
+            return "gracenote"
+        return "xmltv" if lineup_guide == "both" and xmltv_id else ""
     mode = g.get("mode")
-    return bool((mode == "gracenote" and station) or (mode == "xmltv" and xmltv_id))
+    if mode == "gracenote" and station:
+        return "gracenote"
+    return "xmltv" if mode == "xmltv" and xmltv_id else ""
 
 
 def _zone(config):
@@ -272,12 +276,14 @@ def _stream_name(ref):
     return (stream or {}).get("name") or ""
 
 
-def lineup_events(config, lineup_id, now=None):
+def lineup_events(config, lineup_id, now=None, covered=None):
     """[(channel, parsed)] for the lineup's channels with no guide whose main stream's name is an event or says
-    nothing is on. A lineup switched off has none."""
+    nothing is on. A channel whose guide is an XMLTV id counts as having none when its provider's XMLTV gave it no
+    programmes: covered is the set of channel ids that got some (None: unknown, count it as none). A lineup
+    switched off, or one that takes Gracenote only (no XMLTV reaches Channels DVR), has none."""
     from app.guide import output
     lineup = output.find_lineup(config, lineup_id)
-    if lineup is None or lineup.get("enabled", True) is False:
+    if lineup is None or lineup.get("enabled", True) is False or lineup.get("guide") == "gracenote":
         return []
     now = now or datetime.datetime.now(datetime.timezone.utc)
     zone = _zone(config)
@@ -289,7 +295,8 @@ def lineup_events(config, lineup_id, now=None):
         if ch is None or str(cid) in seen or not output.listed(ch, off) or not ch.get("uuid"):
             continue
         seen.add(str(cid))
-        if has_guide(lineup.get("guide") or "per-channel", ch.get("guide") or {}):
+        source = guide_source(lineup.get("guide") or "per-channel", ch.get("guide") or {})
+        if source == "gracenote" or (source == "xmltv" and covered is not None and ch.get("id") in covered):
             continue
         ref = next((r for r in ch.get("streams") or []
                     if not r.get("disabled") and str(r.get("provider")) not in off), None)
@@ -302,9 +309,6 @@ def lineup_events(config, lineup_id, now=None):
 def fingerprint(config, lineup_id):
     """What the lineup's event entries say, without the filler around them: the DVR sync downloads the guide
     again when it changes (a catalog refresh gave a slot a new event)."""
-    from app.guide import output
-    if (output.find_lineup(config, lineup_id) or {}).get("guide") == "gracenote":
-        return []
     return [(ch.get("id"), p["kind"], p.get("key"), p["start"].isoformat() if p.get("start") else "")
             for ch, p in lineup_events(config, lineup_id)]
 
@@ -330,20 +334,22 @@ def _programme(cid, start, stop, title, desc="", logo=""):
     return elem
 
 
-def entries(config, lineup_id, now=None):
-    """XMLTV <channel> and <programme> elements for the lineup's event channels: (channels, programmes)."""
+def entries(config, lineup_id, now=None, covered=None, listed=()):
+    """XMLTV <channel> and <programme> elements for the lineup's event channels: (channels, programmes).
+    covered as in lineup_events; listed holds channel ids that already have a <channel> element."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     hour = now.astimezone(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
     until = hour + datetime.timedelta(hours=FILLER_HOURS)
     zone = _zone(config)
     channels, programmes = [], []
-    for ch, p in lineup_events(config, lineup_id, now):
+    for ch, p in lineup_events(config, lineup_id, now, covered):
         cid, logo = ch["id"], ch.get("logo") or ""
-        elem = ET.Element("channel", {"id": f"coax-{cid}"})
-        _text(elem, "display-name", ch.get("name") or "")
-        if logo:
-            _text(elem, "icon", None, src=logo)
-        channels.append(elem)
+        if cid not in listed:
+            elem = ET.Element("channel", {"id": f"coax-{cid}"})
+            _text(elem, "display-name", ch.get("name") or "")
+            if logo:
+                _text(elem, "icon", None, src=logo)
+            channels.append(elem)
         nothing = "No event scheduled"
         if p["kind"] == "idle":
             programmes.append(_programme(cid, hour, until, nothing, logo=logo))

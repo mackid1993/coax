@@ -195,6 +195,8 @@ class _LineupWriter:
         self.programmes = os.fdopen(fd, "w", encoding="utf-8")
         self.channel_count = 0
         self.programme_count = 0
+        self.listed = set()        # coax channel ids with a <channel> element
+        self.covered = set()       # coax channel ids with at least one <programme>
 
     def finish(self, final_path):
         """Assemble the lineup file and move it into place atomically."""
@@ -272,6 +274,7 @@ def parse_source(stream, wanted, route):
                     for writer in route.get(coax_id, ()):
                         writer.channels.write(text)
                         writer.channel_count += 1
+                        writer.listed.add(coax_id)
         elif elem.tag == "programme":
             xid = elem.get("channel") or ""
             if xid in wanted:
@@ -280,6 +283,7 @@ def parse_source(stream, wanted, route):
                     for writer in route.get(coax_id, ()):
                         writer.programmes.write(text)
                         writer.programme_count += 1
+                        writer.covered.add(coax_id)
         # Free the element and drop it from the root so memory stays bounded.
         elem.clear()
         if root is not None:
@@ -399,11 +403,11 @@ def _refresh(config):
 
 
 def _add_events(config, lineup_id, writer):
-    """Airings read from event channels' stream names (app.guide.events), for channels with no guide of their own.
-    A failure leaves them out and keeps the rest of the guide."""
+    """Airings read from event channels' stream names (app.guide.events), for channels with no guide of their own
+    or whose XMLTV id got no programmes. A failure leaves them out and keeps the rest of the guide."""
     from app.guide import events
     try:
-        channels, programmes = events.entries(config, lineup_id)
+        channels, programmes = events.entries(config, lineup_id, covered=writer.covered, listed=writer.listed)
     except Exception:  # noqa: BLE001
         log.exception("event guide entries for lineup %s failed", lineup_id)
         return
