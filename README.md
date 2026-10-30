@@ -1454,14 +1454,36 @@ Actions by commit SHA.
   ported from its Go code (`main.go`, `m3uintegration.go`). ah4c is released under an MIT-style license,
   Copyright 2023 Fancy Bits, LLC.
 - Guide data for event channels (`app/guide/events.py`) borrows from
-  [epg3r](https://github.com/maddox/epg3r) by Jon Maddox, reimplemented in Python from the ideas in its Go code: reading the event, its
-  time and its time zone from the channel name, the time-with-no-day and window rules, one listing per event
-  across channels (the `episode/` episode id Channels DVR honors), the live, new and *Sports* markings, and the
-  league game lengths. The only data taken from epg3r is the short table of league names, airing titles and
-  game lengths; its team list, artwork and test playlists are not used. The events are read from your own
-  provider's channel names, the Gracenote listings, series ids and team ids come from your own Channels DVR, and
-  team logos and streaming games from ESPN's public team lists and scoreboards (`site.api.espn.com`, images on
-  `a.espncdn.com`).
+  [epg3r](https://github.com/maddox/epg3r) by Jon Maddox. No code was copied: coax reimplements these ideas from
+  epg3r, written in Go, in its own Python. Every concept taken from it:
+  - reading an event channel from its name alone: the slot label (`NHL 01:`), then the date, time and time
+    zone, then trailing notes, each piece classified on its own;
+  - what "nothing on" looks like: `NO EVENT`, `TBD`, an empty slot, and a far-future sentinel date
+    (`2098 12 31`);
+  - a "No event scheduled" block for an empty slot, so the guide never looks broken;
+  - `EST` meaning New York all year (providers never write `EDT`), a day-first date when the month is over 12,
+    and the year that puts the date nearest today;
+  - a time with no day is not today (providers keep a finished game's name on the slot);
+  - a `start: ... stop: ...` window is not a time: it names no zone, and its stop is the provider's block
+    length;
+  - feed notes (`Home`, `Away`, `In-Arena`, `Panthers Broadcast`) are the same game on another feed;
+  - one listing per game across channels, through an episode id that starts with `episode/`, which Channels
+    DVR uses as the airing's identity;
+  - that identity being the day, read in one time zone, plus the two sides in sorted order, never the minute;
+  - marking airings live and new, with the *Sports event* and *Sports* categories and HDTV quality, and
+    sending Gracenote team ids as `<team-id system="tms">`;
+  - league airing titles like Gracenote's (*NFL Football* with the matchup as the episode), each league's
+    Gracenote series, and its usual game length (the one piece of data taken from epg3r: its short league
+    table of titles, genres and game lengths);
+  - starting an airing read from a name 15 minutes before the listed time;
+  - team logos from ESPN's public logo server.
+
+  Not from epg3r: its team list, Gracenote id file, ESPN logo ids, artwork, fonts and test playlists are not
+  used. The events are read from your own provider's channel names; the Gracenote listings, series ids and team
+  ids come from your own Channels DVR; team logos and streaming games come from ESPN's public team lists and
+  scoreboards (`site.api.espn.com`, images on `a.espncdn.com`). Matching games to Channels DVR's guide and to
+  ESPN's scoreboards, placing a name with no date that way, the team name matching, and never guessing a time
+  zone are coax's own.
 - Provider ingest, group selection, connection limits and refresh follow the behavior of
   [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.

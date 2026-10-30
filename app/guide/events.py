@@ -17,25 +17,34 @@ day comes from Gracenote, never from a guess. The teams Gracenote names there gi
 games it does not list (an out-of-market game only the provider carries). A streaming game no TV guide lists
 (ESPN+, Peacock, ...) is looked up on ESPN's public scoreboards, and team logos come from ESPN's team lists.
 
-The approach and the Channels DVR details come from epg3r by Jon Maddox (https://github.com/maddox/epg3r),
-written in Go and ported here in coax's own terms:
+The approach and the Channels DVR details come from epg3r by Jon Maddox (https://github.com/maddox/epg3r).
+No code was copied: these ideas from his Go code are reimplemented here in coax's own terms (the README's
+Credits list them all):
+  * Reading a slot name alone: the label, then the date, time and zone, then trailing notes, each piece on its
+    own. What "nothing on" looks like (NO EVENT, TBD, an empty slot, a 2060-2099 sentinel date), and a "No event
+    scheduled" block for it: an empty guide cell looks broken rather than empty.
+  * "EST" all year means New York (providers never write "EDT"); a numeric date with a month over 12 is
+    day-first; a date with no year takes the year nearest today.
   * The episode-num value starts with "episode/". Channels DVR uses such a value as the airing's identity
     whatever its system attribute says; any other episode-num is ignored and the sub-title decides. The id is
     the same on every channel carrying the event, so Channels DVR records it once.
   * The identity is the day (read in one zone, coax's) and the sides of a matchup in sorted order, never the
-    minute: "A vs B" and "B at A" are one game, and a provider moving 7:00 to 7:05 is not a new one.
-  * Airings are marked live and new, with the "Sports event" and "Sports" categories, so Channels DVR files
-    them as sports and passes that record only new airings see them; team ids go in <team-id system="tms">.
+    minute: "A vs B" and "B at A" are one game, and a provider moving 7:00 to 7:05 is not a new one. Feed notes
+    (Home, Away, In-Arena, "Panthers Broadcast") are the same game.
+  * Airings are marked live and new, HDTV, with the "Sports event" and "Sports" categories, so Channels DVR
+    files them as sports and passes that record only new airings see them; team ids go in
+    <team-id system="tms">.
   * A time with no day is not evidence of a day: providers keep a game's name on a channel long after it
     ended, and reading it as today puts last night's game on tonight. Such a name gets an airing only when the
-    Gracenote guide has that game at that time of day.
+    Gracenote guide has that game at that time of day (that placement is coax's own).
   * A "start: ... stop: ..." window states no zone (epg3r found one provider's five hours off the others' for
     the same games) and its stop is the provider's block length, not the game's end, so it is never read. coax
     goes one step further: no time that names no zone ("19:30", "2026-10-30 13:00:00") is read as a date,
     because a guessed zone puts the airing, and its recording, hours off.
-  * A block with nothing on still gets an entry: an empty guide cell looks broken rather than empty.
-  * Game lengths per league (NFL 3 h 30 min, NBA 3 h, ...) and airing titles from epg3r's league table, for
-    games Gracenote does not list (the only data taken from epg3r; its team roster is not used).
+  * League airing titles like Gracenote's, each league's Gracenote series, and game lengths per league (NFL
+    3 h 30 min, NBA 3 h, ...), from epg3r's league table (the only data taken from epg3r; its team roster is
+    not used). An airing read from a name starts 15 minutes early.
+  * Team logos from ESPN's public logo server.
 """
 
 import datetime
