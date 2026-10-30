@@ -640,11 +640,15 @@ class Feeder:
         if k is None:
             return
         d = d[k:]
+        sec = None   # a PMT that spans packets, assembled here (feed() keeps its own)
         for i in range(0, len(d) - 187, 188):
             p = d[i:i + 188]
-            if p[0] != 0x47 or not p[1] & 0x40:
+            if p[0] != 0x47:
                 continue
             pid = (p[1] & 31) << 8 | p[2]
+            pusi = p[1] & 0x40
+            if not pusi and (sec is None or pid != self.pmt_pid):
+                continue
             af = p[3] >> 4 & 3
             if af == 2:
                 continue
@@ -660,11 +664,18 @@ class Feeder:
                             break
                     self.pat = bytes(p)   # psi() sends this stream's PAT, pointing at the PMT it really has
             elif pid == self.pmt_pid:
-                q = o + 1 + p[o]
-                if q + 3 <= 188 and p[q] == 2:
-                    need = 3 + ((p[q + 1] & 15) << 8 | p[q + 2])
-                    if q + need <= 188:
-                        self._pmt(bytes(p[q:q + need]), send=False)
+                if pusi:
+                    q = o + 1 + p[o]
+                    sec = bytearray(p[q:188]) if q < 188 and p[q] == 2 else None
+                else:
+                    sec += p[o:188]
+                if sec is not None and len(sec) >= 3:
+                    need = 3 + ((sec[1] & 15) << 8 | sec[2])
+                    if need > 1024:
+                        sec = None
+                    elif len(sec) >= need:
+                        self._pmt(bytes(sec[:need]), send=False)
+                        sec = None
             elif pid in self.fam:
                 pay = p[o:]
                 if pay[:3] == b"\x00\x00\x01" and len(pay) > 9:

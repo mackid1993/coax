@@ -40,12 +40,15 @@ def program(streams, pmt=0x100):
     """PAT (program 1 on PID 0x100) and a PMT: [(stream_type, pid, descriptors)] after a video stream on 0x101."""
     pat = b"\x00" + b"\x00\xb0\x0d\x00\x01\xc1\x00\x00" + bytes([0, 1, 0xE0 | pmt >> 8, pmt & 0xFF])
     pat += aslots._crc(pat[1:]).to_bytes(4, "big")
+    return ts(0, pat) + ts(pmt, b"\x00" + pmt_section(streams))
+
+
+def pmt_section(streams):
     es = bytes([0x1B, 0xE1, 0x01, 0xF0, 0]) + b"".join(
         bytes([st, 0xE0 | pid >> 8, pid & 0xFF, 0xF0, len(d)]) + d for st, pid, d in streams)
     n = 9 + len(es) + 4
     sec = bytes([0x02, 0xB0 | n >> 8, n & 0xFF]) + b"\x00\x01\xc1\x00\x00\xe1\x01\xf0\x00" + es
-    sec += aslots._crc(sec).to_bytes(4, "big")
-    return ts(0, pat) + ts(pmt, b"\x00" + sec)
+    return sec + aslots._crc(sec).to_bytes(4, "big")
 
 
 def lang(code, audio_type=0):
@@ -191,6 +194,18 @@ class FailoverTests(unittest.TestCase):
         out = f.psi()
         self.assertEqual(self.pmt_pid_of(out[:188]), 0x200)
         self.assertEqual((out[189] & 31) << 8 | out[190], 0x200)
+
+    def test_a_backup_whose_table_spans_two_packets_gets_it_too(self):
+        f = self.old_stream()
+        tracks = [(0x81, 0x110 + k, lang("eng") + bytes([0x6A, 30]) + b"\x00" * 30) for k in range(6)]
+        sec = pmt_section(tracks)
+        self.assertGreater(len(sec), 183)
+        f.learn(program(tracks, pmt=0x200)[:188] + packets(0x200, b"\x00" + sec))
+        f.plan()
+        out = f.psi()
+        self.assertEqual(self.pmt_pid_of(out[:188]), 0x200)
+        self.assertEqual((out[189] & 31) << 8 | out[190], 0x200)
+        self.assertEqual(sorted(f.fam), [0x110 + k for k in range(6)])
 
     def test_a_backup_whose_tables_were_not_seen_gets_none_of_the_old_ones(self):
         f = self.old_stream()
