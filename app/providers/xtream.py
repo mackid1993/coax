@@ -224,7 +224,11 @@ def fetch_catalog(provider):
             "tvg_id": item["epg_channel_id"],
             "num": item.get("num") or "",
         })
-    return {"groups": groups, "streams": result, "categories_missing": categories_missing}
+    try:   # the plan's expiry for the provider card; panels without one (or a failed answer) just leave it out
+        expires = to_int(account_info(provider).get("exp_date")) or None
+    except Exception:  # noqa: BLE001
+        expires = None
+    return {"groups": groups, "streams": result, "categories_missing": categories_missing, "expires": expires}
 
 
 def line_server(provider, line):

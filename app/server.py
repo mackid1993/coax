@@ -1027,7 +1027,8 @@ class Handler(BaseHTTPRequestHandler):
         except ApiError:
             entry = None
         view["catalog"] = ({"fetched_at": entry["catalog"].get("fetched_at"), "streams": len(entry["by_id"]),
-                            "groups": len(entry["group_counts"])} if entry else None)
+                            "groups": len(entry["group_counts"]), "expires": entry["catalog"].get("expires")}
+                           if entry else None)
         view["refresh"] = self.app.refresh_status().get(provider["id"])
         return view
 

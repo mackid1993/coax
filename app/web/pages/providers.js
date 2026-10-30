@@ -54,12 +54,16 @@ function cardHtml(p) {
     : `<span class="badge badge-warn"><span class="dot"></span>Not fetched</span>`;
   const host = p.type === "m3u" ? p.m3u_url : p.server;
   const on = p.enabled !== false;
+  // Xtream plan expiry, when the panel reports one: warns in the last week, red once it has passed.
+  const exp = Number(cat.expires) ? new Date(Number(cat.expires) * 1000) : null;
+  const days = exp ? (exp - Date.now()) / 864e5 : null;
+  const expires = exp ? `<span class="badge ${days < 0 ? "badge-bad" : days < 7 ? "badge-warn" : ""}" title="Plan expiry reported by the provider">${days < 0 ? "Expired" : "Expires"} ${esc(exp.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }))}</span>` : "";
   return `<article class="card provider-card${on ? "" : " is-off"}" data-id="${esc(p.id)}">
     <div class="provider-top">
       <div class="provider-glyph ${p.type === "m3u" ? "m3u" : ""}">${icon(p.type === "m3u" ? "lineups" : "signal")}</div>
       <div style="flex:1;min-width:0">
         <div class="row row-wrap" style="gap:8px"><span class="provider-title">${esc(p.name)}</span>
-          <span class="badge">${p.type === "m3u" ? "M3U" : "Xtream"}</span><span class="badge">${esc((p.format || "hls").toUpperCase())}</span>${on ? state : `<span class="badge badge-warn"><span class="dot"></span>Off</span>`}</div>
+          <span class="badge">${p.type === "m3u" ? "M3U" : "Xtream"}</span><span class="badge">${esc((p.format || "hls").toUpperCase())}</span>${on ? state : `<span class="badge badge-warn"><span class="dot"></span>Off</span>`}${expires}</div>
         <div class="faint small mono ellip" style="margin-top:4px">${esc(redact(host || ""))}</div>
         ${r.state === "error" && r.error ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(r.error)}</div>` : ""}
         ${r.vanished_count ? `<div class="small" style="color:var(--warn);margin-top:6px">${fmtInt(r.vanished_count)} streams vanished in the last refresh. Affected channels are flagged on the Channels page.</div>` : ""}
