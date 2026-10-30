@@ -584,6 +584,8 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
 .netpill.checking::before { background: var(--warn); animation: blink 1s infinite; }
 .np-label { color: var(--text-3); }
 .np-ip { color: var(--text); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-loc { grid-column: 2; font-size: 11px; line-height: 1.35; color: var(--text-3); overflow-wrap: anywhere; }
+.np-loc:empty { display: none; }
 .np-cc { font-size: 11px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar .netpill { margin-top: auto; }
 .sidebar .netpill + .sidebar-foot { margin-top: 8px; }
@@ -619,6 +621,7 @@ tr.has-pending td:first-child { box-shadow: inset 3px 0 0 var(--copper); }
   .mobile-bar .netpill { width: auto; min-width: 0; margin: 0; }
   .mobile-bar .cc-code { display: none; }
   .mobile-bar .cc-name { display: inline; }
+  .mobile-bar .np-loc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-bar .build-ver { flex: none; padding: 0; }
   .main { padding: 22px 20px 56px; }
   .mobile-bar + .main { padding-top: 16px; }

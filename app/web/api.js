@@ -161,7 +161,7 @@ export const api = {
   syncLineupDvr: (id) => post(routes.lineupDvrSync(id), {}, { timeout: 90000 }),
 
   status: () => get(routes.status(), { timeout: 8000 }),
-  // {ip, country, checked_at, error}
+  // {ip, country, region, city, checked_at, error}
   backups: () => get(routes.backups()),
   backupNow: () => post(routes.backups(), {}),
   backupRestore: (name) => post(`${routes.backup(name)}/restore`, {}),

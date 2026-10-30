@@ -136,6 +136,10 @@ const REGIONS = (() => { try { return new Intl.DisplayNames(["en"], { type: "reg
 function countryName(cc) {
   try { return REGIONS?.of(cc.toUpperCase()) || cc; } catch { return cc; }
 }
+// "Amsterdam, North Holland": the VPN exit's city and its state or province (left out when it repeats the city).
+export function placeName(n) {
+  return [n?.city, n?.region && n.region !== n.city ? n.region : null].filter(Boolean).join(", ");
+}
 
 export async function refreshNetwork(fresh = false) {
   const pill = $("#netPill");
@@ -144,6 +148,7 @@ export async function refreshNetwork(fresh = false) {
     const n = await api.network(fresh);
     pill.classList.toggle("bad", !!n?.error || !n?.ip);
     pill.querySelector(".np-ip").textContent = n?.ip || "unknown";
+    pill.querySelector(".np-loc").textContent = placeName(n);
     pill.querySelector(".np-cc").innerHTML = n?.country
       ? `${flag(n.country)} <span class="cc-code">${esc(n.country)}</span><span class="cc-name">${esc(countryName(n.country))}</span>` : "";
     pill.title = `Public IP of this container${n?.checked_at ? `, checked ${new Date(n.checked_at).toLocaleTimeString()}` : ""}${n?.error ? `. ${n.error}` : ""}. Click to check again.`;
@@ -153,6 +158,7 @@ export async function refreshNetwork(fresh = false) {
     pill.classList.add("bad");
     pill.querySelector(".np-ip").textContent = "unavailable";
     pill.querySelector(".np-cc").textContent = "";
+    pill.querySelector(".np-loc").textContent = "";
     throw e;
   } finally {
     pill.classList.remove("checking");

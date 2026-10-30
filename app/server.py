@@ -2174,7 +2174,7 @@ class Handler(BaseHTTPRequestHandler):
             cached = Handler._net["data"]
             if cached and not fresh and time.time() - Handler._net["at"] < 600:
                 return cached
-        data = {"ip": None, "country": None, "checked_at": None, "error": None}
+        data = {"ip": None, "country": None, "region": None, "city": None, "checked_at": None, "error": None}
         try:
             import requests
             r = requests.get("https://ipinfo.io/json", timeout=8,
@@ -2183,6 +2183,8 @@ class Handler(BaseHTTPRequestHandler):
             info = r.json()
             data["ip"] = info.get("ip")
             data["country"] = info.get("country")
+            data["region"] = info.get("region") or None   # state or province where the country has them
+            data["city"] = info.get("city") or None
         except Exception as exc:  # noqa: BLE001 - shown in the UI, never fatal
             data["error"] = "could not look up the public IP (%s)" % type(exc).__name__
         data["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
