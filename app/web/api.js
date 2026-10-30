@@ -173,5 +173,6 @@ export const api = {
   notificationsClear: () => post("/api/notifications/clear", {}),
   network: (fresh = false) => get(routes.network() + (fresh ? "?refresh=1" : ""), { timeout: 15000 }),
   version: () => get("/api/version"),
+  languages: () => get("/api/languages"),
   log: (since, limit) => get(routes.log(since, limit), { timeout: 8000 }),
 };

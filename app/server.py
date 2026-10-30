@@ -674,6 +674,7 @@ class Handler(BaseHTTPRequestHandler):
         ("GET", r"/api/status", "h_status"),
         ("GET", r"/api/network", "h_network"),
         ("GET", r"/api/version", "h_version"),
+        ("GET", r"/api/languages", "h_languages"),
         ("GET", r"/api/notifications", "h_notes"),
         ("POST", r"/api/notifications/read", "h_notes_read"),
         ("POST", r"/api/notifications/clear", "h_notes_clear"),
@@ -2161,6 +2162,9 @@ class Handler(BaseHTTPRequestHandler):
     def h_version(self):
         from app import VERSION
         return {"version": VERSION}
+
+    def h_languages(self):
+        return configmod.languages()
 
     def h_network(self):
         fresh = self.query.get("refresh") in ("1", "true")

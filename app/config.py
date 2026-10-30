@@ -38,6 +38,28 @@ class ConfigError(ValueError):
     """A validation problem with a message meant for the user."""
 
 
+_LANGS = []
+
+
+def languages():
+    """The audio language list (app/engine/languages.json, ISO 639-2), most spoken first."""
+    if not _LANGS:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine", "languages.json"),
+                      encoding="utf-8") as f:
+                data = json.load(f)
+            _LANGS.append({"top": data.get("top", 0),
+                           "languages": [{"code": x["code"], "name": x["name"]} for x in data.get("languages", [])]})
+        except (OSError, ValueError) as exc:
+            log.warning("language list unreadable: %s", exc)
+            return {"top": 0, "languages": []}
+    return _LANGS[0]
+
+
+def language_codes():
+    return tuple(x["code"] for x in languages()["languages"])
+
+
 def default_config():
     return {
         "version": CURRENT_VERSION,
@@ -45,6 +67,7 @@ def default_config():
         "channels_dvr": {"url": ""},
         "transcode": "off",
         "transcode_dolby": False,   # always send Dolby Digital 5.1 at 640k while transcoding
+        "audio_language": "",       # ISO 639-2 code of the audio track to prefer while transcoding ("" = main)
         "providers": [],
         "channels": [],
         "lineups": [{"id": "main", "name": "Main", "guide": "per-channel", "channels": []}],
@@ -248,6 +271,8 @@ def validate(cfg):
     _require(cfg.get("transcode") in TRANSCODE_VALUES,
              "transcode must be one of: %s" % ", ".join(TRANSCODE_VALUES))
     _require(isinstance(cfg.get("transcode_dolby", False), bool), "transcode_dolby must be true or false")
+    _require(cfg.get("audio_language", "") in ("",) + language_codes(),
+             "audio_language must be empty or a language code from the list")
 
     providers = cfg.get("providers")
     _require(isinstance(providers, list), "providers must be a list")

@@ -15,6 +15,7 @@ const PRESETS = [
   ["720p25", "720p25", "50 Hz countries"],
 ];
 
+let langs = { top: 0, languages: [] };
 let root, cfg, draft, dirty = false;
 
 export async function mount(el) {
@@ -22,11 +23,14 @@ export async function mount(el) {
   root.innerHTML = `<div class="page-head"><div><div class="eyebrow">Appliance</div><h1>Settings</h1><p class="sub">Everything is stored in <code>/data/config.json</code>.</p></div></div>
     <div class="stack">${'<div class="card card-pad"><span class="skel" style="width:30%;height:16px"></span><span class="skel" style="margin-top:16px;height:38px"></span><span class="skel" style="margin-top:12px;height:38px"></span></div>'.repeat(2)}</div>`;
   try { cfg = await api.getConfig(); } catch (e) { toastError("Could not load settings", e); cfg = {}; }
+  try { langs = await api.languages(); } catch { langs = { top: 0, languages: [] }; }
   draft = {
     base_url: cfg.server?.base_url || "",
     port: cfg.server?.port ?? 7780,
     dvr: cfg.channels_dvr?.url || "",
     transcode: cfg.transcode || "off",
+    transcode_dolby: cfg.transcode_dolby === true,
+    audio_language: cfg.audio_language || "",
     xmltv_sources: JSON.parse(JSON.stringify(cfg.xmltv_sources || [])),
     regions: JSON.parse(JSON.stringify(cfg.gracenote?.regions || [])),
     timezone: cfg.timezone || "",
@@ -49,7 +53,14 @@ function render() {
     </div></section>
 
     <section class="card"><div class="card-head"><h2>Transcode</h2><span class="badge badge-accent num">${esc(d.transcode)}</span></div><div class="card-body grid" style="grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:20px">
-      <div><div class="preset-grid">${PRESETS.map(([v, n, desc]) => `<label class="preset"><input type="radio" name="tc" value="${v}" ${d.transcode === v ? "checked" : ""}><span class="p-name">${n}</span><span class="p-desc">${desc}</span></label>`).join("")}</div></div>
+      <div><div class="preset-grid">${PRESETS.map(([v, n, desc]) => `<label class="preset"><input type="radio" name="tc" value="${v}" ${d.transcode === v ? "checked" : ""}><span class="p-name">${n}</span><span class="p-desc">${desc}</span></label>`).join("")}</div>
+        <div class="stack" style="gap:12px;margin-top:18px">
+          <div><label class="switch"><input type="checkbox" data-tcd ${d.transcode_dolby ? "checked" : ""}><span class="track"></span><span>Always send Dolby Digital 5.1 (640 kbps)</span></label>
+            <p class="faint small" style="margin-top:6px">For providers that send Dolby audio. Every channel goes to Channels DVR as Dolby Digital 5.1 at 640 kbps, all the time: stereo channels and stereo ads play in the front left and right speakers, so your receiver never switches formats. Off: AAC stereo at 384 kbps.</p></div>
+          <div class="field"><label for="sLang">Audio language</label><select class="input" id="sLang" data-alang>${langOptions(d.audio_language)}</select>
+            <span class="hint">When a channel carries this language, coax plays it; otherwise the provider's main track.</span></div>
+          <p class="faint small">Both apply only while transcoding, to channels tuned after you save. Passthrough sends the provider's audio untouched.</p>
+        </div></div>
       <div class="help">
         <h4>Which frame rate?</h4><p>Pick the highest one your channels use.</p>
         <ul><li><b>60</b>: sports, news and most US broadcast channels. Smooth motion. A 30 fps channel simply shows each frame twice, so nothing is lost.</li>
@@ -88,6 +99,13 @@ function xsHtml() {
     <div class="field"><label>Refresh (h)</label><input class="input input-sm mono" type="number" min="1" data-xf="refresh_hours" value="${esc(s.refresh_hours ?? 24)}"></div>
     <button class="btn btn-ghost btn-sm btn-icon btn-danger" data-rmsrc="${i}" aria-label="Remove source">${icon("trash")}</button></div>`).join("");
 }
+function langOptions(sel) {
+  const opt = (l) => `<option value="${esc(l.code)}" ${l.code === sel ? "selected" : ""}>${esc(l.name)}</option>`;
+  const all = langs.languages || [];
+  return `<option value="" ${sel ? "" : "selected"}>Main track (the provider's default)</option>
+    <optgroup label="Most spoken">${all.slice(0, langs.top).map(opt).join("")}</optgroup>
+    <optgroup label="All languages, A to Z">${all.slice(langs.top).map(opt).join("")}</optgroup>`;
+}
 function wire() {
   const form = $("#sForm", root);
   form.addEventListener("input", (e) => {
@@ -97,6 +115,10 @@ function wire() {
     } else if (t.dataset.xf) {
       const i = Number(t.closest("[data-xi]").dataset.xi);
       draft.xmltv_sources[i][t.dataset.xf] = t.type === "number" ? Number(t.value) : t.value;
+    } else if (t.matches("[data-tcd]")) {
+      draft.transcode_dolby = t.checked;
+    } else if (t.matches("[data-alang]")) {
+      draft.audio_language = t.value;
     } else if (t.name === "tc") {
       draft.transcode = t.value;
       $(".card-head .badge-accent", root).textContent = t.value;
@@ -138,6 +160,8 @@ async function save() {
       server: { base_url: d.base_url.replace(/\/+$/, ""), port: d.port },
       channels_dvr: { url: d.dvr.replace(/\/+$/, "") },
       transcode: d.transcode,
+      transcode_dolby: !!d.transcode_dolby,
+      audio_language: d.audio_language || "",
       xmltv_sources: sources,
       timezone: (d.timezone || "").trim(),
       gracenote: { regions: d.regions.filter((r) => r.country && String(r.postal || "").trim()) },
