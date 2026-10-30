@@ -320,14 +320,14 @@ async function vodModal(p) {
   const m = openModal({
     title: `On demand · ${p.name}`,
     wide: true,
-    body: `<p class="muted small" style="margin-bottom:10px">Each group you pick becomes a collection in Channels DVR, all in a <b>${esc(p.name)}</b> section, and stays up to date with the provider. <b>In library</b> also lists a group's titles in Movies and TV Shows. Played as the provider sends them, never transcoded.</p>
+    body: `<p class="muted small" style="margin-bottom:10px">Each group you pick becomes a collection in Channels DVR, all in a <b>${esc(p.name)}</b> section, and stays up to date with the provider. <b>Show in Movies</b> or <b>Show in TV Shows</b> also lists a group's titles there, with your own media. Off, they stay in the group's collection and the section only. Played as the provider sends them, never transcoded.</p>
       <div id="vLib" style="margin-bottom:12px"></div>
       <div class="tabs" role="tablist" id="vTabs"><button role="tab" data-kind="movies" aria-selected="true">Movies <span class="badge num" data-n="movies" style="display:none"></span></button><button role="tab" data-kind="series" aria-selected="false">Series <span class="badge num" data-n="series" style="display:none"></span></button></div>
       <div class="row row-wrap" style="margin-bottom:12px">
         <label class="search" style="flex:1;min-width:220px"><span class="sr-only">Search groups</span>${icon("search")}<input class="input" id="vQ" placeholder="Search groups"></label>
         <button class="btn btn-sm" data-all>Select all</button><button class="btn btn-sm" data-none>Select none</button>
         <span class="badge badge-accent num" id="vCount" style="display:none"></span></div>
-      <div class="row small" style="margin-bottom:12px"><span class="faint">In library:</span><button class="btn btn-sm" data-lib-all title="List every picked group shown in Movies and TV Shows">All</button><button class="btn btn-sm" data-lib-none title="Take every picked group shown out of Movies and TV Shows">None</button></div>
+      <div class="row small" style="margin-bottom:12px"><span class="faint">Show in Movies and TV Shows:</span><button class="btn btn-sm" data-lib-all title="List every picked group shown in Movies and TV Shows">All</button><button class="btn btn-sm" data-lib-none title="Take every picked group shown out of Movies and TV Shows">None</button></div>
       <div class="group-list" id="vList">${Array.from({ length: 8 }, () => `<div class="group-item"><span class="skel" style="width:18px;height:18px"></span><span class="skel" style="flex:1"></span></div>`).join("")}</div>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save</button>`,
   });
@@ -362,7 +362,7 @@ async function vodModal(p) {
   const draw = () => {
     const list = filtered();
     counts();
-    $("#vList", el).innerHTML = list.length ? list.map((g) => `<div class="group-item vod-row"><label class="vod-pick">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span></label><span class="gcount">${fmtInt(g.count)}</span>${sel[kind].has(g.name) ? switchHtml("", lib[kind].has(g.name), "In library", `data-lib="${esc(g.name)}"`) : ""}</div>`).join("")
+    $("#vList", el).innerHTML = list.length ? list.map((g) => `<div class="group-item vod-row"><label class="vod-pick">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span></label><span class="gcount">${fmtInt(g.count)}</span>${sel[kind].has(g.name) ? switchHtml("", lib[kind].has(g.name), kind === "movies" ? "Show in Movies" : "Show in TV Shows", `data-lib="${esc(g.name)}" title="On: also listed in Channels DVR's ${kind === "movies" ? "Movies" : "TV Shows"} with your own media. Off: only in this group's collection and the ${esc(p.name)} section."`) : ""}</div>`).join("")
       : `<div class="empty" style="padding:28px"><p>${rows().length ? "No groups match." : `This provider has no ${kind === "movies" ? "movie" : "series"} groups.`}</p></div>`;
   };
   const fill = (d) => {
