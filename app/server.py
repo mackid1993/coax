@@ -1185,7 +1185,8 @@ class Handler(BaseHTTPRequestHandler):
         text = (q.get("q") or "").strip().lower()
         group = q.get("group")
         all_groups = q.get("all_groups") in ("1", "true")
-        provider_ids = [q["provider"]] if q.get("provider") else [p["id"] for p in cfg["providers"]]
+        provider_ids = [q["provider"]] if q.get("provider") else [
+            p["id"] for p in cfg["providers"] if p.get("enabled", True) is not False]   # all providers switched on
         used = collections.defaultdict(list)
         for channel in cfg["channels"]:
             for ref in channel["streams"]:

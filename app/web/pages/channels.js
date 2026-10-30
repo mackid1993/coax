@@ -185,7 +185,11 @@ function xmltvOnly(c) {
   return ls.length > 0 && ls.every((l) => l.guide === "xmltv");
 }
 // The lineup and group pickers set the scope; the counters count within it.
-const inScope = (c) => (!S.lineup || lineupsOf(c).includes(S.lineup)) && (!S.group || (c.group || "") === S.group);
+// Providers switched off on the Providers page are hidden here, with every channel whose streams are all on them.
+// S.providers keeps them so names and held suggestions still resolve.
+const onProviders = () => S.providers.filter((p) => p.enabled !== false);
+const offOnly = (c) => { const off = new Set(S.providers.filter((p) => p.enabled === false).map((p) => p.id)); return off.size > 0 && (c.streams || []).length > 0 && c.streams.every((r) => off.has(r.provider)); };
+const inScope = (c) => !offOnly(c) && (!S.lineup || lineupsOf(c).includes(S.lineup)) && (!S.group || (c.group || "") === S.group);
 function visibleChannels() {
   const q = S.q.trim().toLowerCase();
   const words = q ? q.split(/\s+/) : [];
@@ -938,7 +942,7 @@ function feedNote(c) {
 
 // ---------- Guide editor ----------
 function xmltvSources() {
-  const fromProviders = S.providers.map((p) => ({ id: p.id, name: p.name, kind: "provider" }));
+  const fromProviders = onProviders().map((p) => ({ id: p.id, name: p.name, kind: "provider" }));
   const extra = (S.config?.xmltv_sources || []).map((x) => ({ id: x.id, name: x.name || x.id, kind: "source" }));
   return [...fromProviders, ...extra];
 }
@@ -1123,7 +1127,7 @@ function streamsModal(c) {
         <div class="stack"><div class="label">Order</div><div class="backup-list" id="bList"></div>
           ${p?.backups?.length ? `<div class="label" style="margin-top:6px">Suggested</div><div class="backup-list" id="bSugg"></div>` : ""}</div>
         <div class="stack"><div class="label">Add from any provider</div>
-          <div class="row"><select class="input input-sm" id="bProv" style="flex:0 0 40%"><option value="">All providers</option>${S.providers.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select>
+          <div class="row"><select class="input input-sm" id="bProv" style="flex:0 0 40%"><option value="">All providers</option>${onProviders().map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select>
           <label class="search" style="flex:1"><span class="sr-only">Search streams</span>${icon("search")}<input class="input input-sm" id="bQ" value="${esc(c.name.replace(/^[A-Z]{2,3}\s*[|:]\s*/, ""))}"></label></div>
           ${switchHtml("", false, "Include unselected groups", 'id="bAll"')}
           <div class="result-list" id="bRes" style="max-height:360px;overflow:auto"></div></div>
@@ -1312,7 +1316,7 @@ function catalogHtml() {
 }
 function catalogFiltersHtml() {
   const groups = S.cat.groups.filter((g) => !S.cat.provider || g.provider === S.cat.provider);
-  return `<select class="input input-sm" data-cat-provider aria-label="Provider"><option value="">All providers</option>${S.providers.map((p) => `<option value="${esc(p.id)}" ${S.cat.provider === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+  return `<select class="input input-sm" data-cat-provider aria-label="Provider"><option value="">All providers</option>${onProviders().map((p) => `<option value="${esc(p.id)}" ${S.cat.provider === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
     <select class="input input-sm" data-cat-group aria-label="Group"><option value="">Selected groups</option>${groups.map((g) => `<option value="${esc(g.name)}" ${S.cat.group === g.name ? "selected" : ""}>${esc(g.name)}${g.count != null ? ` (${g.count})` : ""}</option>`).join("")}</select>`;
 }
 function renderCatalogFilters() { const f = $("#catFilters", root); if (f) f.innerHTML = catalogFiltersHtml(); }
@@ -1341,7 +1345,7 @@ function wireCatalog() {
 }
 async function loadCatalogGroups() {
   const out = [];
-  await Promise.all(S.providers.map(async (p) => {
+  await Promise.all(onProviders().map(async (p) => {
     try {
       const { groups, selected } = normalizeGroups(await api.getGroups(p.id), p);
       groups.filter((g) => selected.has(g.name)).forEach((g) => out.push({ ...g, provider: p.id }));
