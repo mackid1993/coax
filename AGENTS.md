@@ -328,12 +328,14 @@ pass could record it twice if Channels DVR does not merge the two). A dated game
 airing and gets `<team-id system="tms">` for both sides when each resolves to exactly one team among the guide's
 games of that league (`team_ids`; `Guide.teams` remembers every name and id seen in
 `cache/gracenote-teams.json`, so a team stays known after its games leave the guide). An undated name with no match gets nothing. The DVR down or no URL: names only,
-one warning per rebuild. `Espn` gives the picture of an airing Gracenote did not supply: the home team's logo
+one warning per rebuild. `events.clock` is the one clock (tests freeze it). `Espn` gives the picture of an airing Gracenote did not supply: the home team's logo
 (after "at"/"@", else the first side; the other side when that one is ambiguous) from ESPN's public team list
 (`ESPN_TEAMS`, read only when such a game needs one, kept 7 days in `cache/espn-teams-<path>.json`, the old copy
 used when ESPN does not answer), else the league's logo. `Espn.game`: a dated two-team event in a slot of no known
 league that Gracenote did not match is looked up on ESPN's scoreboards (`ESPN_BOARDS`, about 35, for the event's
-day in Eastern time, once per day per rebuild, all skipped for the rebuild after one failure): same two teams
+day in Eastern time, once per day per rebuild, only for starts from 6 h ago to 3 days ahead; a board answering an
+HTTP error is skipped, ESPN unreachable or `LOOKUP_SECONDS` (60 s, also the cap on the Channels DVR reads) spent
+stops the lookups for the rebuild): same two teams
 within 2 h on exactly one scoreboard; it takes ESPN's league name as title, the matchup, the venue and the home
 logo, and keeps coax's own `episode/` id. No series-id is ever written (a league series id on slot games could make an existing
 pass record every one of them).

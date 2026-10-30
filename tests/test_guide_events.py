@@ -37,7 +37,8 @@ def setUpModule():
     global _TMP, _PATCHES
     _TMP = tempfile.TemporaryDirectory()
     _PATCHES = [mock.patch.object(events, "_espn_json", fake_espn()[0]),
-                mock.patch.object(guide, "CACHE_DIR", _TMP.name)]
+                mock.patch.object(guide, "CACHE_DIR", _TMP.name),
+                mock.patch.object(events, "clock", lambda: NOW.astimezone(datetime.timezone.utc))]
     for patcher in _PATCHES:
         patcher.start()
 
@@ -482,7 +483,9 @@ class EspnScoreboardTests(unittest.TestCase):
         self.assertEqual((g["league"], g["name"], g["genre"]), ("NCAA Men's Soccer", "Georgia Southern at Kentucky", "Soccer"))
         g = self.espn.game(parse("ESPN+ 93: Buffalo vs. Central Michigan @ Oct 30 6:30PM ET"))
         self.assertEqual(g["league"], "NCAA Women's Volleyball")
-        g = self.espn.game(parse("ESPN+ 01: Brisbane Roar FC vs. Auckland FC @ Oct 30 4:55AM ET"))
+        early = datetime.datetime(2026, 10, 30, 3, 0, tzinfo=NY)
+        with mock.patch.object(events, "clock", lambda: early):
+            g = self.espn.game(parse("ESPN+ 01: Brisbane Roar FC vs. Auckland FC @ Oct 30 4:55AM ET", early))
         self.assertEqual((g["league"], g["start"]), ("Australian A-League Men",
                                                      datetime.datetime(2026, 10, 30, 9, 0, tzinfo=datetime.timezone.utc)))
         self.assertEqual(len(self.calls), len(events.ESPN_BOARDS))      # one day, asked once
@@ -497,6 +500,30 @@ class EspnScoreboardTests(unittest.TestCase):
         self.assertIsNone(self.espn.game(parse("ESPN+ 06: The Golics @ Oct 30 10:00AM ET")))
         self.assertIsNone(self.espn.game(parse("ESPN+ 13: Temple vs. East Carolina @ Oct 30 12:00PM ET")))
         self.assertIsNone(self.espn.game(parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 1:00PM ET")))
+
+    def test_only_games_about_now_are_looked_up(self):
+        self.assertIsNone(self.espn.game(parse("ESPN+ 50: Georgia Southern vs. Kentucky @ Oct 18 7:00PM ET")))
+        self.assertIsNone(self.espn.game(parse("ESPN+ 51: Georgia Southern vs. Kentucky @ Nov 20 7:00PM ET")))
+        self.assertEqual(self.calls, [])                                 # last week's name, or far ahead: no requests
+
+    def test_one_refused_board_is_skipped(self):
+        import urllib.error
+
+        def get_json(url):
+            if "usa.ncaa.w.1" in url:
+                raise urllib.error.HTTPError(url, 400, "Bad Request", {}, None)
+            return self.get_json(url)
+        espn = events.Espn(get_json=get_json)
+        self.assertIsNone(espn.game(parse("ESPN+ 20: Tulsa vs. Temple @ Oct 30 7:00PM ET")))     # on the refused board
+        self.assertEqual(espn.game(parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 7:00PM ET"))["league"],
+                         "NCAA Men's Soccer")                            # the other boards still count
+
+    def test_slow_espn_stops_at_the_deadline(self):
+        ticks = iter(range(0, 10000, 30))
+        with mock.patch.object(events.time, "monotonic", lambda: next(ticks)):
+            espn = events.Espn(get_json=self.get_json)
+            espn.game(parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 7:00PM ET"))
+        self.assertLess(len(self.calls), len(events.ESPN_BOARDS))      # gave up after LOOKUP_SECONDS
 
     def test_espn_down(self):
         get_json, calls = fake_boards(fail=True)

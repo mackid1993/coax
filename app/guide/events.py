@@ -43,7 +43,9 @@ import difflib
 import hashlib
 import logging
 import re
+import time
 import unicodedata
+import urllib.error
 import xml.etree.ElementTree as ET
 import zoneinfo
 
@@ -81,6 +83,13 @@ MATCH_HOURS = 2          # a dated name matches a Gracenote airing that starts t
 CLOCK_MINUTES = 30       # a time with no day matches an airing within this of it, in a US zone
 AHEAD_DAYS = 8           # how far ahead a time with no day looks for its game
 US_ZONES = ("America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles")
+LOOKUP_SECONDS = 60      # Channels DVR's guide, and ESPN's scoreboards, each get at most this long per guide rebuild
+ESPN_AHEAD_DAYS = 3      # scoreboards are asked only for games from 6 hours ago to this many days ahead
+
+
+def clock():
+    """Now, in UTC. Tests replace it."""
+    return datetime.datetime.now(datetime.timezone.utc)
 
 # ESPN's public team lists, for team logos: https://site.api.espn.com/apis/site/v2/sports/<path>/teams
 ESPN_PATHS = {
@@ -386,7 +395,7 @@ class Guide:
     def __init__(self, config, get_json=None, now=None, espn=None):
         self.base = ((config.get("channels_dvr") or {}).get("url") or "").strip().rstrip("/")
         self.get_json = get_json
-        self.now = now or datetime.datetime.now(datetime.timezone.utc)
+        self.now = now or clock()
         self.espn = espn or Espn()
         self._games = None
         self._known = None
@@ -401,8 +410,11 @@ class Guide:
             return []
         from app.guide import gracenote
         get_json = self.get_json or gracenote._get_json
-        games = []
+        games, deadline = [], time.monotonic() + LOOKUP_SECONDS
         for series in sorted(set(SERIES.values())):
+            if time.monotonic() > deadline:
+                log.warning("Channels DVR guide too slow; the rest of the event channels use their names only")
+                break
             try:
                 data = get_json(f"{self.base}/dvr/guide/airings/{series}") or {}
             except Exception as exc:  # noqa: BLE001 - names alone still give a guide
@@ -514,6 +526,7 @@ class Espn:
         self._teams = {}
         self._days = {}
         self._down = False
+        self._deadline = None     # LOOKUP_SECONDS from the first scoreboard of this rebuild
 
     def game(self, p):
         """ESPN's listing of a game no Gracenote guide has (most streaming and pay-per-view games), or None: the same
@@ -521,6 +534,9 @@ class Espn:
         if p["kind"] != "event" or len(p.get("sides") or []) != 2 or any(
                 _LANGUAGE.search(t) for t in [p["event"]] + p["notes"]):
             return None
+        now = clock()
+        if not now - datetime.timedelta(hours=6) <= p["start"] <= now + datetime.timedelta(days=ESPN_AHEAD_DAYS):
+            return None    # last week's name still on a slot, or a game far ahead: not worth 35 requests
         day = p["start"].astimezone(zoneinfo.ZoneInfo("America/New_York")).strftime("%Y%m%d")
         near = [g for g in self._day(day)
                 if abs((g["start"] - p["start"]).total_seconds()) <= MATCH_HOURS * 3600]
@@ -532,9 +548,18 @@ class Espn:
             return self._days.get(day, [])
         get_json = self.get_json or _espn_json
         games = []
+        if self._deadline is None:
+            self._deadline = time.monotonic() + LOOKUP_SECONDS
         for path in ESPN_BOARDS:
+            if time.monotonic() > self._deadline:
+                log.warning("ESPN scoreboards too slow; the rest of the streaming events use their names only")
+                self._down = True
+                break
             try:
                 data = get_json(ESPN_SCOREBOARD % (path, day)) or {}
+            except urllib.error.HTTPError as exc:
+                log.warning("ESPN scoreboard %s not read (HTTP %s); skipped", path, exc.code)
+                continue    # one board ESPN renamed or refuses: the others still count
             except Exception as exc:  # noqa: BLE001 - names alone still give a guide
                 log.warning("ESPN scoreboards not read (%s); streaming events use their names only", exc)
                 self._down = True
@@ -627,7 +652,7 @@ class Espn:
 
 
 def _time_now():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return clock().isoformat()
 
 
 def _time_ok(stamp, days):
@@ -635,7 +660,7 @@ def _time_ok(stamp, days):
         when = datetime.datetime.fromisoformat(stamp)
     except (TypeError, ValueError):
         return False
-    return datetime.datetime.now(datetime.timezone.utc) - when < datetime.timedelta(days=days)
+    return clock() - when < datetime.timedelta(days=days)
 
 
 def _espn_json(url, timeout=20):
@@ -713,7 +738,7 @@ def lineup_events(config, lineup_id, now=None, covered=None):
     lineup = output.find_lineup(config, lineup_id)
     if lineup is None or lineup.get("enabled", True) is False or lineup.get("guide") == "gracenote":
         return []
-    now = now or datetime.datetime.now(datetime.timezone.utc)
+    now = now or clock()
     zone = _zone(config)
     off = output.off_providers(config)
     channels = {str(ch.get("id")): ch for ch in config.get("channels") or []}
@@ -766,7 +791,7 @@ def entries(config, lineup_id, now=None, covered=None, listed=(), guide=None):
     """XMLTV channel and program elements for the lineup's event channels: (channels, programs).
     covered as in lineup_events; listed holds channel ids that already have a channel element; guide is the
     rebuild's Guide (one for every lineup, so Channels DVR is asked once)."""
-    now = now or datetime.datetime.now(datetime.timezone.utc)
+    now = now or clock()
     hour = now.astimezone(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
     until = hour + datetime.timedelta(hours=FILLER_HOURS)
     zone = _zone(config)
