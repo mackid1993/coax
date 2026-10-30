@@ -884,17 +884,20 @@ class Feeder:
             self._end_helper(now=True)
             upto = (pts + int(dur)) % WRAP
             return self._fill(PCM, upto) + self._fill_all(upto, but=PCM)
+        out = b""
         if self.helper and (self.helper.fam != fam or self.helper.done or not self.helper.write(frame, pts)):
-            self._end_helper()
-            self.helper = None
+            out = self._finish_helper()   # what it still holds plays first, in order, then the new helper's
+            if self.resting.get(fam) is not None and time.monotonic() - self.resting[fam] < HELPER_REST:
+                upto = (pts + int(dur)) % WRAP   # it was just given up: this format rests as silence
+                return out + self._fill(PCM, upto) + self._fill_all(upto, but=PCM)
         if self.helper is None:
             self.helper = Helper(self.ff, fam, pts, self.log)
             if not self.helper.write(frame, pts):
                 self.helper = None
-                return b""
+                return out
         self.helper.advance(dur)
         self.aclk, self.vadv = pts, 0
-        return b""
+        return out
 
     def _finish_helper(self):
         """The helper's input ends: wait (at most 1 s) for the rest of its PCM and send it, in order, before the
@@ -903,8 +906,9 @@ class Feeder:
         h.close()
         t = h.mono()
         while not h.done and h.mono() - t < 1.0:
-            import time
             time.sleep(0.002)
+        if not h.done and not h.got:
+            self.resting[h.fam] = time.monotonic()   # it neither decoded nor ended: never wait on this format again
         out = self._helper_out()
         if self.helper is h:
             h.kill()
