@@ -1292,6 +1292,13 @@ def conn(r):
                 if hold[pid] is not None:
                     hold[pid][3] += p
             else:
+                if p[1] & 64 and pid not in last:
+                    # A table (PAT, PMT): audio held so far goes out ahead of it. A new program table that switches
+                    # the audio's codec would otherwise reach the transcoder before the old codec's last PES, which
+                    # was then read as the new codec and lost (0.2 s of sound at each switch).
+                    for k in [k for k, h in hold.items() if h is not None and k != prim]:
+                        if not commit(hold.pop(k)):
+                            hold[k] = None   # dropped: the rest of it too
                 out += fix(p)
         if adv > 0 and (not hc.get("s")):
             hc["s"] = 1
