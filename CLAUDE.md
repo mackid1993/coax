@@ -520,18 +520,17 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   stations at 60%, other regions' own feeds lowered); Settings shows a language saved as es/ger/SPA; From provider no
   longer shows "0 kHz 0 ch". Parity audit: every audio change is on both engines (TS runs: reconnects with 3 to 17 s
   overlap, 25 s outage, flips with Dolby on and off, wrap, refill, six-codec chain).
+- **1.0.7-14** (Oct 30) codec switches lose no sound: the feeder's video-clock silence trails the picture by 3 s (was
+  0.5 s; audio arriving 1.4 s behind its video at a switch was skipped as overlap, about 1 s per switch), and the
+  MPEG-TS reader sends held audio ahead of a program table (a table switching the codec reached the feeder before
+  the old codec's last PES, 0.2 s lost). The 1.0.7-4/-10 "no gaps" chain results were wrong: check_out.py sees only
+  timestamps; use silencedetect. Six-codec chain now silent-free on HLS and TS; dropout, late audio, sync and a TS
+  17 s replay rechecked.
 
 ---
 
 ## 8. Open items
 
-- About 1 s of silence at a codec-family switch on the playing track (both engines) when the provider's audio
-  arrives more than 1 s behind its video in byte order: the feeder's video-clock silence (GAP 1 s, LAG 0.5 s) runs
-  past the late frames, which are then skipped as overlap. Seen on the synthetic six-codec chain (0.8 to 1.0 s at four
-  of five switches); the 1.0.7-4 and 1.0.7-10 "no gaps" results for that chain were wrong, since check_out.py only
-  checks timestamp continuity, not silence the feeder inserted (use silencedetect). Not seen on a real feed;
-  5.1/stereo flips within one codec are not affected. Candidate fix: trail the silence further right after the
-  audio stops.
 - Two Channels DVR clients on the same coax channel use two provider slots (ah4c model, accepted).
 - Auto-match does not search by a call sign that is only in parentheses in the name (out-of-market locals such
   as KSHB): name cleanup strips it.
