@@ -308,7 +308,7 @@ class FfmpegArgsTest(unittest.TestCase):
 
 
 class TranscodeAudioTest(unittest.TestCase):
-    """One output audio format per DVR connection (Dolby Digital 5.1 640k, or AAC 384k with the source's channels):
+    """One output audio format per DVR connection (Dolby Digital 5.1 640k, or AAC stereo 192k):
     ffmpeg rebuilds its audio filter when the provider switches between 5.1 and stereo instead of dropping frames,
     and a slowdown scales audio timestamps from 0 like the video's so a rebuilt filter keeps the same stretch."""
 
@@ -319,7 +319,7 @@ class TranscodeAudioTest(unittest.TestCase):
             self.assertNotIn("-drop_changed", src, name)
             self.assertNotIn("first_pts", src, name)
             self.assertNotIn("STARTPTS", src, name)
-            self.assertIn('"-c:a", ac, "-b:a", "640k" if ac == "ac3" else "384k", "-ac", str(an), "-ar", "48000"', src, name)
+            self.assertIn('"-c:a", ac, "-b:a", "640k" if ac == "ac3" else "192k", "-ac", str(an), "-ar", "48000"', src, name)
             self.assertIn('"-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]"', src, name)
             self.assertIn('",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA) if SPA != 1.0', src, name)
 

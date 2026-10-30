@@ -5,9 +5,13 @@ changes. A provider switching codec mid-stream (an AAC ad in a Dolby show) leave
 audio (silence), and a switch between 5.1 and stereo (every ad break) makes ffmpeg rebuild its filters, which
 can drop a fraction of a second of sound when several inputs are mixed. So ffmpeg never sees either:
 
-- The program table (PMT) lists one fixed audio input per exact format (Dolby Digital 5.1 at 48 kHz, AAC stereo
+- The program table (PMT) lists fixed audio inputs, one per exact format (Dolby Digital 5.1 at 48 kHz, AAC stereo
   at 44.1 kHz, ...; SLOTS) on fixed PIDs, in place of the provider's audio tracks. ffmpeg decodes each and mixes
-  them (amix, normalize=0) into the one output format.
+  them (amix, normalize=0) into the one output format. Each encoder opens the common formats (CORE) plus any
+  other format its stream has shown (plan()), so a typical channel costs 7 inputs, not all of them.
+- A format with no open input (one the stream had not shown when its encoder started, or one no input matches)
+  is decoded by a small separate ffmpeg (Helper) to 5.1 PCM and fed to the PCM input, so it plays too, with no
+  restart and no filter rebuild in the transcoder.
 - The provider track that should play (choose()) is cut into frames (aframes), and each frame goes to the input
   of its exact format, re-wrapped with its own timestamp. Every other track is dropped.
 - Every other input gets silent frames of its own format on the same clock, so no decoder or filter ever sees a
@@ -169,25 +173,50 @@ _TABLE = (
      "AAAAAAAAAAAAAAAAAAAAAA=="),
 )
 FAMS = ("ac3", "eac3", "aac", "latm", "mp2", "dts")
-STYPE = {"ac3": 0x81, "eac3": 0x87, "aac": 0x0F, "latm": 0x11, "mp2": 0x03, "dts": 0x82}
-SIDS = {"ac3": 0xBD, "eac3": 0xBD, "dts": 0xBD, "aac": 0xC0, "latm": 0xC0, "mp2": 0xC0}
+STYPE = {"ac3": 0x81, "eac3": 0x87, "aac": 0x0F, "latm": 0x11, "mp2": 0x03, "dts": 0x82, "pcm": 0x06}
+SIDS = {"ac3": 0xBD, "eac3": 0xBD, "dts": 0xBD, "aac": 0xC0, "latm": 0xC0, "mp2": 0xC0, "pcm": 0xBD}
+DESC = {"pcm": b"\x05\x04BSSD"}   # SMPTE 302M PCM is private data with a BSSD registration
 WRAP = 1 << 33
 LAG = 45000            # silence on the video clock trails the picture by 0.5 s
 GAP = 90000            # no frame from the playing track for 1 s of video: every input gets silence
 JUMP = 90000 * 10      # a clock jump (provider restart, wrap): an input's silence restarts there
 MAXPES = 60000
+HELPER_WAIT = 2.0      # a helper that was given audio but sent nothing back for 2 s is given up (silence instead)
+
+
+def _silent_302m():
+    """One silent SMPTE 302M frame: 1024 samples of 16-bit 5.1 at 48 kHz (the 'F' flag marks each 192-sample
+    AES3 block start), as ffmpeg's s302m encoder writes it."""
+    body = bytearray(15360)
+    for k in range(0, 15360, 2880):
+        body[k + 2] = body[k + 7] = body[k + 12] = 16
+    return bytes([0x3C, 0x00, 0x80, 0x00]) + bytes(body)
+
 
 SLOTS = []             # [{fam, name, pid, frame, key, dur}]
 for _i, (_fam, _name, _b64) in enumerate(_TABLE):
     _f = base64.b64decode(_b64)
     _size, _key, _samples, _rate = aframes.frame(_fam, _f, 0)
     SLOTS.append({"fam": _fam, "name": _name, "pid": 0x1FC0 + _i, "frame": _f, "key": _key,
-                  "dur": _samples * 90000 // _rate})
+                  "dur": _samples * 90000 / _rate})       # exact: 44.1 kHz frames are not whole 90 kHz ticks
+PCM = len(SLOTS)
+SLOTS.append({"fam": "pcm", "name": "PCM 5.1 (other formats)", "pid": 0x1FC0 + PCM, "frame": _silent_302m(),
+              "key": ("pcm",), "dur": 1920.0})
 PIDS = tuple(s["pid"] for s in SLOTS)
 BYKEY = {s["key"]: i for i, s in enumerate(SLOTS)}
-SPARE = {}             # a format no input has exactly: the family's first input (ffmpeg rebuilds once there)
+# Always open: Dolby Digital 2.0 and 5.1, Dolby Digital Plus 2.0 and 5.1, AAC stereo at 48 and 44.1 kHz, HE-AAC,
+# and PCM. A Dolby show with an AAC ad (or the other way round) plays through these with no change.
+PCM_FALLBACK = False   # the PCM decoder (Helper) is not ready: in offline tests its PCM reached the mix late.
+                       # Until it is, a format with no open input goes to its family's first input (one filter
+                       # rebuild there, about 0.13 s of sound).
+CORE = tuple(sorted(BYKEY[k] for k in (("ac3", 2, 0, 0), ("ac3", 7, 1, 0), ("eac3", 2, 0, 48000),
+                                       ("eac3", 7, 1, 48000), ("aac", 1, 3, 2), ("aac", 1, 4, 2),
+                                       ("aac", 1, 6, 2)))) + ((PCM,) if PCM_FALLBACK else ())
+FIRST = {}             # a family's first input, opened when a stream lists that family
 for _i, _s in enumerate(SLOTS):
-    SPARE.setdefault(_s["fam"], _i)
+    FIRST.setdefault(_s["fam"], _i)
+HELPER_FMT = {"ac3": "ac3", "eac3": "eac3", "aac": "aac", "latm": "loas", "mp2": "mp3", "dts": "dts"}
+
 
 
 def dif(a, b):
@@ -297,28 +326,190 @@ def _crc(data):
     return crc
 
 
+
+
+def sync(d):
+    """Where 188-byte packets start in d (three sync bytes in a row), or None."""
+    for k in range(min(len(d), 188 * 2)):
+        if d[k] == 0x47 and (k + 188 >= len(d) or d[k + 188] == 0x47) and (k + 376 >= len(d) or d[k + 376] == 0x47):
+            if k + 188 < len(d):
+                return k
+    return None
+
+
+def is_ts(d):
+    """True for MPEG-TS (an ID3 tag in front allowed), False for something else (fMP4), None when d is too short."""
+    if d[:3] == b"ID3" and len(d) >= 10:
+        k = 10 + ((d[6] & 127) << 21 | (d[7] & 127) << 14 | (d[8] & 127) << 7 | (d[9] & 127))
+        d = d[k:]
+    if len(d) < 188 * 3:
+        return None
+    return sync(d[:188 * 4]) is not None
+
+
+def _pes_head(sid, pts, n):
+    p = pts % WRAP
+    return bytes([0, 0, 1, sid, n >> 8 if n < 65536 else 0, n & 0xFF if n < 65536 else 0, 0x80, 0x80, 5,
+                  0x21 | (p >> 29) & 0x0E, (p >> 22) & 0xFF, 0x01 | (p >> 14) & 0xFE, (p >> 7) & 0xFF,
+                  0x01 | (p << 1) & 0xFE])
+
+
+class Helper:
+    """A small ffmpeg that decodes one format with no input of its own to 5.1 PCM (SMPTE 302M) for the PCM input.
+    Frames go in as an elementary stream; PCM comes back with the helper's own timestamps, which are mapped back
+    onto the provider's (base: the first frame's PTS). Reading runs on its own thread."""
+
+    def __init__(self, ff, fam, base, log):
+        import subprocess
+        import threading
+        import collections
+        self.fam, self.base, self.log = fam, base, log
+        self.next = base                 # the provider PTS the next frame fed should have
+        self.out = collections.deque()   # (helper PTS, 302M frame)
+        self.h0 = None                   # the helper's first PTS
+        self.done = False
+        self.fed = 0
+        self.got = 0                     # 302M frames (1024 samples) decoded so far
+        import time
+        self.mono = time.monotonic
+        self.t_in = self.t_out = self.mono()
+        try:
+            self.p = subprocess.Popen(
+                [ff, "-hide_banner", "-loglevel", "error", "-probesize", "32768", "-analyzeduration", "0",
+                 "-fflags", "nobuffer", "-f", HELPER_FMT[fam], "-i", "pipe:0",
+                 "-af", "aresample=48000,aformat=sample_rates=48000:channel_layouts=5.1",
+                 "-strict", "-2", "-c:a", "s302m", "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
+                 "-f", "mpegts", "pipe:1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL)
+        except Exception as exc:
+            log("audio: could not start the decoder for %s (%s)" % (fam, exc))
+            self.p, self.done = None, True
+            return
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        buf, cur = b"", None
+        try:
+            while True:
+                data = self.p.stdout.read(188 * 64)
+                if not data:
+                    break
+                buf += data
+                n = len(buf) // 188 * 188
+                for i in range(0, n, 188):
+                    p = buf[i:i + 188]
+                    if p[0] != 0x47 or ((p[1] & 31) << 8 | p[2]) != 0x100:
+                        continue
+                    af = p[3] >> 4 & 3
+                    if af == 2:
+                        continue
+                    o = 5 + p[4] if af == 3 else 4
+                    if p[1] & 0x40:
+                        if cur:
+                            self.out.append(cur)
+                            self.t_out = self.mono()
+                            self.got += 1
+                        q = p[o + 9:o + 14]
+                        t = ((q[0] >> 1) & 7) << 30 | q[1] << 22 | (q[2] >> 1) << 15 | q[3] << 7 | q[4] >> 1
+                        cur = (t, bytearray(p[o + 9 + p[o + 8]:]))
+                    elif cur:
+                        cur[1].extend(p[o:])
+                buf = buf[n:]
+            if cur:
+                self.out.append(cur)
+        except Exception:
+            pass
+        self.done = True
+
+    def write(self, frame, pts):
+        if self.p is None:
+            return False
+        if abs(dif(pts, self.next)) > 9000:
+            return False                 # not continuous with what it decoded: the caller starts a new one
+        try:
+            self.p.stdin.write(frame)
+            self.p.stdin.flush()
+        except Exception:
+            self.done = True
+            return False
+        self.fed += 1
+        if self.t_in <= self.t_out:
+            self.t_in = self.mono()      # waiting for output since this
+        return True
+
+    def wait(self):
+        """Hold the writer (a few milliseconds; at most 0.3 s) until the helper has decoded about all it was
+        given, so its PCM goes into the stream where it belongs and the mix never waits on it."""
+        if self.p is None or self.done:
+            return
+        t = self.mono()
+        while self.got * 1920 + 13500 < getattr(self, "nf", 0.0) and self.mono() - t < 0.3 and not self.done:
+            import time
+            time.sleep(0.002)
+
+    def stuck(self):
+        return self.t_in > self.t_out and self.mono() - self.t_out > HELPER_WAIT and not self.out
+
+    def advance(self, dur):
+        self.nf = getattr(self, "nf", 0.0) + dur
+        self.next = (self.base + int(round(self.nf))) % WRAP
+
+    def close(self):
+        try:
+            if self.p:
+                self.p.stdin.close()
+        except Exception:
+            pass
+
+    def kill(self):
+        self.close()
+        try:
+            if self.p:
+                self.p.kill()
+        except Exception:
+            pass
+
+    def frames(self):
+        """(provider PTS, 302M frame) decoded so far."""
+        res = []
+        while self.out:
+            t, f = self.out.popleft()
+            if self.h0 is None:
+                self.h0 = t
+            res.append(((self.base + dif(t, self.h0)) % WRAP, bytes(f)))
+        return res
+
+
 class Feeder:
     """Rewrites one engine's transcoder input; see the module docstring. pref: preferred language ("" for the
-    provider's main track). Not thread safe: call it from the writer only."""
+    provider's main track). ff: the ffmpeg to run helpers with. Not thread safe: call it from the writer only."""
 
-    def __init__(self, pref="", log=None):
+    def __init__(self, pref="", log=None, ff="ffmpeg"):
         self.pref = canon(pref)
         self.log = log or (lambda m: None)
+        self.ff = ff
         self.pat = b""
         self.pmt_pid = None
         self.sec = None             # PMT section being assembled
+        self.last_sec = None        # the provider's last PMT section, to rebuild ours when the inputs change
         self.pmt_out = b""          # our PMT, packetized
         self.pmt_cc = 0
         self.tracks = []            # [{pid, fam, lang, main, order}] in the provider's order
         self.fam = {}               # provider audio pid -> family
+        self.keys = {}              # provider audio pid -> the formats its frames have shown
         self.cc = [0] * len(SLOTS)
-        self.end = [None] * len(SLOTS)   # where each input's audio ends, 90 kHz
+        self.active = CORE          # the inputs the running encoder has
+        self.helper = None
         self.said_keys = set()
+        self.rest = b""             # a packet split across two chunks
+        self.bypass = False         # not MPEG-TS (fMP4 HLS): passed through, the encoder maps the audio itself
+        self.built_bypass = None    # what the running encoder was built for
         self.reset()
 
     def reset(self):
         """A new stream (failover, hand switch): its clock and tracks start over."""
         self.end = [None] * len(SLOTS)
+        self.frac = [0.0] * len(SLOTS)  # fraction of a 90 kHz tick each input's silence is owed
         self.seen, self.ch = {}, {}
         self.vclk = self.aclk = self.va = None
         self.cur = self.pend = None
@@ -326,6 +517,7 @@ class Feeder:
         self.said = None
         self.t0 = None              # the first audio PTS heard on this stream
         self.pre = True             # a new encoder: its inputs start where its first audio or picture does
+        self._end_helper()
         self._drop()
 
     def _drop(self):
@@ -333,16 +525,103 @@ class Feeder:
         self.marks = []             # [(offset in buf, PTS)] where its PES packets began
         self.npts = None            # the next frame's PTS when its PES carried none
         self.grp = None             # [input, first PTS, [frames], duration] waiting to be sent
-        self.dep = None             # the input of the last independent E-AC-3 frame
 
-    def psi(self):
+    def _end_helper(self, now=False):
+        if self.helper:
+            if now:
+                self.helper.kill()
+                self.helper = None
+            else:
+                self.helper.close()  # let it finish what it was given; drained in _helper_out()
+
+    # -- which inputs an encoder opens --------------------------------------------------------------------
+    def plan(self):
+        """The inputs for the next encoder: the common ones, plus one for every other format this stream has
+        listed or shown. Called when an encoder is built; the PMT follows it."""
+        want = set(CORE)
+        for t in self.tracks:
+            if t["fam"] in ("mp2", "latm", "dts"):
+                want.add(FIRST[t["fam"]])
+        for ks in self.keys.values():
+            for k in ks:
+                if k in BYKEY:
+                    want.add(BYKEY[k])
+        self.active = tuple(sorted(want))
+        self.built_bypass = self.bypass
+        if self.last_sec:
+            self._build()
+        return None if self.bypass else [SLOTS[x] for x in self.active]
+
+    def wants_more(self, d):
+        """Whether the bytes a new encoder is about to get need a different encoder: a format it has no input
+        for, or not MPEG-TS at all (fMP4 HLS) when it was built for TS, or the other way round. It can then be
+        replaced before it has had anything: nobody sees that."""
+        ts = is_ts(d)
+        if ts is not None and (not ts) != self.bypass:
+            self.bypass = not ts
+            self.log("audio: the provider sends %s" % ("MPEG-TS" if ts else "a format other than MPEG-TS; its "
+                                                        "audio goes to the encoder as it is"))
+        if self.bypass:
+            return self.built_bypass is not True
+        if self.built_bypass:
+            return True
+        self._learn(d)
+        want = set(self.active)
+        for t in self.tracks:
+            if t["fam"] in ("mp2", "latm", "dts"):
+                want.add(FIRST[t["fam"]])
+        for ks in self.keys.values():
+            want.update(BYKEY[k] for k in ks if k in BYKEY)
+        return not want <= set(self.active)
+
+    def _learn(self, d):
+        """Tracks and formats from raw bytes, without sending anything (for wants_more)."""
+        for i in range(0, len(d) - 187, 188):
+            p = d[i:i + 188]
+            if p[0] != 0x47 or not p[1] & 0x40:
+                continue
+            pid = (p[1] & 31) << 8 | p[2]
+            af = p[3] >> 4 & 3
+            if af == 2:
+                continue
+            o = 5 + p[4] if af == 3 else 4
+            if o >= 188:
+                continue
+            if pid == 0 and self.pmt_pid is None:
+                q = o + 1 + p[o]
+                if q + 16 <= 188 and p[q] == 0:
+                    for j in range(q + 8, min(q + 3 + ((p[q + 1] & 15) << 8 | p[q + 2]) - 4, 184), 4):
+                        if p[j] << 8 | p[j + 1]:
+                            self.pmt_pid = (p[j + 2] & 31) << 8 | p[j + 3]
+                            break
+            elif pid == self.pmt_pid and not self.tracks:
+                q = o + 1 + p[o]
+                if q + 3 <= 188 and p[q] == 2:
+                    need = 3 + ((p[q + 1] & 15) << 8 | p[q + 2])
+                    if q + need <= 188:
+                        self._pmt(bytes(p[q:q + need]), send=False)
+            elif pid in self.fam:
+                pay = p[o:]
+                if pay[:3] == b"\x00\x00\x01" and len(pay) > 9:
+                    f = aframes.frame(self.fam[pid], pay[9 + pay[8]:], 0)
+                    if f and f[1] is not None:
+                        self.keys.setdefault(pid, set()).add(f[1])
+
+    def psi(self, fresh=True):
         """For the first bytes a new encoder gets: PAT and our PMT (it may start mid-segment, before the next
         table), so ffmpeg knows every input at once. The inputs' silence starts again from the audio that
-        follows: what went to the old encoder must not put the new one's audio ahead of its first picture."""
+        follows: what went to the old encoder must not put the new one's audio ahead of its first picture.
+        fresh=False (the same bytes written again to a replacement encoder): only the tables."""
+        if self.bypass:
+            return b""
+        if not fresh:
+            return self.pat + self.pmt_out
         self.end = [None] * len(SLOTS)
+        self.frac = [0.0] * len(SLOTS)
         self.grp = None
         self.aclk = self.va = None
         self.pre = True
+        self._end_helper(now=True)
         return self.pat + self.pmt_out
 
     def audio_pids(self):
@@ -370,12 +649,7 @@ class Feeder:
         return b"".join(out)
 
     def _pes(self, s, pts, data):
-        p = pts % WRAP
-        n = 8 + len(data)
-        head = bytes([0, 0, 1, SIDS[SLOTS[s]["fam"]], n >> 8 if n < 65536 else 0, n & 0xFF if n < 65536 else 0,
-                      0x80, 0x80, 5, 0x21 | (p >> 29) & 0x0E, (p >> 22) & 0xFF, 0x01 | (p >> 14) & 0xFE,
-                      (p >> 7) & 0xFF, 0x01 | (p << 1) & 0xFE])
-        return self._packets(SLOTS[s]["pid"], head + data, s)
+        return self._packets(SLOTS[s]["pid"], _pes_head(SIDS[SLOTS[s]["fam"]], pts, 8 + len(data)) + data, s)
 
     def _fill(self, s, upto):
         """Silent frames in input s up to upto."""
@@ -384,26 +658,28 @@ class Feeder:
             self.end[s] = upto % WRAP
             return b""
         d = SLOTS[s]["dur"]
-        n = dif(upto, e) // d
+        n = int((dif(upto, e) - self.frac[s]) // d)
         out = []
         while n > 0:
-            k = min(n, 30)
+            k = min(n, 30 if s != PCM else 1)   # 302M: one frame per PES (its header gives the PES size)
             out.append(self._pes(s, e, SLOTS[s]["frame"] * k))
-            e += k * d
+            t = self.frac[s] + k * d
+            e += int(t)
+            self.frac[s] = t - int(t)
             n -= k
         self.end[s] = e % WRAP
         return b"".join(out)
 
     def _fill_all(self, upto, but=None):
-        return b"".join(self._fill(x, upto) for x in range(len(SLOTS)) if x != but)
+        return b"".join(self._fill(x, upto) for x in self.active
+                        if x != but and not (x == PCM and self.helper))
 
     # -- program table ----------------------------------------------------------------------------------
-    def _pmt(self, sec):
-        """Our PMT from the provider's: its video and other tracks, its audio replaced by the inputs."""
+    def _pmt(self, sec, send=True):
+        """Our PMT from the provider's: its video and other tracks, its audio replaced by the open inputs."""
         if len(sec) < 16 or sec[0] != 2:
             return
         pil = (sec[10] & 15) << 8 | sec[11]
-        keep = bytearray()
         tracks, fam = [], {}
         j = 12 + pil
         while j + 5 <= len(sec) - 4:
@@ -414,28 +690,44 @@ class Feeder:
                 lang, main = describe(desc)
                 tracks.append({"pid": pid, "fam": f, "lang": lang, "main": main, "order": len(tracks)})
                 fam[pid] = f
-            elif pid not in PIDS:
-                keep += sec[j:j + 5 + il]   # video, subtitles, data and audio coax cannot take stay as they are
             j += 5 + il
-        if [(t["pid"], t["fam"], t["lang"], t["main"]) for t in tracks] != \
-                [(t["pid"], t["fam"], t["lang"], t["main"]) for t in self.tracks]:
+        changed = [(t["pid"], t["fam"], t["lang"], t["main"]) for t in tracks] != \
+            [(t["pid"], t["fam"], t["lang"], t["main"]) for t in self.tracks]
+        if changed and send:
             self.log("audio tracks: " + (", ".join("%s %s%s" % (t["lang"] or "untagged", t["fam"],
                      "" if t["main"] else " (extra)") for t in tracks) or "none"))
         old = self.fam.get(self.cur)
-        changed = [(t["pid"], t["fam"], t["lang"], t["main"]) for t in tracks] != \
-            [(t["pid"], t["fam"], t["lang"], t["main"]) for t in self.tracks]
-        self.tracks, self.fam = tracks, fam
+        self.tracks, self.fam, self.last_sec = tracks, fam, bytes(sec)
+        for pid in list(self.keys):
+            if pid not in fam:
+                del self.keys[pid]
         if self.cur is not None and fam.get(self.cur) != old:
             self._drop()                # its codec changed: cut the new one from scratch
-        es = bytes(keep) + b"".join(bytes([STYPE[s["fam"]], 0xE0 | s["pid"] >> 8, s["pid"] & 0xFF, 0xF0, 0])
-                                    for s in SLOTS)
+        self._build()
+        if send and (changed or (self.cur is None and self.pend is None)):   # the table repeats every moment
+            self._choose(first=True)
+
+    def _build(self):
+        sec = self.last_sec
+        pil = (sec[10] & 15) << 8 | sec[11]
+        keep = bytearray()
+        j = 12 + pil
+        while j + 5 <= len(sec) - 4:
+            st, pid, il = sec[j], (sec[j + 1] & 31) << 8 | sec[j + 2], (sec[j + 3] & 15) << 8 | sec[j + 4]
+            if family(st, bytes(sec[j + 5:j + 5 + il])) is None and pid not in PIDS:
+                keep += sec[j:j + 5 + il]   # video, subtitles, data and audio coax cannot take stay as they are
+            j += 5 + il
+        es = bytes(keep)
+        for x in self.active:
+            s = SLOTS[x]
+            d = DESC.get(s["fam"], b"")
+            es += bytes([STYPE[s["fam"]], 0xE0 | s["pid"] >> 8, s["pid"] & 0xFF, 0xF0, len(d)]) + d
         body = bytes(sec[3:12 + pil]) + es
         n = len(body) + 4
         new = bytes([2, 0xB0 | n >> 8, n & 0xFF]) + body
         new += _crc(new).to_bytes(4, "big")
-        self.pmt_out = self._packets(self.pmt_pid, b"\x00" + new)
-        if changed or (self.cur is None and self.pend is None):   # the table repeats several times a second
-            self._choose(first=True)
+        if self.pmt_pid is not None:
+            self.pmt_out = self._packets(self.pmt_pid, b"\x00" + new)
 
     # -- which track plays ------------------------------------------------------------------------------
     def now(self):
@@ -502,9 +794,45 @@ class Feeder:
             return b""
         s, pts, data, dur = g
         out = self._fill(s, pts) + self._fill_all(pts, but=s) + self._pes(s, pts, b"".join(data))
-        self.end[s] = (pts + dur) % WRAP
-        self.aclk, self.va = pts, self.vclk
+        self.end[s] = (pts + int(dur)) % WRAP
+        self.frac[s] = dur - int(dur)
         return out
+
+    def _to_helper(self, fam, frame, pts, dur):
+        """A frame of a format with no open input: decode it to PCM in a helper."""
+        if self.helper and (self.helper.fam != fam or self.helper.done or not self.helper.write(frame, pts)):
+            self._end_helper()
+            self.helper = None
+        if self.helper is None:
+            self.helper = Helper(self.ff, fam, pts, self.log)
+            if not self.helper.write(frame, pts):
+                self.helper = None
+                return
+        self.helper.advance(dur)
+        self.aclk, self.va = pts, self.vclk
+
+    def _helper_out(self):
+        """PCM the helper has decoded, on the PCM input; a helper that fell far behind or ended is dropped."""
+        h = self.helper
+        if not h:
+            return b""
+        h.wait()
+        out = []
+        for t, f in h.frames():
+            e = self.end[PCM]
+            if e is not None and dif(t, e) < -9000:
+                continue                         # never back in time
+            out.append(self._fill(PCM, t))
+            out.append(self._pes(PCM, t, f))
+            n = (f[0] << 8 | f[1]) // (((f[2] >> 6) + 1) * 5) if len(f) > 4 else 1024
+            self.end[PCM] = (t + n * 90000 // 48000) % WRAP
+        dead = h.stuck()
+        if h.done and not h.out or dead:
+            if dead and not h.done:
+                self.log("audio: the decoder for %s stopped answering; filling with silence" % h.fam)
+            h.kill()
+            self.helper = None
+        return b"".join(out)
 
     def _cut(self):
         """Whole frames out of the playing track's buffer, each to the input of its format."""
@@ -520,53 +848,80 @@ class Feeder:
             size, key, samples, rate = f
             if not size:
                 break                           # incomplete: wait for more
+            if key is None:                     # an E-AC-3 dependent substream with no frame before it here
+                if self.helper and self.helper.fam == fam:
+                    self.helper.write(bytes(b[i:i + size]), self.helper.next)
+                i += size
+                continue
+            size_all = size
+            if fam == "eac3":
+                # An independent frame followed by dependent substreams (7.1 and the like) decodes to a layout no
+                # input has: the whole set goes to the PCM decoder.
+                k = i + size
+                while True:
+                    g = aframes.frame(fam, b, k)
+                    if g and not g[0]:
+                        break                   # the next frame is not complete yet
+                    if not g or g[1] is not None:
+                        break
+                    k += g[0]
+                if g and not g[0]:
+                    break                       # wait until the dependent part (if any) is here
+                size_all = k - i
+                if size_all > size:
+                    key = key + ("dependent",)
             pts = None
             while self.marks and self.marks[0][0] <= i:
                 pts = self.marks.pop(0)[1]
-            if pts is None:
-                pts = self.npts
+            if pts is None and self.npts is not None:
+                pts = int(round(self.npts)) % WRAP
             if pts is None:                     # no timestamp yet: skip until a PES with one
-                i += size
+                i += size_all
                 continue
-            if key is None:                     # E-AC-3 dependent substream: with its independent frame
-                s = self.dep
-                if s is None or not self.grp or self.grp[0] != s:
-                    i += size
-                    continue
-            else:
-                s = BYKEY.get(key)
-                if s is None:
-                    s = SPARE[fam]
-                    if key not in self.said_keys:
-                        self.said_keys.add(key)
-                        self.log("audio: no input for the provider's format %s; using %s" % (key, SLOTS[s]["name"]))
-                if fam == "eac3":
-                    self.dep = s
-            dur = samples * 90000 // rate if rate else 0
-            e = (self.grp[1] + self.grp[3]) % WRAP if self.grp and self.grp[0] == s else self.end[s]
+            dur = samples * 90000 / rate if rate else 0.0
+            data = bytes(b[i:i + size_all])
+            self.keys.setdefault(self.cur, set()).add(key)
+            s = BYKEY.get(key)
+            if s is None or s not in self.active:
+                fb = PCM if PCM_FALLBACK else FIRST.get(fam)
+                if fb not in self.active:
+                    fb = self.active[0]
+                if key not in self.said_keys:
+                    self.said_keys.add(key)
+                    self.log("audio: the provider's format %s has no open input; using %s" % (key, SLOTS[fb]["name"]))
+                s = fb
             c = self.now()
             if c is not None and abs(dif(pts, c)) > JUMP:   # far from the picture's clock: a stale or bad frame
                 self.npts = None
-                i += size
+                i += size_all
                 continue
-            if e is not None and key is not None:
+            self.npts = pts + dur
+            self.aclk, self.va = pts, self.vclk
+            if s == PCM:
+                if self.grp:
+                    out.append(self._flush())
+                self._to_helper(fam, data, pts, dur)
+                i += size_all
+                continue
+            if self.helper:
+                self._end_helper()          # back to an open input: the helper finishes what it has
+            e = (self.grp[1] + int(self.grp[3])) % WRAP if self.grp and self.grp[0] == s else self.end[s]
+            if e is not None:
                 lag = dif(pts, e)
                 if lag < -JUMP:                 # the provider's clock restarted: every input starts on the new one
                     out.append(self._flush())
                     self.end = [None] * len(SLOTS)
                 elif lag < -9000:               # overlaps audio already sent (silence that ran ahead): skip it,
-                    self.npts = (pts + dur) % WRAP   # never send a timestamp that goes back
-                    i += size
+                    i += size_all               # never send a timestamp that goes back
                     continue
             if self.grp and (self.grp[0] != s or len(self.grp[2]) > 40 or
-                             abs(dif(pts, (self.grp[1] + self.grp[3]) % WRAP)) > 900):
+                             abs(dif(pts, (self.grp[1] + int(round(self.grp[3]))) % WRAP)) > 900):
                 out.append(self._flush())
             if self.grp is None:
-                self.grp = [s, pts, [], 0]
-            self.grp[2].append(bytes(b[i:i + size]))
+                self.grp = [s, pts, [], 0.0]
+            self.grp[2].append(data)
             self.grp[3] += dur
-            self.npts = (pts + dur) % WRAP
-            i += size
+            i += size_all
         del b[:i]
         self.marks = [(o - i, t) for o, t in self.marks]
         if len(b) > MAXPES * 4:                # never a frame in sight: start over
@@ -575,8 +930,8 @@ class Feeder:
 
     # -- the stream -------------------------------------------------------------------------------------
     def _start(self, d):
-        """A new encoder's first bytes: every input starts with one silent frame at the earliest timestamp of
-        this chunk's audio and pictures, as early as the provider's own streams would have started it (ffmpeg
+        """A new encoder's first bytes: every open input starts with one silent frame at the earliest timestamp
+        of this chunk's audio and pictures, as early as the provider's own streams would have started it (ffmpeg
         times its output from the earliest stream), and early enough for ffmpeg's short probe to know every input.
         """
         base = None
@@ -599,13 +954,27 @@ class Feeder:
             return b""
         self.pre = False
         out = []
-        for x in range(len(SLOTS)):
+        for x in self.active:
             if self.end[x] is None:
                 out.append(self._pes(x, base, SLOTS[x]["frame"]))
-                self.end[x] = (base + SLOTS[x]["dur"]) % WRAP
+                d = SLOTS[x]["dur"]
+                self.end[x] = (base + int(d)) % WRAP
+                self.frac[x] = d - int(d)
         return b"".join(out)
 
     def feed(self, d):
+        if self.bypass:
+            return d
+        d = self.rest + d
+        k = 0
+        if not (len(d) >= 188 and d[0] == 0x47 and (len(d) < 376 or d[188] == 0x47)):
+            k = sync(d)                 # an ID3 tag before the packets, or a chunk that split a packet
+            if k is None:
+                self.rest = d[-187:] if len(d) > 187 else d
+                return b""
+        n = k + (len(d) - k) // 188 * 188
+        self.rest = d[n:]
+        d = d[k:n]
         out = [self._start(d)] if self.pre else []
         for i in range(0, len(d) - 187, 188):
             p = d[i:i + 188]
@@ -658,6 +1027,7 @@ class Feeder:
                         c = aframes.frame(self.fam[pid], pay, 0) if pay else None
                         if c and c[1] is not None:
                             self.ch[pid] = chans(c[1])
+                            self.keys.setdefault(pid, set()).add(c[1])
                         if self.said is None or abs(dif(pts, self.said)) > 45000:   # look again every half second
                             self.said = pts
                             self._choose()
@@ -667,7 +1037,7 @@ class Feeder:
                         self._drop()
                 if pid == self.cur:
                     if pts is not None:
-                        if self.npts is not None and abs(dif(pts, self.npts)) > 45000:
+                        if self.npts is not None and abs(dif(pts, int(self.npts) % WRAP)) > 45000:
                             self.buf.clear()    # audio was missing: what was left over cannot complete a frame
                             self.marks = []
                         self.marks.append((len(self.buf), pts))
@@ -688,4 +1058,5 @@ class Feeder:
                             self._choose()
                 out.append(p)
         out.append(self._flush())   # this chunk's audio goes out with it
+        out.append(self._helper_out())
         return b"".join(out)

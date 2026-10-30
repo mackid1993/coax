@@ -74,7 +74,7 @@ class FrameTests(unittest.TestCase):
     def test_every_input_has_a_frame_of_its_own_format(self):
         keys = [s["key"] for s in aslots.SLOTS]
         self.assertEqual(len(set(keys)), len(keys))
-        for s in aslots.SLOTS:
+        for s in aslots.SLOTS[:aslots.PCM]:
             f = aframes.frame(s["fam"], s["frame"], 0)
             self.assertEqual((f[0], f[1]), (len(s["frame"]), s["key"]), s["name"])
             self.assertGreater(s["dur"], 0, s["name"])
@@ -158,8 +158,9 @@ class StreamTests(unittest.TestCase):
     def test_every_input_starts_at_once_even_without_audio(self):
         head = program([(0x81, 0x102, b"")])
         body = b"".join(packets(0x101, pes(0xE0, 900000 + k * 3003, b"\x00" * 100)) for k in range(30))
-        _, out = self.run_feed([head + body])
-        self.assertEqual({s for s, _ in slot_pts(out)}, set(range(len(aslots.SLOTS))))
+        f, out = self.run_feed([head + body])
+        self.assertEqual({s for s, _ in slot_pts(out)}, set(f.active))
+        self.assertEqual(f.active, aslots.CORE)
 
 
 if __name__ == "__main__":

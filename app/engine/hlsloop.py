@@ -345,14 +345,20 @@ def ffcmd():
     # Audio (see aslots): the feeder gives ffmpeg one fixed input per exact audio format and sends the provider's
     # chosen track, frame by frame, to the input of its format; every other input gets silence. ffmpeg mixes them
     # into one format for the whole DVR connection (AOUT: Dolby Digital 5.1 at 640k with the "Always send Dolby
-    # Digital 5.1" setting, else AAC stereo at 384k). A codec switch, a 5.1/stereo ad or the audio moving to
+    # Digital 5.1" setting, else AAC stereo at 192k). A codec switch, a 5.1/stereo ad or the audio moving to
     # another track never changes what ffmpeg decodes, so it never restarts or rebuilds a filter. During a
     # slowdown the audio timestamps are scaled from 0 like the video's (setpts=PTS*x).
     ac, an, lay = AOUT[0]
-    fc = ";".join("[0:i:%d]aresample=async=1:min_hard_comp=0.1,aformat=sample_rates=48000:channel_layouts=%s[s%d]" % (x["pid"], lay, k) for k, x in enumerate(aslots.SLOTS))
-    fc += ";" + "".join("[s%d]" % k for k in range(len(aslots.SLOTS))) + "amix=inputs=%d:normalize=0:duration=longest" % len(aslots.SLOTS)
-    fc += (",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA) if SPA != 1.0 else "") + "[ao]"
-    return b + ["-i", "pipe:0", "-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]", "-sn", "-dn"] + vc + ["-c:a", ac, "-b:a", "640k" if ac == "ac3" else "384k", "-ac", str(an), "-ar", "48000", "-output_ts_offset", "%.3f" % (OFS[0]), "-f", "mpegts", "pipe:1"]
+    ar = ["-c:a", ac, "-b:a", "640k" if ac == "ac3" else "192k", "-ac", str(an), "-ar", "48000", "-output_ts_offset", "%.3f" % (OFS[0]), "-f", "mpegts", "pipe:1"]
+    tempo = ",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA) if SPA != 1.0 else ""
+    slots = FEED.plan() if FEED else None
+    if slots is None:   # not MPEG-TS (fMP4 HLS): ffmpeg takes the provider's audio itself
+        return b + ["-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", "aresample=async=1:min_hard_comp=0.1" + tempo] + ar
+    # Each input corrects its own timing to 10 ms: silence comes in whole frames, so where it meets real audio
+    # the two can sit up to a frame apart, which 0.1 s would leave in place (audio that much off the picture).
+    fc = ";".join("[0:i:%d]aresample=async=1:min_hard_comp=0.01,aformat=sample_rates=48000:channel_layouts=%s[s%d]" % (x["pid"], lay, k) for k, x in enumerate(slots))
+    fc += ";" + "".join("[s%d]" % k for k in range(len(slots))) + "amix=inputs=%d:normalize=0:duration=longest" % len(slots) + tempo + "[ao]"
+    return b + ["-i", "pipe:0", "-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]", "-sn", "-dn"] + vc + ar
 
 def rtgt():
     return dep or 3 * tgt
@@ -395,7 +401,7 @@ SK = set()   # encoders coax itself killed (not a GPU decoding failure)
 
 NB = [0]        # bytes sent to the running encoder
 AOUT = [("ac3", 6, "5.1") if DOLBY51 else ("aac", 2, "stereo")]   # output audio of this DVR connection
-FEED = aslots.Feeder(ALANG, log) if TRANSCODE else None
+FEED = aslots.Feeder(ALANG, log, FF) if TRANSCODE else None
 
 QF = set()   # encoders replaced before any input; their ffmpeg messages are dropped
 DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |\[dec:[a-z0-9_]+ @ 0x[0-9a-f]+\] |^\s*Last message repeated")
@@ -538,6 +544,8 @@ def gone():
 
 def put(b):
     if FEED:
+        if NB[0] == 0 and FEED.wants_more(b):
+            remux()   # this encoder has had nothing yet: build the one these bytes need (nobody sees it)
         b = (FEED.psi() if NB[0] == 0 else b"") + FEED.feed(b)   # a new encoder learns the audio inputs at once
     NB[0] += len(b)
     if TRANSCODE:
@@ -549,6 +557,9 @@ def put(b):
         if gone():
             bye()
         remux("remuxer rejected data (%s)" % e)
+        if FEED:
+            b = FEED.psi(fresh=False) + b   # the same bytes again: only the tables, no new start
+            NB[0] = len(b)
         try:
             ff.stdin.write(b)
             ff.stdin.flush()
