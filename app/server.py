@@ -446,8 +446,9 @@ class App:
                 channel["enabled"] = False
                 channel["number"] = next_free_number(cfg)
                 cfg["channels"].append(channel)
-                if cfg["lineups"]:
-                    cfg["lineups"][0]["channels"].append(channel["id"])
+                lineup = default_lineup(cfg)
+                if lineup:
+                    lineup["channels"].append(channel["id"])
                 created.append(channel["id"])
                 used.add(ref)
             return created
@@ -502,6 +503,22 @@ def find_channel(cfg, channel_id):
         if channel["id"] == channel_id:
             return channel
     raise not_found("unknown channel %s" % channel_id)
+
+
+def default_lineup(cfg):
+    """Where new channels go: the first lineup that is switched on. When every lineup is switched off, a new one
+    is made for them (they have to go somewhere); with no lineups at all, none."""
+    lineups = cfg["lineups"]
+    lineup = next((l for l in lineups if l.get("enabled", True) is not False), None)
+    if lineup is None and lineups:
+        ids = {l["id"] for l in lineups}
+        n = 2
+        while "main-%d" % n in ids:
+            n += 1
+        lineup = {"id": "main-%d" % n, "name": "Main %d" % n, "guide": "per-channel", "sort": "manual",
+                  "start_number": None, "channels": [], "enabled": True}
+        lineups.append(lineup)
+    return lineup
 
 
 def find_lineup(cfg, lineup_id):
@@ -1271,6 +1288,8 @@ class Handler(BaseHTTPRequestHandler):
         if unknown:
             raise bad_request("unknown lineup %s" % ", ".join(sorted(unknown)))
         for lineup in cfg["lineups"]:
+            if lineup.get("enabled", True) is False:
+                continue   # switched off: takes no new channels and keeps the ones it has
             if lineup["id"] in wanted and channel_id not in lineup["channels"]:
                 lineup["channels"].append(channel_id)
             elif lineup["id"] not in wanted and channel_id in lineup["channels"]:
@@ -1279,7 +1298,8 @@ class Handler(BaseHTTPRequestHandler):
     def _default_lineups(self, cfg, body):
         if "lineups" in body:
             return body["lineups"]
-        return [cfg["lineups"][0]["id"]] if cfg["lineups"] else []
+        lineup = default_lineup(cfg)
+        return [lineup["id"]] if lineup else []
 
     def h_channels_create(self):
         body = self._body_object()

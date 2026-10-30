@@ -75,3 +75,25 @@ class ApiTests(ApiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineupOffTests(ApiTestCase):
+    def test_lineup_off_takes_no_channels_and_keeps_its_own(self):
+        self.request("POST", "/api/channels", {"name": "One"})
+        self.request("POST", "/api/lineups", {"name": "Sports", "channels": [1]})
+        self.request("PUT", "/api/lineups/main", {"enabled": False})
+        self.request("POST", "/api/channels", {"name": "Two"})
+        lineups = {l["id"]: l["channels"] for l in self.store.get()["lineups"]}
+        self.assertEqual(lineups, {"main": [1], "sports": [1, 2]})
+        # A channel save that leaves the switched-off lineup out does not take the channel out of it.
+        self.request("PUT", "/api/channels/1", {"lineups": ["sports", "main"]})
+        self.request("PUT", "/api/channels/2", {"lineups": ["sports", "main"]})
+        lineups = {l["id"]: l["channels"] for l in self.store.get()["lineups"]}
+        self.assertEqual(lineups, {"main": [1], "sports": [1, 2]})
+
+    def test_every_lineup_off_makes_a_new_one(self):
+        self.request("PUT", "/api/lineups/main", {"enabled": False})
+        status, created, _ = self.request("POST", "/api/channels", {"name": "One"})
+        self.assertEqual(status, 200)
+        lineups = {l["id"]: (l["enabled"], l["channels"]) for l in self.store.get()["lineups"]}
+        self.assertEqual(lineups, {"main": (False, []), "main-2": (True, [created["id"]])})

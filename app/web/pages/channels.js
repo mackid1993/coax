@@ -119,7 +119,7 @@ async function reload() {
     if (!S) return;
     S.channels = channels;
     S.providers = providers;
-    S.lineups = lineups;
+    S.lineups = onLineups(lineups);
     S.config = config;
     S.channelsLoaded = ok = true;
     if (draft.loaded) settleHeld(true);   // before drawing, so rows and held suggestions always match
@@ -187,6 +187,8 @@ function xmltvOnly(c) {
 // The lineup and group pickers set the scope; the counters count within it.
 // Providers switched off on the Providers page are hidden here, with every channel whose streams are all on them.
 // S.providers keeps them so names and held suggestions still resolve.
+// Lineups switched off are hidden too: no channels can be added to them (the server keeps their members).
+const onLineups = (ls) => ls.filter((l) => l.enabled !== false);
 const onProviders = () => S.providers.filter((p) => p.enabled !== false);
 const offOnly = (c) => { const off = new Set(S.providers.filter((p) => p.enabled === false).map((p) => p.id)); return off.size > 0 && (c.streams || []).length > 0 && c.streams.every((r) => off.has(r.provider)); };
 const inScope = (c) => !offOnly(c) && (!S.lineup || lineupsOf(c).includes(S.lineup)) && (!S.group || (c.group || "") === S.group);
@@ -1266,7 +1268,7 @@ function lineupModal(ids) {
         c.lineups = r?.lineups || [...cur];
       }
       invalidate("lineups");
-      S.lineups = await loadLineups(true).catch(() => S.lineups);
+      S.lineups = onLineups(await loadLineups(true).catch(() => S.lineups));
       toast("Lineups updated", "", "ok", 2000);
       m.close();
       renderFrame();
