@@ -326,7 +326,10 @@ image and times, keeps coax's own `episode/` id and gets no team ids (the game i
 pass could record it twice if Channels DVR does not merge the two). A dated game with no match keeps the name's
 airing and gets `<team-id system="tms">` for both sides when each resolves to exactly one team among the guide's
 games of that league (`team_ids`). An undated name with no match gets nothing. The DVR down or no URL: names only,
-one warning per rebuild. No series-id is ever written (a league series id on slot games could make an existing
+one warning per rebuild. `Espn` gives the picture of an airing Gracenote did not supply: the home team's logo
+(after "at"/"@", else the first side; the other side when that one is ambiguous) from ESPN's public team list
+(`ESPN_TEAMS`, read only when such a game needs one, kept 7 days in `cache/espn-teams-<path>.json`, the old copy
+used when ESPN does not answer), else the league's logo. No series-id is ever written (a league series id on slot games could make an existing
 pass record every one of them).
 
 ## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)

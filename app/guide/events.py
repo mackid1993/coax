@@ -80,6 +80,18 @@ CLOCK_MINUTES = 30       # a time with no day matches an airing within this of i
 AHEAD_DAYS = 8           # how far ahead a time with no day looks for its game
 US_ZONES = ("America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles")
 
+# ESPN's public team lists, for team logos: https://site.api.espn.com/apis/site/v2/sports/<path>/teams
+ESPN_PATHS = {
+    "NFL": "football/nfl", "MLB": "baseball/mlb", "NBA": "basketball/nba", "NHL": "hockey/nhl",
+    "WNBA": "basketball/wnba", "MLS": "soccer/usa.1", "NCAAF": "football/college-football",
+    "NCAAB": "basketball/mens-college-basketball", "NCAAM": "basketball/mens-college-basketball",
+    "NCAAMB": "basketball/mens-college-basketball", "NCAAW": "basketball/womens-college-basketball",
+    "NCAAWB": "basketball/womens-college-basketball",
+}
+ESPN_TEAMS = "https://site.api.espn.com/apis/site/v2/sports/%s/teams?limit=1000"
+ESPN_LEAGUE_LOGO = "https://a.espncdn.com/i/teamlogos/leagues/500/%s.png"   # nfl, mlb, nba, nhl, wnba, mls
+ESPN_DAYS = 7            # team lists change a few times a year; kept on disk this long
+
 # Zone abbreviations as providers write them. "EST" all year means New York, not a fixed offset: providers never
 # switch to "EDT".
 ZONES = {
@@ -323,12 +335,14 @@ def _same_game(sides, teams):
 
 class Guide:
     """Upcoming league games in Channels DVR's own Gracenote guide, read once per guide rebuild, and only when a
-    lineup has an event channel to match (most users never cause a request)."""
+    lineup has an event channel to match (most users never cause a request). Team logos for the games it does not
+    list come from ESPN's public team lists (Espn)."""
 
-    def __init__(self, config, get_json=None, now=None):
+    def __init__(self, config, get_json=None, now=None, espn=None):
         self.base = ((config.get("channels_dvr") or {}).get("url") or "").strip().rstrip("/")
         self.get_json = get_json
         self.now = now or datetime.datetime.now(datetime.timezone.utc)
+        self.espn = espn or Espn()
         self._games = None
 
     def games(self):
@@ -408,6 +422,99 @@ class Guide:
                 return []
             ids.append(hits.pop())
         return ids if ids[0] != ids[1] else []
+
+
+class Espn:
+    """ESPN's public team list per league (site.api.espn.com), for a game's team logo. Read only when a game needs a
+    logo, kept on disk for ESPN_DAYS (cache/espn-teams-<league>.json), the old copy used when ESPN does not answer."""
+
+    def __init__(self, get_json=None):
+        self.get_json = get_json
+        self._teams = {}
+
+    def logo(self, league, p):
+        """The home team's logo for a game (the side after "at" or "@", else the first), else the league's."""
+        sides = p.get("sides") or []
+        if league in ESPN_PATHS and len(sides) == 2:
+            home = sides[1] if re.search(r"\s(?:at|@)\s", p["event"], re.I) else sides[0]
+            for side in (home, sides[0] if home is sides[1] else sides[1]):
+                hits = {t["logo"] for t in self.teams(league) if t["logo"] and self._is(side, t)}
+                if len(hits) == 1:
+                    return hits.pop()
+        short = {"NFL", "MLB", "NBA", "NHL", "WNBA", "MLS"}
+        return ESPN_LEAGUE_LOGO % league.lower() if league in short else ""
+
+    @staticmethod
+    def _is(side, team):
+        if side.strip().upper() == team["abbreviation"] and len(side.strip()) >= 2:
+            return True
+        return _same_team(side, team["name"])
+
+    def teams(self, league):
+        path = ESPN_PATHS[league]
+        if path not in self._teams:
+            self._teams[path] = self._load(path)
+        return self._teams[path]
+
+    def _load(self, path):
+        import json
+        import os
+        from app import guide
+        cache = os.path.join(guide.cache_dir(), "espn-teams-%s.json" % path.replace("/", "-"))
+        try:
+            with open(cache, encoding="utf-8") as f:
+                stored = json.load(f)
+        except (OSError, ValueError):
+            stored = None
+        fresh = stored and _time_ok(stored.get("fetched_at"), ESPN_DAYS)
+        if fresh:
+            return stored["teams"]
+        try:
+            get_json = self.get_json or _espn_json
+            data = get_json(ESPN_TEAMS % path) or {}
+            teams = []
+            for league in ((data.get("sports") or [{}])[0].get("leagues") or []):
+                for item in league.get("teams") or []:
+                    t = item.get("team") or {}
+                    logo = next((lg.get("href") for lg in t.get("logos") or []
+                                 if "default" in (lg.get("rel") or [])), "") or ""
+                    if t.get("displayName"):
+                        teams.append({"name": t["displayName"], "abbreviation": (t.get("abbreviation") or "").upper(),
+                                      "logo": logo})
+            if not teams:
+                raise ValueError("no teams in the answer")
+        except Exception as exc:  # noqa: BLE001 - a game without a logo is still a game
+            log.warning("ESPN team list %s not read (%s)%s", path, exc, "; using the last copy" if stored else "")
+            return (stored or {}).get("teams") or []
+        try:
+            os.makedirs(os.path.dirname(cache), exist_ok=True)
+            tmp = cache + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"fetched_at": _time_now(), "teams": teams}, f)
+            os.replace(tmp, cache)
+        except OSError as exc:
+            log.warning("could not keep the ESPN team list %s: %s", path, exc)
+        return teams
+
+
+def _time_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _time_ok(stamp, days):
+    try:
+        when = datetime.datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return False
+    return datetime.datetime.now(datetime.timezone.utc) - when < datetime.timedelta(days=days)
+
+
+def _espn_json(url, timeout=20):
+    import json
+    import urllib.request
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", "replace"))
 
 
 def _game(series, a):
@@ -588,13 +695,15 @@ def _airing(p, game, guide, zone):
                                                               p["notes"])
         cats = list(dict.fromkeys(game["genres"] + game["categories"] + list(CATEGORIES)))
         return {"title": game["title"] or name, "name": name, "desc": (game["summary"] or name) + notes,
-                "image": game["image"], "start": game["start"], "stop": game["stop"], "categories": cats,
+                "image": game["image"] or guide.espn.logo(p["league"], p), "start": game["start"],
+                "stop": game["stop"], "categories": cats,
                 "live": game["live"], "new": game["new"], "teams": [], "key": key}
     if p["kind"] != "event":
         return None
     title, genre, hours = LEAGUES.get(p["league"], (p["event"], "", GENERIC_HOURS))
     # A game only the provider carries: its team ids let a team pass record it.
-    return {"title": title, "name": p["event"], "desc": p["event"] + notes, "image": "", "start": p["start"],
+    return {"title": title, "name": p["event"], "desc": p["event"] + notes,
+            "image": guide.espn.logo(p["league"], p), "start": p["start"],
             "stop": p["start"] + datetime.timedelta(hours=hours),
             "categories": ([genre] if genre else []) + list(CATEGORIES), "live": True, "new": True,
             "teams": guide.team_ids(p), "key": p["key"]}

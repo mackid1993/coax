@@ -1,0 +1,188 @@
+{
+ "hockey/nhl": {
+  "sports": [
+   {
+    "leagues": [
+     {
+      "teams": [
+       {
+        "team": {
+         "displayName": "Florida Panthers",
+         "abbreviation": "FLA",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nhl/500/fla.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "New Jersey Devils",
+         "abbreviation": "NJ",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nhl/500/nj.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "New York Rangers",
+         "abbreviation": "NYR",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "Vegas Golden Knights",
+         "abbreviation": "VGK",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "Winnipeg Jets",
+         "abbreviation": "WPG",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "football/nfl": {
+  "sports": [
+   {
+    "leagues": [
+     {
+      "teams": [
+       {
+        "team": {
+         "displayName": "Baltimore Ravens",
+         "abbreviation": "BAL",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "Buffalo Bills",
+         "abbreviation": "BUF",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "New York Giants",
+         "abbreviation": "NYG",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nfl/500/nyg.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       },
+       {
+        "team": {
+         "displayName": "New York Jets",
+         "abbreviation": "NYJ",
+         "logos": [
+          {
+           "alt": "",
+           "height": 500,
+           "href": "https://a.espncdn.com/i/teamlogos/nfl/500/nyj.png",
+           "rel": [
+            "full",
+            "default"
+           ],
+           "width": 500
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

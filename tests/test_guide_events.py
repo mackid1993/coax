@@ -14,6 +14,38 @@ from app.guide import events, xmltv
 from app.providers import catalog
 
 NY = zoneinfo.ZoneInfo("America/New_York")
+ESPN_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "guide", "espn-teams.json")
+
+
+def fake_espn(fail=False):
+    """ESPN's /teams answers for NHL and NFL, trimmed from the real ones."""
+    with open(ESPN_FIXTURE, encoding="utf-8") as f:
+        data = json.load(f)
+    calls = []
+
+    def get_json(url):
+        calls.append(url)
+        if fail:
+            raise OSError("ESPN not reachable")
+        path = url.split("/sports/", 1)[1].rsplit("/teams", 1)[0]
+        return data.get(path, {"sports": [{"leagues": [{"teams": []}]}]})
+    return get_json, calls
+
+
+def setUpModule():
+    # No test reaches ESPN or writes to /data: a fake answers and the cache goes to a temporary folder.
+    global _TMP, _PATCHES
+    _TMP = tempfile.TemporaryDirectory()
+    _PATCHES = [mock.patch.object(events, "_espn_json", fake_espn()[0]),
+                mock.patch.object(guide, "CACHE_DIR", _TMP.name)]
+    for patcher in _PATCHES:
+        patcher.start()
+
+
+def tearDownModule():
+    for patcher in _PATCHES:
+        patcher.stop()
+    _TMP.cleanup()
 NOW = datetime.datetime(2026, 10, 30, 12, 0, tzinfo=NY)
 
 
@@ -347,6 +379,49 @@ class GuideTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class EspnTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patcher = mock.patch.object(guide, "CACHE_DIR", self.tmp.name)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_home_team_logo_then_league(self):
+        get_json, calls = fake_espn()
+        espn = events.Espn(get_json=get_json)
+        self.assertEqual(espn.logo("NHL", parse("NHL 02: Winnipeg Jets vs. Florida Panthers @ 30 Oct 06:30 PM ET")),
+                         "https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png")
+        self.assertEqual(espn.logo("NHL", parse("NHL 05: Devils at Golden Knights @ 30 Oct 10:00 PM ET")),
+                         "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png")      # "at": the home team
+        self.assertEqual(espn.logo("NHL", parse("NHL 06: Kraken vs. Flames @ 30 Oct 10:00 PM ET")),
+                         "https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png")  # not in the list: the league's
+        self.assertEqual(espn.logo("", parse("ESPN+ 13: Temple vs. East Carolina @ Oct 30 12:00PM ET")), "")
+        self.assertEqual(len(calls), 1)                    # one list per league, once
+        self.assertEqual(events.Espn(get_json=get_json).teams("NHL")[0]["name"], "Florida Panthers")
+        self.assertEqual(len(calls), 1)                    # the next rebuild reads it from disk
+
+    def test_a_side_that_is_two_teams_falls_back_to_the_other(self):
+        get_json, _calls = fake_espn()
+        espn = events.Espn(get_json=get_json)
+        p = parse("NFL 04: New York vs. Buffalo @ 8 Nov 01:00 PM ET")     # New York is the Jets and the Giants
+        self.assertEqual(espn.logo("NFL", p), "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png")
+
+    def test_espn_down_keeps_the_last_list(self):
+        get_json, _calls = fake_espn()
+        events.Espn(get_json=get_json).teams("NHL")
+        path = os.path.join(self.tmp.name, "espn-teams-hockey-nhl.json")
+        with open(path, encoding="utf-8") as f:
+            stored = json.load(f)
+        stored["fetched_at"] = "2020-01-01T00:00:00+00:00"            # stale: asks ESPN again
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(stored, f)
+        down, calls = fake_espn(fail=True)
+        self.assertEqual(len(events.Espn(get_json=down).teams("NHL")), 5)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(events.Espn(get_json=down).teams("NFL"), [])  # never read: no logos, no error
+
+
 class GuideEntriesTests(unittest.TestCase):
     def setUp(self):
         streams = {("p1", "1"): "NFL  | 02 - 1pm Ravens at Bills",
@@ -380,6 +455,7 @@ class GuideEntriesTests(unittest.TestCase):
         self.assertTrue(devils.findtext("desc").endswith("(Devils Broadcast)"))
         jets = [p for p in by["coax-4"] if p.findtext("title") == "NFL Football"][0]
         self.assertEqual(jets.findtext("sub-title"), "Bills vs. Jets")
+        self.assertEqual(jets.find("icon").get("src"), "https://a.espncdn.com/i/teamlogos/nfl/500/buf.png")
         self.assertEqual([(t.get("system"), t.text) for t in jets.findall("team-id")], [("tms", "34"), ("tms", "52")])
 
 
