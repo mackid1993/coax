@@ -29,6 +29,8 @@ app/
   snapshots.py       backups of /data as .tar.gz (daily, manual, restore); old .json backups still restore
   cleanup.py         daily removal of stale engine files and orphaned caches
   names.py           strips provider prefixes (US|, [US], NFL| ...) from names; always on
+  vod.py             video on demand: Stream Files in Channels DVR's Imports, collections, sections, visibility
+  vodproxy.py        /vod/... passthrough for those files: one provider connection per play, a hub line slot
   tz.py              time zone (Settings, else TZ, else UTC)
   engine/
     hlsloop.py       stream engine for HLS input (one process per Session)
@@ -38,7 +40,8 @@ app/
     gracenote.py     station search and matching through Channels DVR's Gracenote data; region lineup index
     xmltv.py         download, parse and merge XMLTV sources; picker ids (every display name kept)
     output.py        M3U per lineup
-  providers/         xtream.py, m3u.py (streaming parser), catalog.py (cache), scheduler.py, net.py
+  providers/         xtream.py, m3u.py (streaming parser), catalog.py (cache), scheduler.py, net.py,
+                     vod.py (movie and series lists, episodes, title cleanup, M3U VOD split)
   web/               index.html, app.js (shell, router, bell, IP pill), api.js (every route), ui.js, state.js,
                      popover.js, app.css, pages/{channels,status,lineups,providers,settings,logs}.js
 tests/               unittest suite (fake engine in tests/fixtures/hub/fake_engine.py)
@@ -291,6 +294,31 @@ calls `on_change`), debounces 3 s, and refreshes every added lineup's source whe
 guide when enabled channels or guide ids changed). The M3U it compares is `App.lineup_m3u`, the same text the
 DVR downloads, so a provider renumbering a lineup sorted by provider number is pushed too. Disabled channels
 are not in the M3U and do not count as members. Sources must never need a manual Refresh in Channels DVR.
+
+## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)
+
+- **Catalog.** Xtream: get_vod_categories/get_vod_streams/get_series_categories/get_series into
+  `cache/vod-<pid>.json` plus a small `vod-<pid>-groups.json` summary the dialog reads (the full list is never
+  kept in memory: 137k movies parse to about 200 MB). Episodes come from one get_series_info per series in picked
+  groups, cached by `last_modified` in `vod-<pid>-episodes.json`, paced, five failures in a row end the run, an
+  empty answer is a failure (panels answer empty when they throttle). M3U: `m3u_split` moves video files and
+  `/movie/` `/series/` addresses out of the channel catalog; `S01E02`/`1x02` names are episodes.
+- **Library.** Picks live in `provider.vod` (`movies`, `series`, `library` = groups also listed in Movies/TV
+  Shows). `Library.sync` writes one `.strm` per title under `/imports/Movies/coax/<pid>/` and
+  `/imports/TV/coax/<pid>/<Show>/Season NN/` holding `<base_url>/vod/<pid>/<m|e>/<id>.<ext>` (never the
+  provider's URL), deletes stale ones (only inside those folders), `PUT /dvr/scanner/scan` (and
+  `/dvr/scanner/imports/prune` after deletes), waits for the scanner, then keeps one collection per picked group
+  (`/dvr/collections/content`, Items = file ids or show ids from `/api/v1/movies|episodes?source=stream-files`)
+  and one Personal Section per provider (`/dvr/custom_sections`, a `collection` row each). Titles of groups not
+  in `library` are set Hidden (`/dvr/files/<id>/visibility/hidden`; a show group only when all its files are
+  coax's); coax remembers what it hid (`cache/vod-state.json`) and shows them again when a group is switched.
+  The scanner never opens the addresses. Runs on Save and every `refresh_hours`; a provider switched off pauses.
+- **Playback.** `Plays` keys a play by (client IP, provider), takes a hub slot (`Hub.vod_hold`, a `VodHold` in
+  `_slots`), and passes bytes through untouched. One provider connection per play: a request needing the
+  provider closes the older one first; requests within 1 s debounce 0.35 s; the last 4 MB of the file is fetched
+  once with an explicit range and serves the player's index reads; only explicit ranges go upstream (some CDNs
+  answer 500 to `bytes=-N`); busy answers retried 10 s; the slot lingers 8 s after the last request. `Hub.open`
+  stops a VOD play (2.5 s at most) when every line is busy: tunes and recordings win.
 
 ## Web UI (app/web)
 
