@@ -297,14 +297,18 @@ def fetch_catalog(provider):
     not yet taken in this playlist, so ids stay the same across refreshes even when tokens
     or credentials in the URLs rotate.
     """
+    from . import vod as vodmod
     parsed = download(provider)
+    # Movies and episodes (video files, /movie/ and /series/ addresses) are not live channels: they go to the
+    # provider's VOD catalog (app/providers/vod.py) instead.
+    live_entries, vod = vodmod.m3u_split(parsed["entries"], vod_id)
     groups = []
     seen_groups = set()
     seen_urls = set()
     seen_ids = set()
     streams = []
     entries = []
-    for entry in parsed["entries"]:
+    for entry in live_entries:
         url = entry["url"].strip()
         if url in seen_urls:
             continue
@@ -335,7 +339,14 @@ def fetch_catalog(provider):
             "url": entry["url"],
             "format": stream_format_for_url(entry["url"]),
         })
-    return {"groups": groups, "streams": streams}
+    return {"groups": groups, "streams": streams, "vod": vod}
+
+
+def vod_id(entry):
+    """A movie's or episode's id: the panel's number in an Xtream style address, else a hash of the address."""
+    from . import vod as vodmod
+    match = vodmod._XTREAM_VOD.search(urlsplit(entry["url"].strip()).path)
+    return match.group(2) if match else _digest("url:" + normalized_url(entry["url"].strip()))
 
 
 def _python_replacement(replace):

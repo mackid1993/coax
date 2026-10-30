@@ -1,4 +1,4 @@
-"""Xtream Codes client: account info, live categories and live streams.
+"""Xtream Codes client: account info, live categories and live streams, and the VOD lists (movies, series).
 
 Providers are inconsistent: numbers arrive as strings, fields are null, lists come back as
 empty objects, and errors are sometimes HTML pages with status 200. Everything here is
@@ -89,12 +89,13 @@ def to_int(value, default=0):
         return default
 
 
-def _api(provider, action=None, limit=None):
+def _api(provider, action=None, limit=None, **extra):
     """Call player_api.php with the first line's credentials and return parsed JSON."""
     line = first_line(provider)
     params = {"username": line.get("username") or "", "password": line.get("password") or ""}
     if action:
         params["action"] = action
+    params.update(extra)
     label = "Xtream %s" % (action or "account info")
     deadline = time.monotonic() + (API_DEADLINE if limit is None else limit)
     resp = get(base_url(line_server(provider, line)) + "/player_api.php", provider, params=params, label=label,
@@ -275,3 +276,101 @@ def xmltv_url(provider):
     line = first_line(provider)
     query = urlencode({"username": line.get("username") or "", "password": line.get("password") or ""})
     return "%s/xmltv.php?%s" % (base_url(line_server(provider, line)), query)
+
+
+# -- video on demand -------------------------------------------------------------------------------------------------
+
+# The movie and series lists of a large panel are tens of megabytes (one had 214,000 movies).
+VOD_DEADLINE = 600
+
+
+def _categories(action):
+    def get(provider):
+        out = []
+        for item in _as_list(_api(provider, action), "Xtream " + action):
+            cid = id_text(item.get("category_id"))
+            out.append({"category_id": cid,
+                        "category_name": text(item.get("category_name")) or ("Category %s" % cid if cid else UNCATEGORIZED)})
+        return out
+    return get
+
+
+get_vod_categories = _categories("get_vod_categories")
+get_series_categories = _categories("get_series_categories")
+
+
+def _category_ids(item):
+    """Every category an item is in: category_id, plus category_ids on panels that list several."""
+    ids = []
+    for value in [item.get("category_id")] + (item.get("category_ids") if isinstance(item.get("category_ids"), list) else []):
+        cid = id_text(value)
+        if cid and cid not in ids:
+            ids.append(cid)
+    return ids
+
+
+def _year(item):
+    for key in ("year", "releaseDate", "release_date", "releasedate"):
+        value = text(item.get(key))
+        if len(value) >= 4 and value[:4].isdigit() and value[:4] != "0000":
+            return value[:4]
+    return ""
+
+
+def get_vod_streams(provider):
+    """Every movie: {"id", "name", "ext", "categories", "year", "tmdb", "logo", "added"}."""
+    out = []
+    for item in _as_list(_api(provider, "get_vod_streams", VOD_DEADLINE), "Xtream get_vod_streams"):
+        sid = id_text(item.get("stream_id"))
+        if not sid:
+            continue
+        out.append({"id": sid, "name": text(item.get("name")), "ext": text(item.get("container_extension")) or "mp4",
+                    "categories": _category_ids(item), "year": _year(item),
+                    "tmdb": text(item.get("tmdb_id") or item.get("tmdb")), "logo": text(item.get("stream_icon")),
+                    "added": to_int(item.get("added"))})
+    return out
+
+
+def get_series(provider):
+    """Every series: {"id", "name", "categories", "year", "tmdb", "logo", "modified"}."""
+    out = []
+    for item in _as_list(_api(provider, "get_series", VOD_DEADLINE), "Xtream get_series"):
+        sid = id_text(item.get("series_id"))
+        if not sid:
+            continue
+        out.append({"id": sid, "name": text(item.get("name")), "categories": _category_ids(item),
+                    "year": _year(item), "tmdb": text(item.get("tmdb_id") or item.get("tmdb")),
+                    "logo": text(item.get("cover")), "modified": to_int(item.get("last_modified"))})
+    return out
+
+
+def get_series_episodes(provider, series_id):
+    """One series' episodes: [{"id", "season", "episode", "title", "ext"}]. Panels answer the episodes as a dict
+    keyed by season, a list of seasons, or not at all for a series without any."""
+    data = _api(provider, "get_series_info", series_id=id_text(series_id))
+    _check_auth(data, "Xtream get_series_info")
+    episodes = data.get("episodes") if isinstance(data, dict) else None
+    if isinstance(episodes, dict):
+        groups = list(episodes.items())
+    elif isinstance(episodes, list):
+        groups = [(None, group) for group in episodes]
+    else:
+        groups = []
+    out = []
+    for season_key, group in groups:
+        for ep in group if isinstance(group, list) else []:
+            if not isinstance(ep, dict) or not id_text(ep.get("id")):
+                continue
+            season = to_int(ep.get("season"), to_int(season_key, 0))
+            out.append({"id": id_text(ep.get("id")), "season": season, "episode": to_int(ep.get("episode_num")),
+                        "title": text(ep.get("title")), "ext": text(ep.get("container_extension")) or "mp4"})
+    return out
+
+
+def vod_url(provider, line, kind, item_id, ext):
+    """{server}/movie/{username}/{password}/{id}.{ext} for a movie, /series/... for an episode."""
+    safe = "@:+!$&'()*,;=-._~"
+    return "%s/%s/%s/%s/%s.%s" % (
+        base_url(line_server(provider, line)), "series" if kind == "episode" else "movie",
+        quote(line.get("username") or "", safe=safe), quote(line.get("password") or "", safe=safe),
+        quote(id_text(item_id), safe=safe), quote(ext or "mp4", safe=safe))

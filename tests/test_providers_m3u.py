@@ -272,7 +272,7 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(providers.stream_url(provider, provider["lines"][0], m3u.stream_id_for(url)), url)
 
     def test_stream_format_helper_and_usable_lines(self):
-        self.fake.set("/list.m3u", (200, {}, b"#EXTM3U\nhttp://h/a.m3u8\nhttp://h/b.mp4\n"))
+        self.fake.set("/list.m3u", (200, {}, b"#EXTM3U\nhttp://h/a.m3u8\nhttp://h/b\n"))
         provider = make_provider(self.fake.url + "/list.m3u", format="ts")
         streams = catalog.refresh(provider)["streams"]
         self.assertEqual(providers.stream_format(provider, streams[0]), "hls")

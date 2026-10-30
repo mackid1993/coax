@@ -137,6 +137,12 @@ def refresh(provider):
         if expires:
             catalog["expires"] = expires   # Xtream plan expiry (Unix time)
         atomic_write_json(cache_path(provider_id), catalog)
+        if fresh.get("vod") is not None:
+            from . import vod
+            try:
+                vod.save(provider_id, fresh["vod"])
+            except ProviderError as exc:
+                log.warning("provider %s VOD list not updated: %s", provider_id, exc)
 
     report = diff(previous, catalog, provider.get("groups") or [])
     log.info("provider %s refreshed: %d streams in %d groups, %d added, %d removed, %d updated",
