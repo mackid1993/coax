@@ -1,4 +1,4 @@
-"""Guide entries for event channels, read from the stream's own name.
+"""Guide entries for event channels, read from the stream's own name and matched to Channels DVR's guide.
 
 Providers carry live sports and other events on numbered channels that exist for one event at a time. The
 channel is called "NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET" today and
@@ -6,8 +6,15 @@ channel is called "NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 0
 entry, so Channels DVR shows them blank and nothing on them can be recorded.
 
 For a channel with no guide of its own, coax reads the name its main stream has in the provider's catalog right
-now. When that name is an event with a date and a time, the lineup's XMLTV gets an airing for it; when it says
-nothing is on, a "No event scheduled" block. Any other name is left alone, so a normal channel never changes.
+now. When that name is an event, the lineup's XMLTV gets an airing for it; when it says nothing is on, a "No event
+scheduled" block. Any other name is left alone, so a normal channel never changes.
+
+A game is then looked up in Channels DVR's own Gracenote guide (GET /dvr/guide/airings/<series id>, the upcoming
+airings of one series on the user's sources; the series ids in SERIES were checked against Channels DVR). When the
+same two teams play there at the time the name gives, the airing takes Gracenote's title, matchup, description,
+picture, start and end. That also places a name with a time but no day ("NFL | 02 - 1pm Ravens at Bills"): the
+day comes from Gracenote, never from a guess. The teams Gracenote names there give the Gracenote team ids of
+games it does not list (an out-of-market game only the provider carries).
 
 The approach and the Channels DVR details come from epg3r by Jon Maddox (https://github.com/maddox/epg3r),
 written in Go and ported here in coax's own terms:
@@ -17,16 +24,17 @@ written in Go and ported here in coax's own terms:
   * The identity is the day (read in one zone, coax's) and the sides of a matchup in sorted order, never the
     minute: "A vs B" and "B at A" are one game, and a provider moving 7:00 to 7:05 is not a new one.
   * Airings are marked live and new, with the "Sports event" and "Sports" categories, so Channels DVR files
-    them as sports and passes that record only new airings see them.
+    them as sports and passes that record only new airings see them; team ids go in <team-id system="tms">.
   * A time with no day is not evidence of a day: providers keep a game's name on a channel long after it
-    ended, and reading it as today puts last night's game on tonight. Such a name gets no airing.
+    ended, and reading it as today puts last night's game on tonight. Such a name gets an airing only when the
+    Gracenote guide has that game at that time of day.
   * A "start: ... stop: ..." window states no zone (epg3r found one provider's five hours off the others' for
     the same games) and its stop is the provider's block length, not the game's end, so it is never read. coax
-    goes one step further: no time that names no zone ("19:30", "2026-10-30 13:00:00") is read, because a
-    guessed zone puts the airing, and its recording, hours off.
+    goes one step further: no time that names no zone ("19:30", "2026-10-30 13:00:00") is read as a date,
+    because a guessed zone puts the airing, and its recording, hours off.
   * A block with nothing on still gets an entry: an empty guide cell looks broken rather than empty.
-  * Game lengths per league (NFL 3 h 30 min, NBA 3 h, ...) for the airing's end, and the airing titles, from
-    epg3r's league table (the only data taken from it; its team roster and Gracenote ids are not used).
+  * Game lengths per league (NFL 3 h 30 min, NBA 3 h, ...) and airing titles from epg3r's league table, for
+    games Gracenote does not list (the only data taken from epg3r; its team roster is not used).
 """
 
 import datetime
@@ -60,6 +68,18 @@ LEAGUES = {
 }
 CATEGORIES = ("Sports event", "Sports")
 
+# The Gracenote series that holds each league's games, as Channels DVR lists them (/dvr/guide/airings/<id> answers
+# "NFL Football", "NHL Hockey", ...). Public Gracenote ids, checked against Channels DVR's guide.
+SERIES = {
+    "NFL": "191277", "MLB": "191273", "NBA": "191276", "NHL": "191278", "WNBA": "191289", "MLS": "191274",
+    "NCAAF": "191261", "NCAAB": "191260", "NCAAM": "191260", "NCAAMB": "191260", "NCAAW": "191292",
+    "NCAAWB": "191292",
+}
+MATCH_HOURS = 2          # a dated name matches a Gracenote airing that starts this close to its time
+CLOCK_MINUTES = 30       # a time with no day matches an airing within this of it, in a US zone
+AHEAD_DAYS = 8           # how far ahead a time with no day looks for its game
+US_ZONES = ("America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles")
+
 # Zone abbreviations as providers write them. "EST" all year means New York, not a fixed offset: providers never
 # switch to "EDT".
 ZONES = {
@@ -84,7 +104,7 @@ _ZONE = r"(?:%s)" % "|".join(sorted(ZONES, key=len, reverse=True))
 # "US (Peacock 002) | ..." puts the label in parentheses.
 _LABEL = r"(?P<label>[A-Za-z][\w+&'.]*(?:\s+[A-Za-z][\w+&'.]*){0,3}?)"
 SLOT = re.compile(r"^(?:[A-Z]{2,4}\s*[|:]\s*|[A-Z]{2,4}\s+(?=\())?\(?" + _LABEL + r"\s*\|?\s*"
-                  r"(?P<num>\d{1,3})\s*\)?\s*(?::|\||\s-(?=\s|$))\s*(?P<rest>.*)$")
+                  r"(?P<num>\d{1,3}|4k)\s*\)?\s*(?::|\||\s-(?=\s|$))\s*(?P<rest>.*)$", re.I)
 # The label last: "NEXT | TEMPLE VS. EAST CAROLINA | Fri 30 Oct 12:00 EDT (US) | 8K EXCLUSIVE | US: ESPN+ PPV 13".
 TRAIL_SLOT = re.compile(r"^(?:[A-Z]{2,4}\s*:\s*)?" + _LABEL + r"\s+(?P<num>\d{1,3})$")
 _STATUS = re.compile(r"^(?:live|next|end|ended|upcoming|soon|replay)$", re.I)
@@ -107,15 +127,23 @@ _TRAIL_PAREN = re.compile(r"\s*\(([^()]*)\)\s*$")
 # Trailing notes that make it another event rather than another feed of the same one: a language (a Spanish
 # broadcast is not the English one), a women's or men's game, game 2 of a doubleheader. Other notes ("Panthers
 # Broadcast", "In-Arena", "FOX") name a feed, and every feed shares one listing.
-DISTINCT = re.compile(r"\b(?:w|m|women|men|women's|men's|womens|mens|game\s*\d+|espa[nñ]ol|spanish|french|"
-                      r"fran[cç]ais|portugu[eê]se?|portugu[eê]s|deutsch|german|italiano|italian|arabic)\b", re.I)
+LANGUAGE = (r"espa[nñ]ol|spanish|french|fran[cç]ais|portugu[eê]se?|portugu[eê]s|deutsch|german|italiano|italian|"
+            r"arabic")
+DISTINCT = re.compile(r"\b(?:w|m|women|men|women's|men's|womens|mens|game\s*\d+|%s)\b" % LANGUAGE, re.I)
+_LANGUAGE = re.compile(r"\b(?:%s)\b" % LANGUAGE, re.I)
+# A time of day with no date: "1pm Ravens at Bills", "SNF 8:20pm Eagles at Commanders", "Phillies vs Marlins 7:05 PM".
+_CLOCK = r"(?P<h>\d{1,2})(?::(?P<mi>\d{2}))?\s*(?P<ap>[ap])\.?m\.?(?:\s*\(?(?P<tz>%s)\)?)?" % _ZONE
+_NIGHT = r"(?:(?:snf|mnf|tnf|sunday night|monday night|thursday night)\s+)?"
+CLOCK_FIRST = re.compile(r"^%s%s\s+%s(?P<body>.+)$" % (_NIGHT, _CLOCK, _NIGHT), re.I)
+CLOCK_LAST = re.compile(r"^(?P<body>.+?)\s*[@|,-]?\s*%s\s*$" % _CLOCK, re.I)
+_ALT_CAST = re.compile(r"\b(?:alt(?:ernate)?\s*cast|simulcast|megacast|manningcast|prime vision)\b", re.I)
 _LEAD_DATE = re.compile(r"^(?:%s\s+)?\d{1,2}/\d{1,2}\s+-\s+" % _WDAY, re.I)
 _SIDES = re.compile(r"\s+(?:vs\.?|v\.?|versus|x|at|@)\s+", re.I)
 
 
 def _clean(name):
-    text = "".join(ch for ch in unicodedata.normalize("NFKC", name or "") if ch not in "​⁩﻿")
-    text = re.sub(r"[‐-―]", "-", text)
+    text = "".join(ch for ch in unicodedata.normalize("NFKC", name or "") if ch not in "\u200b\u2069\ufeff")
+    text = re.sub(r"[\u2010-\u2015]", "-", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -176,12 +204,44 @@ def _when(m, now):
     return when
 
 
+def _league(label):
+    """The league is the whole label, after a country ("USA NBA"); "MLS NEXT Pro" is not MLS."""
+    words = label.upper().split()
+    words = words[1:] if len(words) == 2 and words[0] in ("US", "USA", "CA", "CAN", "UK") else words
+    return words[0] if len(words) == 1 and words[0] in LEAGUES else ""
+
+
+def _peel_notes(body, notes):
+    while True:
+        p = _TRAIL_PAREN.search(body)
+        if not p or p.start() == 0:
+            return body
+        notes.insert(0, p.group(1).strip())
+        body = body[:p.start()].strip()
+
+
+def _identity(league, label, day, body, notes):
+    """One id per event: the league (or label), the day in coax's zone, the sides in sorted order (or the name),
+    and the notes that make it a different event."""
+    sides = sorted(_key(side) for side in _SIDES.split(body)) if _SIDES.search(body) else [_key(body)]
+    other = [_key(n) for n in notes if DISTINCT.search(n)]
+    key = "|".join([league or _key(label), day.isoformat()] + sides + other)
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+
+def _sides(body):
+    parts = _SIDES.split(body, maxsplit=1)
+    return [part.strip() for part in parts] if len(parts) == 2 and all(p.strip() for p in parts) else []
+
+
 def parse(name, zone, now):
     """What a stream's name says is on.
 
     Returns None for a name that is not an event channel's, {"kind": "idle", ...} for one that says nothing is
-    on, or {"kind": "event", "label", "slot", "event", "notes", "league", "start", "key"} for an event with a
-    date and a time. A slot name with an event but no usable date and time returns None: it gets no airing.
+    on, {"kind": "event", "label", "slot", "event", "sides", "notes", "league", "start", "key"} for an event with
+    a date, a time and a zone, or {"kind": "undated", ..., "clock": (hour, minute), "tz"} for a matchup with a time
+    of day and no date (it gets an airing only when Channels DVR's guide places it). Any other slot name returns
+    None: it gets no airing.
     """
     name = _clean(name)
     m = SLOT.match(name)
@@ -195,7 +255,7 @@ def parse(name, zone, now):
         segs = segs[1:-1] if _STATUS.match(segs[0]) else segs[:-1]
         label, slot = m.group("label").strip(), m.group("num")
         rest = " | ".join(seg for seg in segs if seg and not _QUALITY.match(seg))
-    base = {"label": label, "slot": slot}
+    base = {"label": label, "slot": slot, "league": _league(label)}
     if not rest or PLACEHOLDER.match(rest) or SENTINEL.match(rest):
         return dict(base, kind="idle")
     if WINDOW.search(rest):
@@ -206,36 +266,168 @@ def parse(name, zone, now):
         # "(09.08 1:00 PM ET) (FOX)": a note after the schedule.
         p = _TRAIL_PAREN.search(rest)
         if not p or p.start() == 0:
-            return None
+            break
         notes.insert(0, p.group(1).strip())
         rest = rest[:p.start()].strip()
         s = SCHEDULE.match(rest)
     if not s:
-        return None
+        return _undated(base, rest, notes)
     start = _when(s, now)
     if start is None:
         return None
-    body = s.group("body").strip(" -|:@")
-    while True:
-        p = _TRAIL_PAREN.search(body)
-        if not p or p.start() == 0:
-            break
-        notes.insert(0, p.group(1).strip())
-        body = body[:p.start()].strip()
-    body = _LEAD_DATE.sub("", body).strip()
+    body = _LEAD_DATE.sub("", _peel_notes(s.group("body").strip(" -|:@"), notes)).strip()
     if not body:
         return None
-    # The league is the whole label, after a country ("USA NBA"); "MLS NEXT Pro" is not MLS.
-    words = label.upper().split()
-    words = words[1:] if len(words) == 2 and words[0] in ("US", "USA", "CA", "CAN", "UK") else words
-    league = words[0] if len(words) == 1 and words[0] in LEAGUES else ""
-    # One identity per event: the league (or label), the day in coax's zone, the sides in sorted order (or the
-    # name), and the notes that make it a different event.
-    sides = sorted(_key(side) for side in _SIDES.split(body)) if _SIDES.search(body) else [_key(body)]
-    other = [_key(n) for n in notes if DISTINCT.search(n)]
-    key = "|".join([league or _key(label), start.astimezone(zone).date().isoformat()] + sides + other)
-    return dict(base, kind="event", event=body, notes=notes, league=league, start=start,
-                key=hashlib.sha1(key.encode("utf-8")).hexdigest()[:16])
+    return dict(base, kind="event", event=body, sides=_sides(body), notes=notes, start=start,
+                key=_identity(base["league"], label, start.astimezone(zone).date(), body, notes))
+
+
+def _undated(base, rest, notes):
+    m = CLOCK_FIRST.match(rest) or CLOCK_LAST.match(rest)
+    if not m or int(m.group("h")) > 12:
+        return None
+    body = _peel_notes(m.group("body").strip(" -|:@"), notes)
+    sides = _sides(body)
+    if not sides:
+        return None
+    clock = (int(m.group("h")) % 12 + (12 if m.group("ap").lower() == "p" else 0), int(m.group("mi") or 0))
+    key = hashlib.sha1("|".join([base["league"] or _key(base["label"]), "%02d:%02d" % clock]
+                                + sorted(_key(x) for x in sides)).encode("utf-8")).hexdigest()[:16]
+    return dict(base, kind="undated", event=body, sides=sides, notes=notes, clock=clock,
+                tz=(m.group("tz") or "").upper(), key=key)
+
+
+# ----------------------------------------------------------------------
+# Channels DVR's Gracenote guide
+# ----------------------------------------------------------------------
+
+_STOP = {"the", "fc", "sc", "cf", "afc", "club", "university", "of"}
+
+
+def _tokens(text):
+    return set(_key(text).split()) - _STOP
+
+
+def _same_team(ours, theirs):
+    """"Devils" is "New Jersey Devils", "UCF" is "UCF": one name's words are all in the other's."""
+    a, b = _tokens(ours), _tokens(theirs)
+    return bool(a) and bool(b) and (a <= b or b <= a)
+
+
+def _same_game(sides, teams):
+    if len(sides) != 2 or len(teams) != 2:
+        return False
+    (a, b), (x, y) = sides, [t[0] for t in teams]
+    return (_same_team(a, x) and _same_team(b, y)) or (_same_team(a, y) and _same_team(b, x))
+
+
+class Guide:
+    """Upcoming league games in Channels DVR's own Gracenote guide, read once per guide rebuild, and only when a
+    lineup has an event channel to match (most users never cause a request)."""
+
+    def __init__(self, config, get_json=None, now=None):
+        self.base = ((config.get("channels_dvr") or {}).get("url") or "").strip().rstrip("/")
+        self.get_json = get_json
+        self.now = now or datetime.datetime.now(datetime.timezone.utc)
+        self._games = None
+
+    def games(self):
+        if self._games is None:
+            self._games = self._fetch()
+        return self._games
+
+    def _fetch(self):
+        if not self.base:
+            return []
+        from app.guide import gracenote
+        get_json = self.get_json or gracenote._get_json
+        games = []
+        for series in sorted(set(SERIES.values())):
+            try:
+                data = get_json(f"{self.base}/dvr/guide/airings/{series}") or {}
+            except Exception as exc:  # noqa: BLE001 - names alone still give a guide
+                log.warning("Channels DVR guide not read (%s); event channels use their names only", exc)
+                break
+            for airing in data.get("airings") or []:
+                game = _game(series, airing)
+                if game:
+                    games.append(game)
+        return games
+
+    def match(self, p):
+        """The Gracenote game a parsed name is, or None. Precise rather than eager: the same teams at the time the
+        name gives (a time with no day: at that time of day, in the coming days), one program only, the live one
+        when there is a replay too. A name that says it is another broadcast (a language) keeps its own listing."""
+        if len(p.get("sides") or []) != 2 or any(_LANGUAGE.search(t) for t in [p["event"]] + p["notes"]):
+            return None
+        series = SERIES.get(p["league"])
+        hits = [g for g in self.games()
+                if not (series and g["series"] != series) and not g["alt"] and _same_game(p["sides"], g["teams"])
+                and self._at_time(p, g["start"])]
+        # One program can air several times (live, then reruns) and on several channels: keep its live airing, else
+        # the one nearest the time the name gives.
+        target = p.get("start") or self.now
+        hits.sort(key=lambda g: (not g["live"], abs((g["start"] - target).total_seconds())))
+        programs = {}
+        for g in hits:
+            programs.setdefault(g["program"], g)
+        games = list(programs.values())
+        live = [g for g in games if g["live"]]
+        if live:
+            return live[0] if len(live) == 1 else None    # two live games of these teams: not sure which
+        if len(games) == 1 or (p["kind"] == "event" and games):
+            return games[0]
+        return None
+
+    def _at_time(self, p, start):
+        if p["kind"] == "event":
+            return abs((start - p["start"]).total_seconds()) <= MATCH_HOURS * 3600
+        now = self.now
+        if not now - datetime.timedelta(hours=4) <= start <= now + datetime.timedelta(days=AHEAD_DAYS):
+            return False
+        zones = [ZONES[p["tz"]]] if p.get("tz") else US_ZONES
+        want = p["clock"][0] * 60 + p["clock"][1]
+        for zone in zones:
+            local = start.astimezone(zoneinfo.ZoneInfo(zone))
+            diff = abs(local.hour * 60 + local.minute - want)
+            if min(diff, 1440 - diff) <= CLOCK_MINUTES:
+                return True
+        return False
+
+    def team_ids(self, p):
+        """Gracenote team ids for both sides of a game Gracenote does not list, from the teams its listed games of
+        that league name; only when each side is exactly one team."""
+        series = SERIES.get(p["league"])
+        if not series or len(p.get("sides") or []) != 2:
+            return []
+        teams = {t for g in self.games() if g["series"] == series for t in g["teams"] if t[1]}
+        ids = []
+        for side in p["sides"]:
+            hits = {tid for name, tid in teams if _same_team(side, name)}
+            if len(hits) != 1:
+                return []
+            ids.append(hits.pop())
+        return ids if ids[0] != ids[1] else []
+
+
+def _game(series, a):
+    """One Gracenote airing from /dvr/guide/airings, or None when it is not usable (coax's own XMLTV comes back
+    as source "xmltv:coax" and is never matched)."""
+    if a.get("Source") != "tms" or not a.get("ProgramID") or not isinstance(a.get("Time"), int):
+        return None
+    program = ((a.get("Raw") or {}).get("program") or {})
+    teams = [(t.get("name") or "", str(t.get("teamBrandId") or "")) for t in program.get("teams") or []]
+    if len(teams) != 2 and a.get("EventTitle"):
+        teams = [(side, "") for side in _sides(a["EventTitle"])]
+    start = datetime.datetime.fromtimestamp(a["Time"], datetime.timezone.utc)
+    tags = a.get("Tags") or []
+    return {"series": series, "program": a["ProgramID"], "title": a.get("Title") or "",
+            "event": a.get("EventTitle") or "", "summary": a.get("FullSummary") or a.get("Summary") or "",
+            "image": a.get("Image") or "", "start": start,
+            "stop": start + datetime.timedelta(seconds=int(a.get("Duration") or 0) or 3 * 3600),
+            "genres": list(a.get("Genres") or []), "categories": list(a.get("Categories") or []),
+            "live": "Live" in tags, "new": "New" in tags, "teams": teams,
+            "alt": bool(_ALT_CAST.search(a.get("EventTitle") or ""))}
 
 
 # ----------------------------------------------------------------------
@@ -334,15 +526,20 @@ def _program(cid, start, stop, title, desc="", logo=""):
     return elem
 
 
-def entries(config, lineup_id, now=None, covered=None, listed=()):
+def entries(config, lineup_id, now=None, covered=None, listed=(), guide=None):
     """XMLTV channel and program elements for the lineup's event channels: (channels, programs).
-    covered as in lineup_events; listed holds channel ids that already have a channel element."""
+    covered as in lineup_events; listed holds channel ids that already have a channel element; guide is the
+    rebuild's Guide (one for every lineup, so Channels DVR is asked once)."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     hour = now.astimezone(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
     until = hour + datetime.timedelta(hours=FILLER_HOURS)
     zone = _zone(config)
+    guide = guide or Guide(config, now=now)
     channels, programs = [], []
     for ch, p in lineup_events(config, lineup_id, now, covered):
+        airing = None if p["kind"] == "idle" else _airing(p, guide.match(p), guide, zone)
+        if p["kind"] == "undated" and airing is None:
+            continue    # a time with no day that Gracenote does not place: no airing, as before
         cid, logo = ch["id"], ch.get("logo") or ""
         if cid not in listed:
             elem = ET.Element("channel", {"id": f"coax-{cid}"})
@@ -351,35 +548,60 @@ def entries(config, lineup_id, now=None, covered=None, listed=()):
                 _text(elem, "icon", None, src=logo)
             channels.append(elem)
         nothing = "No event scheduled"
-        if p["kind"] == "idle":
+        if airing is None:
             programs.append(_program(cid, hour, until, nothing, logo=logo))
             continue
-        title, genre, hours = LEAGUES.get(p["league"], (p["event"], "", GENERIC_HOURS))
-        start = p["start"]
-        stop = start + datetime.timedelta(hours=hours)
+        start, stop = airing["start"], airing["stop"]
         if start > hour:
-            programs.append(_program(cid, hour, start, "Up next: " + p["event"],
-                                         "Starts " + start.astimezone(zone).strftime("%a %b %-d, %-I:%M %p"),
-                                         logo))
-        airing = _program(cid, start, stop, title, logo=logo)
-        if title != p["event"]:
-            _text(airing, "sub-title", p["event"], lang="en")
-        desc = p["event"] + "".join(" (%s)" % n for n in p["notes"])
-        _text(airing, "desc", desc, lang="en")
-        for cat in ([genre] if genre else []) + list(CATEGORIES):
-            _text(airing, "category", cat, lang="en")
-        _text(airing, "episode-num", "episode/" + p["key"], system="coax")
-        _text(airing, "date", start.astimezone(zone).strftime("%Y%m%d"))
-        _text(airing, "live", None)
-        _text(airing, "new", None)
-        programs.append(_order(airing))
+            programs.append(_program(cid, hour, start, "Up next: " + airing["name"],
+                                     "Starts " + start.astimezone(zone).strftime("%a %b %-d, %-I:%M %p"), logo))
+        elem = _program(cid, start, stop, airing["title"], logo=airing["image"] or logo)
+        if airing["title"] != airing["name"]:
+            _text(elem, "sub-title", airing["name"], lang="en")
+        _text(elem, "desc", airing["desc"], lang="en")
+        for cat in airing["categories"]:
+            _text(elem, "category", cat, lang="en")
+        _text(elem, "episode-num", "episode/" + airing["key"], system="coax")
+        _text(elem, "date", start.astimezone(zone).strftime("%Y%m%d"))
+        if airing["live"]:
+            _text(elem, "live", None)
+        if airing["new"]:
+            _text(elem, "new", None)
+        for tid in airing["teams"]:
+            _text(elem, "team-id", tid, system="tms")
+        programs.append(_order(elem))
         if stop < until:
             programs.append(_program(cid, max(stop, hour), until, nothing, logo=logo))
     return channels, programs
 
 
+def _airing(p, game, guide, zone):
+    """What the airing says: Gracenote's own listing when the guide has the game, else what the name gives."""
+    notes = "".join(" (%s)" % n for n in p["notes"])
+    if game is not None:
+        # Gracenote's title, matchup, description, picture and times. No team ids here: the user's guide already
+        # lists this game on a real channel, and a team pass would record it twice if Channels DVR does not take
+        # the two for one program.
+        name = game["event"] or p["event"]
+        key = p["key"] if p["kind"] == "event" else _identity(p["league"], p["label"],
+                                                              game["start"].astimezone(zone).date(), p["event"],
+                                                              p["notes"])
+        cats = list(dict.fromkeys(game["genres"] + game["categories"] + list(CATEGORIES)))
+        return {"title": game["title"] or name, "name": name, "desc": (game["summary"] or name) + notes,
+                "image": game["image"], "start": game["start"], "stop": game["stop"], "categories": cats,
+                "live": game["live"], "new": game["new"], "teams": [], "key": key}
+    if p["kind"] != "event":
+        return None
+    title, genre, hours = LEAGUES.get(p["league"], (p["event"], "", GENERIC_HOURS))
+    # A game only the provider carries: its team ids let a team pass record it.
+    return {"title": title, "name": p["event"], "desc": p["event"] + notes, "image": "", "start": p["start"],
+            "stop": p["start"] + datetime.timedelta(hours=hours),
+            "categories": ([genre] if genre else []) + list(CATEGORIES), "live": True, "new": True,
+            "teams": guide.team_ids(p), "key": p["key"]}
+
+
 # Child order of a program element in the XMLTV DTD, which strict readers check.
-_ORDER = ("title", "sub-title", "desc", "date", "category", "icon", "episode-num", "new", "live")
+_ORDER = ("title", "sub-title", "desc", "date", "category", "icon", "episode-num", "new", "live", "team-id")
 
 
 def _order(elem):

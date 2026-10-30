@@ -377,6 +377,8 @@ def _refresh(config):
         for lineup_id, deps in lineup_providers.items():
             failed |= {pid for pid in deps if pid not in configured}
 
+        from app.guide import events
+        event_guide = events.Guide(config)   # Channels DVR's guide, read at most once for every lineup
         for lineup_id, writer in writers.items():
             bad = sorted(lineup_providers[lineup_id] & failed)
             if bad:
@@ -386,7 +388,7 @@ def _refresh(config):
                 summary["lineups"][lineup_id] = {
                     "ok": False, "error": "kept the previous guide; failed: " + ", ".join(bad)}
                 continue
-            _add_events(config, lineup_id, writer)
+            _add_events(config, lineup_id, writer, event_guide)
             try:
                 writer.finish(guide_path(lineup_id))
                 summary["lineups"][lineup_id] = {
@@ -402,12 +404,13 @@ def _refresh(config):
     return summary
 
 
-def _add_events(config, lineup_id, writer):
+def _add_events(config, lineup_id, writer, event_guide=None):
     """Airings read from event channels' stream names (app.guide.events), for channels with no guide of their own
     or whose XMLTV id got no programs. A failure leaves them out and keeps the rest of the guide."""
     from app.guide import events
     try:
-        channels, programs = events.entries(config, lineup_id, covered=writer.covered, listed=writer.listed)
+        channels, programs = events.entries(config, lineup_id, covered=writer.covered, listed=writer.listed,
+                                            guide=event_guide)
     except Exception:  # noqa: BLE001
         log.exception("event guide entries for lineup %s failed", lineup_id)
         return

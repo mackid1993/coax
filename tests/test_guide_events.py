@@ -1,6 +1,7 @@
 """Tests for app.guide.events: event channel names read into guide airings (no network)."""
 
 import datetime
+import json
 import os
 import tempfile
 import unittest
@@ -91,13 +92,23 @@ class ParseTests(unittest.TestCase):
     def test_names_that_get_nothing(self):
         for name in ("ESPN", "NHL Network HD", "NFL REDZONE SUNDAY", "FOX 5 Atlanta", "BBC One: London",
                      "NFL Teams: CBS Bears (WBBM) Chicago IL",
-                     # a time with no day: providers keep a finished game's name, so it is not read as today
-                     "NFL  | 02 - 1pm Ravens at Bills", "NHL 09: Phillies vs Marlins 7:05 PM",
                      # a window in no stated zone, whose stop is the provider's block
                      "MLB 04: Yankees vs Red Sox start: 2026 10 30 19:25:15 stop: 2026 10 31 02:38:35",
                      # more than a month away
                      "NFL 04: Bills vs Texans (09/13) 1:00PM ET"):
             self.assertIsNone(parse(name), name)
+
+    def test_a_time_with_no_day_is_only_a_time_of_day(self):
+        # Providers keep a finished game's name, so it is never read as today; only Channels DVR's guide can place it.
+        p = parse("NFL  | 02 - 1pm Ravens at Bills")
+        self.assertEqual((p["kind"], p["sides"], p["clock"], p["tz"]), ("undated", ["Ravens", "Bills"], (13, 0), ""))
+        self.assertNotIn("start", p)
+        p = parse("NFL  | 13 - SNF 8:20pm Eagles at Commanders")
+        self.assertEqual((p["sides"], p["clock"]), (["Eagles", "Commanders"], (20, 20)))
+        self.assertEqual(parse("NFL   | 4k - SNF 8:20pm Eagles at Commanders")["slot"], "4k")
+        p = parse("NHL 09: Phillies vs Marlins 7:05 PM ET")
+        self.assertEqual((p["kind"], p["clock"], p["tz"]), ("undated", (19, 5), "ET"))
+        self.assertIsNone(parse("LIVE EVENT 02 - 8am ACA 209"))       # no matchup to look up
 
     def test_epg3r_shapes(self):
         now = datetime.datetime(2026, 9, 7, 12, 0, tzinfo=NY)
@@ -245,6 +256,131 @@ class EntriesTests(unittest.TestCase):
         self.assertEqual(first, events.fingerprint(cfg, "main"))
         with mock.patch.dict(STREAMS, {("p1", "3"): "NHL 06: Rangers vs Bruins @ 31 Oct 07:00 PM ET"}):
             self.assertNotEqual(events.fingerprint(cfg, "main"), first)
+
+
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "guide", "cdvr-airings.json")
+
+
+def fake_dvr(fail=False):
+    """Channels DVR's /dvr/guide/airings/<series> from trimmed real answers (NFL, college football, NHL)."""
+    with open(FIXTURE, encoding="utf-8") as f:
+        data = json.load(f)
+    calls = []
+
+    def get_json(url):
+        calls.append(url)
+        if fail:
+            raise OSError("Channels DVR not reachable")
+        return data.get(url.rsplit("/", 1)[-1], {"airings": []})
+    return get_json, calls
+
+
+def guide_config():
+    cfg = make_config()
+    cfg["channels_dvr"] = {"url": "http://dvr.test:8089"}
+    return cfg
+
+
+class GuideTests(unittest.TestCase):
+    def setUp(self):
+        self.get_json, self.calls = fake_dvr()
+        self.guide = events.Guide(guide_config(), get_json=self.get_json, now=NOW)
+
+    def test_dated_name_takes_gracenote_listing(self):
+        g = self.guide.match(parse("NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET"))
+        self.assertEqual((g["program"], g["title"], g["event"]),
+                         ("EP051892153426", "NHL Hockey", "New Jersey Devils at Vegas Golden Knights"))
+        self.assertTrue(g["live"])
+        self.assertEqual(g["start"], datetime.datetime(2026, 10, 30, 18, 0, tzinfo=NY))
+
+    def test_live_airing_wins_over_reruns_and_an_older_replay(self):
+        g = self.guide.match(parse("NCAAF 03: Baylor vs. UCF @ 30 Oct 07:30 PM ET"))
+        self.assertEqual((g["program"], g["live"]), ("EP062700991086", True))
+        self.assertEqual(g["start"], datetime.datetime(2026, 10, 30, 19, 30, tzinfo=NY))
+
+    def test_time_with_no_day_is_placed_by_gracenote(self):
+        g = self.guide.match(parse("NFL  | 02 - 1pm Ravens at Bills"))
+        self.assertEqual((g["program"], g["start"]),
+                         ("EP000031285787", datetime.datetime(2026, 11, 1, 13, 0, tzinfo=NY)))
+        self.assertEqual(self.guide.match(parse("NFL  | 11 - 4:25pm Chiefs at Broncos"))["program"], "EP000031285796")
+
+    def test_stale_or_wrong_time_gets_nothing(self):
+        self.assertIsNone(self.guide.match(parse("NFL  | 03 - 1pm Titans at Bengals")))     # not in the guide
+        self.assertIsNone(self.guide.match(parse("NFL  | 02 - 8:20pm Ravens at Bills")))   # not at that time
+        self.assertIsNone(self.guide.match(parse("NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 2 Nov 06:00 PM ET")))
+
+    def test_alt_cast_is_never_the_game(self):
+        g = self.guide.match(parse("NFL 05: Panthers vs. Packers @ 30 Oct 08:00 PM ET"))
+        self.assertIsNone(g)    # only the Prime Vision alt cast airs then; the game itself is the next morning's rerun
+
+    def test_another_language_keeps_its_own_listing(self):
+        self.assertIsNone(self.guide.match(parse("NCAAF 09: Baylor vs. UCF (Español) @ 30 Oct 07:30 PM ET")))
+        self.assertIsNone(self.guide.match(parse("Disney+ Events 185: En Español-Baylor vs. UCF @ 30 Oct 07:30 PM ET")))
+
+    def test_other_labels_search_every_league(self):
+        g = self.guide.match(parse("Disney+ Events 162: Tulane vs. Charlotte @ 30 Oct 07:00 PM ET"))
+        self.assertEqual(g["program"], "EP062700991085")
+
+    def test_team_ids_from_the_guide_for_a_game_it_does_not_list(self):
+        p = parse("NFL 07: Bills vs. Jets @ 8 Nov 01:00 PM ET")
+        self.assertIsNone(self.guide.match(p))
+        self.assertEqual(self.guide.team_ids(p), ["34", "52"])
+        self.assertEqual(self.guide.team_ids(parse("NFL 08: Bills vs. Titans @ 8 Nov 01:00 PM ET")), [])  # unknown side
+
+    def test_dvr_down_or_unset_means_names_only(self):
+        get_json, calls = fake_dvr(fail=True)
+        guide = events.Guide(guide_config(), get_json=get_json, now=NOW)
+        self.assertIsNone(guide.match(parse("NFL  | 02 - 1pm Ravens at Bills")))
+        self.assertEqual(len(calls), 1)          # gave up after the first failure, logged once
+        guide.match(parse("NFL  | 06 - 1pm Raiders at Jets"))
+        self.assertEqual(len(calls), 1)          # and is not asked again in the same rebuild
+        unset = events.Guide(make_config(), get_json=self.get_json, now=NOW)
+        self.assertIsNone(unset.match(parse("NFL  | 02 - 1pm Ravens at Bills")))
+
+    def test_asked_once_and_only_when_there_is_a_game(self):
+        self.guide.match(parse("NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET"))
+        self.guide.match(parse("NCAAF 03: Baylor vs. UCF @ 30 Oct 07:30 PM ET"))
+        self.assertEqual(len(self.calls), len(set(events.SERIES.values())))
+        get_json, calls = fake_dvr()
+        guide = events.Guide(guide_config(), get_json=get_json, now=NOW)
+        guide.match(parse("ESPN+ 06: The Golics @ Oct 30 10:00AM ET"))    # not a matchup
+        self.assertEqual(calls, [])
+
+
+class GuideEntriesTests(unittest.TestCase):
+    def setUp(self):
+        streams = {("p1", "1"): "NFL  | 02 - 1pm Ravens at Bills",
+                   ("p1", "2"): "NFL  | 03 - 1pm Titans at Bengals",
+                   ("p1", "3"): "NHL 02: New Jersey Devils vs. Vegas Golden Knights (Devils Broadcast) @ 30 Oct 06:00 PM ET",
+                   ("p1", "4"): "NFL 07: Bills vs. Jets @ 8 Nov 01:00 PM ET"}
+        patcher = mock.patch.object(catalog, "find_stream",
+                                    lambda pid, sid: {"name": streams[(pid, sid)]} if (pid, sid) in streams else None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_entries(self):
+        get_json, _calls = fake_dvr()
+        cfg = guide_config()
+        cfg["channels"] = cfg["channels"][:4]
+        cfg["lineups"][0]["channels"] = [1, 2, 3, 4]
+        chans, progs = events.entries(cfg, "main", NOW, guide=events.Guide(cfg, get_json=get_json, now=NOW))
+        by = {}
+        for prog in progs:
+            by.setdefault(prog.get("channel"), []).append(prog)
+        # The dateless name Gracenote does not place (last week's game) gets nothing at all.
+        self.assertEqual(sorted(c.get("id") for c in chans), ["coax-1", "coax-3", "coax-4"])
+        ravens = [p for p in by["coax-1"] if p.findtext("title") == "NFL Football"][0]
+        self.assertEqual(ravens.findtext("sub-title"), "Baltimore Ravens at Buffalo Bills")
+        self.assertEqual(ravens.get("start"), "20261101180000 +0000")
+        self.assertTrue(ravens.find("icon").get("src").startswith("https://tmsimg.fancybits.co/"))
+        self.assertEqual(ravens.findall("team-id"), [])          # the game is already on a real channel
+        self.assertIsNotNone(ravens.find("live"))
+        devils = [p for p in by["coax-3"] if p.findtext("title") == "NHL Hockey"][0]
+        self.assertEqual(devils.findtext("sub-title"), "New Jersey Devils at Vegas Golden Knights")
+        self.assertTrue(devils.findtext("desc").endswith("(Devils Broadcast)"))
+        jets = [p for p in by["coax-4"] if p.findtext("title") == "NFL Football"][0]
+        self.assertEqual(jets.findtext("sub-title"), "Bills vs. Jets")
+        self.assertEqual([(t.get("system"), t.text) for t in jets.findall("team-id")], [("tms", "34"), ("tms", "52")])
 
 
 class RefreshTests(unittest.TestCase):

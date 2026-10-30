@@ -1,0 +1,837 @@
+{
+ "191277": {
+  "airings": [
+   {
+    "Source": "tms",
+    "Time": 1793404800,
+    "Duration": 10800,
+    "Title": "NFL Football",
+    "EventTitle": "Prime Vision Alt Cast: Carolina Panthers at Green Bay Packers",
+    "Summary": "Prime Vision Alt Cast: Carolina Panthers at Green Bay Packers, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003PQNVC.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 1080i",
+     "HDTV",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031286003",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "35",
+        "name": "Carolina Panthers"
+       },
+       {
+        "teamBrandId": "42",
+        "name": "Green Bay Packers",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793440800,
+    "Duration": 9000,
+    "Title": "NFL Football",
+    "EventTitle": "Carolina Panthers at Green Bay Packers",
+    "Summary": "Carolina Panthers at Green Bay Packers, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0039KLY8.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "Delay",
+     "HD 1080i",
+     "HDTV",
+     "New",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031285786",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "35",
+        "name": "Carolina Panthers"
+       },
+       {
+        "teamBrandId": "42",
+        "name": "Green Bay Packers",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793484000,
+    "Duration": 9000,
+    "Title": "NFL Football",
+    "EventTitle": "Carolina Panthers at Green Bay Packers",
+    "Summary": "Carolina Panthers at Green Bay Packers, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0039KLY8.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 1080i",
+     "HDTV",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031285786",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "35",
+        "name": "Carolina Panthers"
+       },
+       {
+        "teamBrandId": "42",
+        "name": "Green Bay Packers",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793556000,
+    "Duration": 12300,
+    "Title": "NFL Football",
+    "EventTitle": "Baltimore Ravens at Buffalo Bills",
+    "Summary": "Baltimore Ravens at Buffalo Bills, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0039KW3V.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "Live",
+     "New",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031285787",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "33",
+        "name": "Baltimore Ravens"
+       },
+       {
+        "teamBrandId": "34",
+        "name": "Buffalo Bills",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793556000,
+    "Duration": 10800,
+    "Title": "NFL Football",
+    "EventTitle": "Las Vegas Raiders at New York Jets",
+    "Summary": "Las Vegas Raiders at New York Jets, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0039L29J.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "Live",
+     "New",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031285792",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "20783",
+        "name": "Las Vegas Raiders"
+       },
+       {
+        "teamBrandId": "52",
+        "name": "New York Jets",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793568300,
+    "Duration": 11100,
+    "Title": "NFL Football",
+    "EventTitle": "Kansas City Chiefs at Denver Broncos",
+    "Summary": "Kansas City Chiefs at Denver Broncos, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0039KCSD.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "Live",
+     "New",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031285796",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "46",
+        "name": "Kansas City Chiefs"
+       },
+       {
+        "teamBrandId": "40",
+        "name": "Denver Broncos",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793959200,
+    "Duration": 10800,
+    "Title": "NFL Football",
+    "EventTitle": "Prime Vision Alt Cast: Jacksonville Jaguars at Baltimore Ravens",
+    "Summary": "Prime Vision Alt Cast: Jacksonville Jaguars at Baltimore Ravens, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003RRP6G.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "Delay",
+     "HD 1080i",
+     "HDTV",
+     "New",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031286004",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "45",
+        "name": "Jacksonville Jaguars"
+       },
+       {
+        "teamBrandId": "33",
+        "name": "Baltimore Ravens",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1794013200,
+    "Duration": 10800,
+    "Title": "NFL Football",
+    "EventTitle": "Prime Vision Alt Cast: Jacksonville Jaguars at Baltimore Ravens",
+    "Summary": "Prime Vision Alt Cast: Jacksonville Jaguars at Baltimore Ravens, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003RRP6G.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 1080i",
+     "HDTV",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031286004",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "45",
+        "name": "Jacksonville Jaguars"
+       },
+       {
+        "teamBrandId": "33",
+        "name": "Baltimore Ravens",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1794564000,
+    "Duration": 10800,
+    "Title": "NFL Football",
+    "EventTitle": "Prime Vision Alt Cast: Washington Commanders at New York Giants",
+    "Summary": "Prime Vision Alt Cast: Washington Commanders at New York Giants, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003RRPVQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "Delay",
+     "HD 1080i",
+     "HDTV",
+     "New",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031286005",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "23731",
+        "name": "Washington Commanders"
+       },
+       {
+        "teamBrandId": "51",
+        "name": "New York Giants",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1794618000,
+    "Duration": 10800,
+    "Title": "NFL Football",
+    "EventTitle": "Prime Vision Alt Cast: Washington Commanders at New York Giants",
+    "Summary": "Prime Vision Alt Cast: Washington Commanders at New York Giants, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003RRPVQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 1080i",
+     "HDTV",
+     "Stereo"
+    ],
+    "ProgramID": "EP000031286005",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "23731",
+        "name": "Washington Commanders"
+       },
+       {
+        "teamBrandId": "51",
+        "name": "New York Giants",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "191261": {
+  "airings": [
+   {
+    "Source": "tms",
+    "Time": 1793390400,
+    "Duration": 9000,
+    "Title": "College Football",
+    "EventTitle": "Baylor at UCF",
+    "Summary": "Baylor at UCF, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/p24928821_tb2_h9_ab.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "HD Unknown"
+    ],
+    "ProgramID": "EP043373522621",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "81",
+        "name": "Baylor"
+       },
+       {
+        "teamBrandId": "95",
+        "name": "UCF",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793401200,
+    "Duration": 10800,
+    "Title": "College Football",
+    "EventTitle": "Tulane at Charlotte",
+    "Summary": "Tulane at Charlotte, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0037046M.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 720p",
+     "HDTV",
+     "Live",
+     "New"
+    ],
+    "ProgramID": "EP062700991085",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "269",
+        "name": "Tulane"
+       },
+       {
+        "teamBrandId": "4362",
+        "name": "Charlotte",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793403000,
+    "Duration": 10800,
+    "Title": "College Football",
+    "EventTitle": "Baylor at UCF",
+    "Summary": "Baylor at UCF, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003703GR.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 720p",
+     "HDTV",
+     "Live",
+     "New"
+    ],
+    "ProgramID": "EP062700991086",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "81",
+        "name": "Baylor"
+       },
+       {
+        "teamBrandId": "95",
+        "name": "UCF",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793424600,
+    "Duration": 10800,
+    "Title": "College Football",
+    "EventTitle": "Baylor at UCF",
+    "Summary": "Baylor at UCF, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003703GR.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC"
+    ],
+    "ProgramID": "EP062700991086",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "81",
+        "name": "Baylor"
+       },
+       {
+        "teamBrandId": "95",
+        "name": "UCF",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793431800,
+    "Duration": 9000,
+    "Title": "College Football",
+    "EventTitle": "Baylor at UCF",
+    "Summary": "Baylor at UCF, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/p24928821_tb2_h9_ab.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "HD Unknown"
+    ],
+    "ProgramID": "EP043373522621",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "81",
+        "name": "Baylor"
+       },
+       {
+        "teamBrandId": "95",
+        "name": "UCF",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793433600,
+    "Duration": 7200,
+    "Title": "College Football",
+    "EventTitle": "Baylor at UCF",
+    "Summary": "Baylor at UCF, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003703GR.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC",
+     "HD 720p",
+     "HDTV"
+    ],
+    "ProgramID": "EP062700991086",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "81",
+        "name": "Baylor"
+       },
+       {
+        "teamBrandId": "95",
+        "name": "UCF",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793435400,
+    "Duration": 10800,
+    "Title": "College Football",
+    "EventTitle": "Tulane at Charlotte",
+    "Summary": "Tulane at Charlotte, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG0037046M.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Football"
+    ],
+    "Tags": [
+     "CC"
+    ],
+    "ProgramID": "EP062700991085",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "269",
+        "name": "Tulane"
+       },
+       {
+        "teamBrandId": "4362",
+        "name": "Charlotte",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "191278": {
+  "airings": [
+   {
+    "Source": "tms",
+    "Time": 1793397600,
+    "Duration": 9000,
+    "Title": "NHL Hockey",
+    "EventTitle": "New Jersey Devils at Vegas Golden Knights",
+    "Summary": "New Jersey Devils at Vegas Golden Knights, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003DFREQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Hockey"
+    ],
+    "Tags": [
+     "HD 1080i",
+     "HDTV",
+     "Live",
+     "New"
+    ],
+    "ProgramID": "EP051892153426",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "447",
+        "name": "New Jersey Devils"
+       },
+       {
+        "teamBrandId": "14080",
+        "name": "Vegas Golden Knights",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793410200,
+    "Duration": 7200,
+    "Title": "NHL Hockey",
+    "EventTitle": "New Jersey Devils at Vegas Golden Knights",
+    "Summary": "New Jersey Devils at Vegas Golden Knights, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003DFREQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Hockey"
+    ],
+    "Tags": [
+     "HD 1080i",
+     "HDTV"
+    ],
+    "ProgramID": "EP051892153426",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "447",
+        "name": "New Jersey Devils"
+       },
+       {
+        "teamBrandId": "14080",
+        "name": "Vegas Golden Knights",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793419200,
+    "Duration": 7200,
+    "Title": "NHL Hockey",
+    "EventTitle": "New Jersey Devils at Vegas Golden Knights",
+    "Summary": "New Jersey Devils at Vegas Golden Knights, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003DFREQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Hockey"
+    ],
+    "Tags": [
+     "HD 1080i",
+     "HDTV"
+    ],
+    "ProgramID": "EP051892153426",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "447",
+        "name": "New Jersey Devils"
+       },
+       {
+        "teamBrandId": "14080",
+        "name": "Vegas Golden Knights",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793458800,
+    "Duration": 7200,
+    "Title": "NHL Hockey",
+    "EventTitle": "New Jersey Devils at Vegas Golden Knights",
+    "Summary": "New Jersey Devils at Vegas Golden Knights, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003DFREQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Hockey"
+    ],
+    "Tags": [
+     "HD 1080i",
+     "HDTV"
+    ],
+    "ProgramID": "EP051892153426",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "447",
+        "name": "New Jersey Devils"
+       },
+       {
+        "teamBrandId": "14080",
+        "name": "Vegas Golden Knights",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   },
+   {
+    "Source": "tms",
+    "Time": 1793464200,
+    "Duration": 7200,
+    "Title": "NHL Hockey",
+    "EventTitle": "New Jersey Devils at Vegas Golden Knights",
+    "Summary": "New Jersey Devils at Vegas Golden Knights, as Gracenote lists it.",
+    "Image": "https://tmsimg.fancybits.co/assets/GNLZZGG003DFREQ.jpg?w=720&h=540",
+    "Categories": [
+     "Sports",
+     "Sports event"
+    ],
+    "Genres": [
+     "Hockey"
+    ],
+    "Tags": [
+     "CC",
+     "Tape"
+    ],
+    "ProgramID": "EP051892153426",
+    "Raw": {
+     "program": {
+      "teams": [
+       {
+        "teamBrandId": "447",
+        "name": "New Jersey Devils"
+       },
+       {
+        "teamBrandId": "14080",
+        "name": "Vegas Golden Knights",
+        "isHome": true
+       }
+      ]
+     }
+    }
+   }
+  ]
+ }
+}
