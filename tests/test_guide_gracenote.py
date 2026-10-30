@@ -57,9 +57,9 @@ class GracenoteTestBase(unittest.TestCase):
 
 
 class SearchTests(GracenoteTestBase):
-    def test_search_quotes_query_and_normalizes(self):
+    def test_search_plain_then_quoted_and_normalizes(self):
         results = gracenote.search(CDVR + "/", "CNN")
-        self.assertEqual(self.fake.urls, [CDVR + "/tms/stations/%22CNN%22"])
+        self.assertEqual(self.fake.urls, [CDVR + "/tms/stations/CNN", CDVR + "/tms/stations/%22CNN%22"])
         self.assertEqual(results[0]["station_id"], "10142")
         self.assertEqual(results[0]["name"], "Cable News Network")
         self.assertEqual(results[0]["logo"], "https://example.invalid/cnn.png")
@@ -67,7 +67,7 @@ class SearchTests(GracenoteTestBase):
 
     def test_search_cleans_ampersand_and_non_ascii(self):
         gracenote.search(CDVR, "  A&E  Caf\u00e9 ")
-        self.assertEqual(self.fake.urls[-1], CDVR + "/tms/stations/%22A%20and%20E%20Cafe%22")
+        self.assertIn(CDVR + "/tms/stations/%22A%20and%20E%20Cafe%22", self.fake.urls)
 
     def test_empty_query_does_no_request(self):
         self.assertEqual(gracenote.search(CDVR, "  \u4e2d\u6587 "), [])
@@ -235,3 +235,57 @@ class BulkSuggestTests(GracenoteTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LookupFixTests(unittest.TestCase):
+    """Failures seen on a real server: foreign feeds ranked like US ones, brand-less look-alikes, run-together names."""
+
+    def st(self, sid, name, call, langs=("en",), outside=True):
+        return {"station_id": sid, "call_sign": call, "name": name, "type": "Satellite", "affiliate": "", "logo": "",
+                "langs": list(langs), "lineups": [], "countries": [], "outside": outside}
+
+    def test_language_weight(self):
+        self.assertEqual(gracenote.language_weight(self.st("1", "x", "X", ["en"])), 1.0)
+        self.assertEqual(gracenote.language_weight(self.st("1", "x", "X", [])), 1.0)
+        self.assertLess(gracenote.language_weight(self.st("1", "x", "X", ["en-GB"])), 1.0)
+        self.assertLess(gracenote.language_weight(self.st("1", "x", "X", ["es"])),
+                        gracenote.language_weight(self.st("1", "x", "X", ["en-GB"])))
+
+    def test_us_feed_ranks_above_uk_feed_of_same_name(self):
+        uk = self.st("109252", "Love Nature", "LONAVM", ["en-GB"])
+        us = self.st("52745", "Love Nature", "NATUR", ["en"])
+        mixed = self.st("115097", "Love Nature", "PTVUKLN", ["en", "en-GB"])
+        ranked = gracenote.merge_candidates("US: Love Nature", [uk, mixed, us])
+        self.assertEqual([s["station_id"] for s in ranked], ["52745", "115097", "109252"])
+        cand = gracenote._candidate("US: Love Nature", uk, None, None)
+        self.assertIn("UK feed", cand["reason"])
+
+    def test_missing_brand_is_penalized(self):
+        good = gracenote.name_score("Spectrum News 1 Hudson Valley NY", "Spectrum News 1 - Hudson Valley HD")
+        wrong = gracenote.name_score("Spectrum News 1 Hudson Valley NY", "News 12 Hudson Valley")
+        self.assertGreater(good, wrong + 0.2)
+        self.assertLess(gracenote.name_score("NBC New York News", "SportsNet New York"),
+                        gracenote.SUGGEST_THRESHOLD)
+
+    def test_search_tries_run_together_name(self):
+        urls = []
+
+        def fake(url, timeout=None):
+            urls.append(url)
+            return [{"stationId": "111140", "callSign": "GUSTOTV", "name": "Gusto TV", "bcastLangs": ["en"]}] \
+                if url.endswith("/GustoTV") else []
+        with mock.patch.object(gracenote, "_get_json", fake):
+            found = gracenote.search(CDVR, "Gusto TV")
+        self.assertEqual([s["station_id"] for s in found], ["111140"])
+        self.assertEqual(found[0]["langs"], ["en"])
+
+    def test_one_failing_search_form_keeps_the_others(self):
+        def fake(url, timeout=None):
+            if "%22" in url:
+                raise gracenote.GracenoteError("HTTP 503")
+            return [{"stationId": "19339", "callSign": "MC07", "name": "Music Choice Hip-Hop Classics"}]
+        with mock.patch.object(gracenote, "_get_json", fake):
+            self.assertEqual(gracenote.search(CDVR, "Music Choice Hip-Hop Classics")[0]["station_id"], "19339")
+
+    def test_nyc_is_new_york(self):
+        self.assertEqual(gracenote.tokens("News12+ New York"), gracenote.tokens("News 12+ NYC"))

@@ -101,6 +101,7 @@ def _station(raw, outside=False):
         "name": raw.get("name") or "",
         "type": raw.get("type") or "",
         "affiliate": raw.get("affiliateCallSign") or "",
+        "langs": [l for l in (raw.get("bcastLangs") or []) if isinstance(l, str)],
         "logo": (image.get("uri") or "") if isinstance(image, dict) else "",
         "lineups": [],
         "countries": [],
@@ -109,17 +110,35 @@ def _station(raw, outside=False):
 
 
 def search(cdvr_url, query):
-    """Gracenote-wide station search. Returns normalized station dicts."""
+    """Gracenote-wide station search. Returns normalized station dicts.
+
+    Gracenote returns only about 10 stations per search, and a quoted phrase misses names that differ
+    in punctuation ("Hip-Hop" vs "Hip Hop"), so the plain words, the quoted phrase and the run-together
+    form ("GustoTV") are each searched and merged, plain words first."""
     term = clean_query(query)
     base = _base(cdvr_url)
     if not term or not base:
         return []
-    quoted = urllib.parse.quote(f'"{term}"', safe="")
-    result = _get_json(f"{base}/tms/stations/{quoted}")
-    if not isinstance(result, list):
-        return []
-    return [_station(r, outside=True) for r in result
-            if isinstance(r, dict) and r.get("stationId")]
+    forms = [term, f'"{term}"']
+    compact = re.sub(r"[^A-Za-z0-9]", "", term)
+    if " " in term and len(compact) >= 4 and len(term.split()) <= 3:
+        forms.append(compact)
+    seen, out, failed = set(), [], None
+    for form in forms:
+        try:
+            result = _get_json(f"{base}/tms/stations/{urllib.parse.quote(form, safe='')}")
+        except GracenoteUnreachable:
+            raise
+        except GracenoteError as e:      # one form failing does not lose the others
+            failed = e
+            continue
+        for r in result if isinstance(result, list) else []:
+            if isinstance(r, dict) and r.get("stationId") and str(r["stationId"]) not in seen:
+                seen.add(str(r["stationId"]))
+                out.append(_station(r, outside=True))
+    if not out and failed is not None:
+        raise failed
+    return out
 
 
 # ----------------------------------------------------------------------
@@ -180,6 +199,30 @@ def build_index(cdvr_url, country, postal):
                     st["name"] = found["name"]
                     st["type"] = st["type"] or found["type"]
                     st["logo"] = st["logo"] or found["logo"]
+
+    # Subchannels carry diginets (MOVIES!, Catchy Comedy, Story) under the local call sign; the network
+    # itself is only named by the affiliate call sign. Add those networks as stations of these lineups.
+    nets = {}
+    for st in stations.values():
+        aff = (st.get("affiliate") or "").upper()
+        if aff and aff != st["call_sign"].upper():
+            nets.setdefault(aff, set()).update(st["lineups"])
+
+    def network(aff):
+        try:
+            return aff, [r for r in search(base, aff) if r["call_sign"].upper() == aff]
+        except GracenoteUnreachable:
+            raise
+        except GracenoteError:
+            return aff, []
+
+    with concurrent.futures.ThreadPoolExecutor(8) as pool:
+        for aff, found in pool.map(network, sorted(nets)):
+            for net in found:
+                if net["type"] != "Digital Broadcast Network" or net["station_id"] in stations:
+                    continue
+                net = dict(net, outside=False, lineups=sorted(nets[aff]))
+                stations[net["station_id"]] = net
 
     # An unknown postal code silently returns only nationwide satellite lineups.
     local = any((lu.get("type") or "").upper() in ("OTA", "CABLE", "VMVPD")
@@ -294,6 +337,7 @@ ALIASES = [
     (re.compile(r"\blmn\b"), "lifetime movie network"),
     (re.compile(r"\bhln\b"), "headline news"),
     (re.compile(r"\bgsn\b"), "game show network"),
+    (re.compile(r"\bnyc\b"), "new york"),
 ]
 GENERIC = {"news", "sports", "sport", "movies", "movie", "plus", "pacific", "central", "live",
            "music", "kids", "family", "national", "television", "america", "american"}
@@ -367,8 +411,53 @@ def _compact_variants(text):
     return {t, t[3:] if t.startswith("the") and len(t) > 6 else t}
 
 
+US_LANGS = {"en", "en-US"}
+
+
+def language_weight(station):
+    """1 for US English (or unknown), 0.85 for other English feeds (UK, Australia, Canada), 0.6 otherwise."""
+    langs = station.get("langs") or []
+    if not langs or all(l in US_LANGS for l in langs):
+        return 1.0
+    if any(l in US_LANGS for l in langs):
+        return 0.9    # US English plus another variant, e.g. a UK streaming feed
+    if any(l.lower().startswith("en") for l in langs):
+        return 0.85
+    return 0.6
+
+
+def foreign_label(station):
+    langs = [l for l in station.get("langs") or [] if l not in US_LANGS]
+    if not langs:
+        return ""
+    return {"en-GB": "UK feed", "en-AU": "Australian feed", "en-CA": "Canadian feed",
+            "fr-CA": "French Canadian feed"}.get(langs[0], "%s-language feed" % langs[0])
+
+
+def _brand(channel_name):
+    """The channel's leading brand word ("spectrum" in "Spectrum News 1 Hudson Valley"), if distinctive."""
+    for w in re.findall(r"[a-z0-9]+", search_phrase(channel_name).lower().replace("&", " ")):
+        if w in DROP_WORDS:
+            continue
+        return w if len(w) >= 3 and w.isalpha() and w not in GENERIC else ""
+    return ""
+
+
 @functools.lru_cache(maxsize=200000)
 def name_score(channel_name, station_name, call=""):
+    score = _name_score(channel_name, station_name, call)
+    # A station missing the channel's brand is a different channel: Spectrum News Hudson Valley is not
+    # News 12 Hudson Valley, NBC New York News is not SportsNet New York.
+    brand = _brand(channel_name)
+    if brand and score < 0.95:
+        have = set(tokens(station_name)) | ({call} if call else set())
+        compact = re.sub(r"[^a-z0-9]", "", (station_name or "").lower())
+        if not any(_token_similarity(brand, t) >= 0.8 for t in have) and brand not in compact:
+            score *= 0.6
+    return score
+
+
+def _name_score(channel_name, station_name, call=""):
     """Order-independent similarity, plus run-together names (SHOXBET = SHO x BET)."""
     score = similarity(tokens(channel_name), tokens(station_name), call)
     a, b = _compact_variants(channel_name), _compact_variants(station_name)
@@ -524,7 +613,7 @@ def global_candidates(cdvr_url, name, matcher, limit=8, search_fn=None):
             if not sid or result["type"] == "VODProvider" or JUNK.search(result["name"]):
                 continue
             st = matcher.by_id.get(sid) or result
-            score = name_score(name, st["name"], bare_call(st))
+            score = name_score(name, st["name"], bare_call(st)) * language_weight(st)
             shares = bool(set(distinct) & tokens(st["name"]))
             # "CNN" -> Cable News Network (call sign CNN): the call sign is the name's acronym.
             acronym = len(want) == 1 and bare_call(st) in want \
@@ -544,7 +633,7 @@ def merge_candidates(name, *lists, limit=15):
         for st in stations or []:
             seen.setdefault(st["station_id"], st)
     ranked = sorted(seen.values(), key=lambda st: (
-        -round(name_score(name, st["name"], bare_call(st)), 2),
+        -round(name_score(name, st["name"], bare_call(st)) * language_weight(st), 2),
         bool(st.get("outside")), -len(st.get("lineups", [])), st["name"]))
     return ranked[:limit]
 
@@ -565,8 +654,11 @@ def _candidate(channel_name, st, call, best_id):
         score = max(score, 0.9 if Matcher._call_sign_is_name(st, tokens(channel_name)) else 0.6)
     else:
         reason = "similar name"
+    score *= language_weight(st)
     if st["station_id"] == best_id:
         score = 1.0
+    if foreign_label(st):
+        reason += ", " + foreign_label(st)
     if st.get("outside"):
         reason += ", outside your lineups"
     out = dict(st, lineups=list(st.get("lineups") or []), countries=list(st.get("countries") or []))
