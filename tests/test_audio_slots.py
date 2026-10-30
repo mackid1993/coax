@@ -36,16 +36,16 @@ def packets(pid, payload, cc=[0]):  # noqa: B006 - one counter per test module i
     return out
 
 
-def program(streams):
+def program(streams, pmt=0x100):
     """PAT (program 1 on PID 0x100) and a PMT: [(stream_type, pid, descriptors)] after a video stream on 0x101."""
-    pat = b"\x00" + b"\x00\xb0\x0d\x00\x01\xc1\x00\x00" + b"\x00\x01\xe1\x00"
+    pat = b"\x00" + b"\x00\xb0\x0d\x00\x01\xc1\x00\x00" + bytes([0, 1, 0xE0 | pmt >> 8, pmt & 0xFF])
     pat += aslots._crc(pat[1:]).to_bytes(4, "big")
     es = bytes([0x1B, 0xE1, 0x01, 0xF0, 0]) + b"".join(
         bytes([st, 0xE0 | pid >> 8, pid & 0xFF, 0xF0, len(d)]) + d for st, pid, d in streams)
     n = 9 + len(es) + 4
     sec = bytes([0x02, 0xB0 | n >> 8, n & 0xFF]) + b"\x00\x01\xc1\x00\x00\xe1\x01\xf0\x00" + es
     sec += aslots._crc(sec).to_bytes(4, "big")
-    return ts(0, pat) + ts(0x100, b"\x00" + sec)
+    return ts(0, pat) + ts(pmt, b"\x00" + sec)
 
 
 def lang(code, audio_type=0):
@@ -161,6 +161,32 @@ class StreamTests(unittest.TestCase):
         f, out = self.run_feed([head + body])
         self.assertEqual({s for s, _ in slot_pts(out)}, set(f.active))
         self.assertEqual(f.active, aslots.CORE)
+
+
+class FailoverTests(unittest.TestCase):
+    def pmt_pid_of(self, pat):
+        o = 4 + 1 + pat[4]
+        return (pat[o + 10] & 31) << 8 | pat[o + 11]
+
+    def old_stream(self):
+        f = aslots.Feeder("")
+        f.psi()
+        f.feed(program([(0x81, 0x102, b"")]) + packets(0x102, pes(0xBD, 900000, AC3_51)))
+        f.reset()
+        return f
+
+    def test_a_backup_on_another_pmt_pid_gets_its_own_tables(self):
+        f = self.old_stream()
+        f.learn(program([(0x81, 0x102, b"")], pmt=0x200))
+        f.plan()
+        out = f.psi()
+        self.assertEqual(self.pmt_pid_of(out[:188]), 0x200)
+        self.assertEqual((out[189] & 31) << 8 | out[190], 0x200)
+
+    def test_a_backup_whose_tables_were_not_seen_gets_none_of_the_old_ones(self):
+        f = self.old_stream()
+        f.plan()
+        self.assertEqual(f.psi(), b"")
 
 
 if __name__ == "__main__":

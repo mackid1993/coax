@@ -1104,6 +1104,8 @@ def writer():
                     ADJ[0] = avlead(d, k_)
                     remux(w_)
                 elif SWP[0]:
+                    if FEED:
+                        FEED.learn(d[it[7]:en])   # the new stream's tables, for its encoder's first bytes
                     it[6] = i + 1
                     it[7] = en
                     it[8] = max(ca, it[8])

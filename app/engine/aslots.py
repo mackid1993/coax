@@ -563,6 +563,9 @@ class Feeder:
         self.pre = True             # a new encoder: its inputs start where its first audio or picture does
         self.tracks, self.fam, self.keys = [], {}, {}   # a new stream lists its own tracks (its table is read
         self.sec = None                                  # again from its first bytes, before its encoder starts)
+        # and its own tables: a backup's PIDs may differ, and the old PAT and PMT sent to its encoder would bind
+        # the video to a PID that never gets data. Until its tables are seen the encoder reads them in band.
+        self.pat, self.pmt_pid, self.last_sec, self.pmt_out = b"", None, None, b""
         self.missing = None         # a format family with no open input appeared: the engine restarts at a keyframe
         self._end_helper()
         self._drop()
@@ -653,6 +656,7 @@ class Feeder:
                         if p[j] << 8 | p[j + 1]:
                             self.pmt_pid = (p[j + 2] & 31) << 8 | p[j + 3]
                             break
+                    self.pat = bytes(p)   # psi() sends this stream's PAT, pointing at the PMT it really has
             elif pid == self.pmt_pid:
                 q = o + 1 + p[o]
                 if q + 3 <= 188 and p[q] == 2:
