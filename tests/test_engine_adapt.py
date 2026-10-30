@@ -430,7 +430,11 @@ class GpuFallbackTest(unittest.TestCase):
         (["[fc#0 @ 0x1] Stream specifier ':i:9999' in filtergraph description [0:i:9999]aresample=async=1[s0] "
           "matches no streams.", "Error binding filtergraph inputs/outputs: Invalid argument"], False),
         (["[Parsed_surround_6 @ 0x1] Unable to parse option value \"x\" as channel layout"], False),
-        (["[aist#0:3/ac3 @ 0x1] Error while opening decoder for input stream #0:3 : Invalid data"], False),
+        (["[aist#0:3/ac3 @ 0x1] [dec:ac3 @ 0x2] Error while opening decoder: Invalid data found when processing input"],
+         False),
+        (["[aist#0:1/aac @ 0x1] [dec:aac @ 0x2] Error submitting packet to decoder: Invalid data found when processing "
+          "input", "[h264 @ 0x1] Failed to end picture decode issue: 23 (internal decoding error).",
+          "[vf#0:0 @ 0x1] Error while filtering: Input/output error"], True),   # damaged audio is not an audio failure
         (["Device creation failed: -12.", "[dec:h264 @ 0x1] No device available for decoder: device type vaapi "
           "needed for codec h264.", "Hardware device setup failed for decoder: Cannot allocate memory"], True),
         (["[h264 @ 0x1] Failed setup for format vaapi: hwaccel initialisation returned error."], True),

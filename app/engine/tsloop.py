@@ -370,7 +370,7 @@ DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+
 FEL = {}   # encoder pid -> its last ffmpeg messages, to tell a GPU decoding failure from any other early exit
 FET = {}   # encoder pid -> the thread reading them
 GPUERR = re.compile(r"hwaccel|vaapi|va-api|cuda|cuvid|nvdec|hw ?device|hw_?frames|hwupload|hwdownload|hardware|device creation", re.I)
-AUDERR = re.compile(r"matches no streams|binding filtergraph|Parsed_a[a-z]+_\d|Parsed_surround_\d|^\[fc#\d+ @|^\[aist#", re.I)
+AUDERR = re.compile(r"matches no streams|binding filtergraph|Parsed_a[a-z]+_\d|Parsed_surround_\d|^\[fc#\d+ @|^\[aist#[^\]]*\].*error while opening decoder", re.I)
 
 def gpufail(p):
     # An encoder that died early moves decoding to the CPU unless its last messages show an audio input or
