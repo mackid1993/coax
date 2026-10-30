@@ -388,9 +388,12 @@ def remux(why=None, ofs=None):
     if why:
         log("restarting remuxer: " + why)
     old = ff
-    if old is not None and TRANSCODE and GPUDEC[0] and old.poll() is not None and old.returncode != 0 and old.pid not in SK and mono() - FST[0] < 20:
+    if old is not None and TRANSCODE and GPUDEC[0] and old.poll() is not None and old.returncode != 0 and old.pid not in SK and mono() - FST[0] < 20 and gpufail(old):
         GPUDEC[0] = False
         log("transcode: GPU decoding failed on this stream, decoding on the CPU instead (encoding stays on the GPU)")
+    if old is not None:
+        FEL.pop(old.pid, None)
+        FET.pop(old.pid, None)
     SPA = SPD
     RP[0] = None
     OFS[0] = ofs if ofs is not None else tout + 1.4 - ADJ[0]
@@ -401,7 +404,9 @@ def remux(why=None, ofs=None):
         SK.add(old.pid)
     NB[0] = 0
     ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
-    threading.Thread(target=fferr, args=(ff,), daemon=True).start()
+    FEL[ff.pid] = collections.deque(maxlen=20)
+    FET[ff.pid] = threading.Thread(target=fferr, args=(ff,), daemon=True)
+    FET[ff.pid].start()
     FST[0] = mono()
     ADJ[0] = 0.0
     EI[ff.pid] = [OFS[0], SPA, None, None, None]
@@ -426,6 +431,22 @@ FEED = aslots.Feeder(ALANG, log, FF) if TRANSCODE else None
 QF = set()   # encoders replaced before any input; their ffmpeg messages are dropped
 DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |\[dec:[a-z0-9_]+ @ 0x[0-9a-f]+\] |^\s*Last message repeated")
 
+FEL = {}   # encoder pid -> its last ffmpeg messages, to tell a GPU decoding failure from any other early exit
+FET = {}   # encoder pid -> the thread reading them
+GPUERR = re.compile(r"hwaccel|vaapi|va-api|cuda|cuvid|nvdec|hw ?device|hw_?frames|hwupload|hwdownload|hardware|device creation", re.I)
+AUDERR = re.compile(r"matches no streams|binding filtergraph|Parsed_a[a-z]+_\d|Parsed_surround_\d|^\[fc#\d+ @|^\[aist#", re.I)
+
+def gpufail(p):
+    # An encoder that died early moves decoding to the CPU unless its last messages show an audio input or
+    # filter that failed (a stream specifier matching nothing, an audio filter or decoder that could not start;
+    # -filter_complex holds only audio, the video chain is in -vf) and no GPU error: those are not the GPU's
+    # fault. An exit with no telling message still falls back, as before.
+    t = FET.get(p.pid)
+    if t is not None:
+        t.join(1.0)   # it has exited: the rest of its messages are already in the pipe
+    el = list(FEL.get(p.pid, ()))
+    return any(GPUERR.search(s) for s in el) or not any(AUDERR.search(s) for s in el)
+
 def fferr(p):
     # ffmpeg's own messages. A decoder joining a feed between keyframes reports the frames before the first
     # keyframe and its headers as errors: expected, so an encoder's first 10 s of decoder messages are dropped.
@@ -440,6 +461,9 @@ def fferr(p):
                 continue
             if p.pid in QF:
                 continue
+            el = FEL.get(p.pid)
+            if el is not None:
+                el.append(s)
             if DECN.search(s):
                 if mono() - t0 > 10:
                     n += 1

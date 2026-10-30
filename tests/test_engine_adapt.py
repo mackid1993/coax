@@ -423,6 +423,33 @@ class DownloadDeadlineTest(unittest.TestCase):
         self.assertTrue(r.closed)
 
 
+class GpuFallbackTest(unittest.TestCase):
+    """An encoder that dies early falls back to CPU decoding for a GPU error or an unexplained exit, never for an
+    audio input or filter that failed (ffmpeg 8 messages)."""
+    CASES = (
+        (["[fc#0 @ 0x1] Stream specifier ':i:9999' in filtergraph description [0:i:9999]aresample=async=1[s0] "
+          "matches no streams.", "Error binding filtergraph inputs/outputs: Invalid argument"], False),
+        (["[Parsed_surround_6 @ 0x1] Unable to parse option value \"x\" as channel layout"], False),
+        (["[aist#0:3/ac3 @ 0x1] Error while opening decoder for input stream #0:3 : Invalid data"], False),
+        (["Device creation failed: -12.", "[dec:h264 @ 0x1] No device available for decoder: device type vaapi "
+          "needed for codec h264.", "Hardware device setup failed for decoder: Cannot allocate memory"], True),
+        (["[h264 @ 0x1] Failed setup for format vaapi: hwaccel initialisation returned error."], True),
+        (["[Parsed_deinterlace_vaapi_0 @ 0x1] Impossible to convert between the formats supported by the filter",
+          "[vf#0:0 @ 0x1] Error reinitializing filters!"], True),
+        (["[fc#0 @ 0x1] matches no streams", "[AVHWDeviceContext @ 0x1] Failed to initialise VAAPI connection"], True),
+        (["Conversion failed!"], True),
+        ([], True),
+    )
+
+    def test_only_gpu_errors_or_unexplained_exits_fall_back(self):
+        for name in ENGINES:
+            ns = extract(name, {"FEL", "FET", "GPUERR", "AUDERR", "gpufail"}, {"re": re})
+            for k, (lines, want) in enumerate(self.CASES):
+                p = type("P", (), {"pid": k})()
+                ns["FEL"][k] = lines
+                self.assertEqual(ns["gpufail"](p), want, (name, lines))
+
+
 class SurroundAudioTest(unittest.TestCase):
     def test_transcode_keeps_surround_and_picks_the_richest_track(self):
         import os
