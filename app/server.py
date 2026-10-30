@@ -58,6 +58,13 @@ MIME_TYPES = {
 }
 
 
+def _expiry(value):
+    """A cached plan expiry as Unix seconds, or None: a catalog an older build stored can hold a sentinel (1) or
+    milliseconds."""
+    from app.providers import xtream
+    return xtream.expiry(value)
+
+
 class ApiError(Exception):
     def __init__(self, status, message):
         super().__init__(message)
@@ -1027,7 +1034,7 @@ class Handler(BaseHTTPRequestHandler):
         except ApiError:
             entry = None
         view["catalog"] = ({"fetched_at": entry["catalog"].get("fetched_at"), "streams": len(entry["by_id"]),
-                            "groups": len(entry["group_counts"]), "expires": entry["catalog"].get("expires")}
+                            "groups": len(entry["group_counts"]), "expires": _expiry(entry["catalog"].get("expires"))}
                            if entry else None)
         view["refresh"] = self.app.refresh_status().get(provider["id"])
         return view

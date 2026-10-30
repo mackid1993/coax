@@ -133,7 +133,7 @@ def refresh(provider):
         catalog = {"fetched_at": now_iso(), "groups": fresh["groups"], "streams": fresh["streams"]}
         expires = fresh.get("expires")
         if "expires" not in fresh and (provider.get("type") or "xtream").lower() == "xtream":
-            expires = (previous or {}).get("expires")   # the expiry read failed this time: keep the last one
+            expires = xtream.expiry((previous or {}).get("expires"))   # the read failed this time: keep the last one
         if expires:
             catalog["expires"] = expires   # Xtream plan expiry (Unix time)
         atomic_write_json(cache_path(provider_id), catalog)
