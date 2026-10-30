@@ -53,6 +53,7 @@ Channel names, providers and logos below are made up for the demo.
 - [How playback stays smooth](#how-playback-stays-smooth)
 - [HLS or MPEG-TS](#hls-or-mpeg-ts)
 - [Recordings](#recordings)
+- [Event channels](#event-channels)
 - [Video on demand](#video-on-demand)
 - [GPU transcoding](#gpu-transcoding)
 - [Updating](#updating)
@@ -82,6 +83,9 @@ Channel names, providers and logos below are made up for the demo.
   downloads the guide when it changes, so you never press *Refresh* in Channels DVR.
 - **Gracenote guide data** through Channels DVR's own station search, with one-click suggestions, or
   **XMLTV** from your provider.
+- **Guide data for event channels**: the numbered sports and PPV channels whose name changes with each game
+  ("NHL 01: Devils vs. Golden Knights @ 30 Oct 06:00 PM ET") get a real, recordable airing read from that name.
+  See [Event channels](#event-channels).
 - **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
   (VAAPI), NVIDIA (NVENC), or the CPU.
 - **Video on demand**: your providers' movies and series in Channels DVR's own library, with a collection for
@@ -968,6 +972,47 @@ The log line is `recording: <show> on ch N extended by Ns on top of its own padd
 shows the later end time. This needs the *Channels DVR URL* in Settings. If your provider runs more than
 about 45 seconds behind the broadcast, add a little end padding for those channels yourself.
 
+## Event channels
+
+Many providers carry live sports and pay-per-view events on numbered channels that exist for one event at a
+time: `NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET` today, `NHL 01: NO EVENT`
+tomorrow. They have no Gracenote station and rarely a useful XMLTV entry, so Channels DVR shows them blank and
+nothing on them can be recorded.
+
+When a channel has no guide data of its own (no Gracenote station, no XMLTV id), coax reads the name its main
+stream has in the provider's channel list. If that name is an event with a date, a time and a time zone, the
+lineup's XMLTV gets an airing for it:
+
+- **Title and episode.** A league channel (NFL, MLB, NBA, NHL, WNBA, MLS, NCAA football and basketball) shows
+  as *NHL Hockey* with the matchup as the episode, like Gracenote shows it; any other event is titled with its
+  own name. The airing runs for the league's usual game length (from 2 hours for MLS to 3 hours 45 minutes
+  for college football; 3 hours for any other event).
+- **Recordable, and recorded once.** The airing is marked live and new, filed under *Sports*, and carries an
+  episode id that is the same on every channel showing that event. When three channels carry the same game
+  (the home feed, the away feed, a backup), Channels DVR lists it once and records it once. A Spanish
+  broadcast, a women's game or game 2 of a doubleheader counts as a separate event.
+- **Before and after.** The hours before the event read *Up next: ...*, the hours after it and a channel with
+  nothing on (`NO EVENT`, `TBD`, a slot number with no event after it) read *No event scheduled*, so the guide never looks broken.
+- **Kept up to date.** The guide is rebuilt after each refresh of the provider's channel list, and when an
+  event changed, coax has Channels DVR download the guide again. How quickly a new event appears depends on
+  the provider's *Refresh every (hours)* setting (24 by default); a few hours suits a provider whose event
+  channels change through the day.
+
+Names coax does not read, on purpose:
+
+- **A time with no day** (`NFL | 02 - 1pm Ravens at Bills`). Providers leave a game's name on a channel long
+  after it ended; reading it as today would put last week's game on tonight.
+- **A time with no time zone** (`2026-10-30 13:00:00`). The numbers do not say which clock they are on, and a
+  guessed zone would put the airing, and the recording, at the wrong time.
+- **A `start: ... stop: ...` window**, whose stop is the provider's block length rather than the game's end.
+
+Those channels stay as they were. Any channel that is not an event channel is never changed, and a channel
+you give a Gracenote station or an XMLTV id uses that instead. Lineups set to *Gracenote* guide data only
+take no XMLTV, so they get none of this.
+
+The approach, and what Channels DVR needs to treat these airings as real sports airings, come from
+[epg3r](https://github.com/maddox/epg3r) by Jon Maddox; see [Credits](#credits).
+
 ## Video on demand
 
 Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
@@ -1377,6 +1422,11 @@ Actions by commit SHA.
   [ah4c (Android HDMI for Channels)](https://github.com/sullrich/ah4c) by sullrich and contributors,
   ported from its Go code (`main.go`, `m3uintegration.go`). ah4c is released under an MIT-style license,
   Copyright 2023 Fancy Bits, LLC.
+- Guide data for event channels (`app/guide/events.py`) borrows from
+  [epg3r](https://github.com/maddox/epg3r) by Jon Maddox, ported from its Go code: reading the event, its
+  time and its time zone from the channel name, the time-with-no-day and window rules, one listing per event
+  across channels (the `episode/` episode id Channels DVR honors), the live, new and *Sports* markings, and the
+  league game lengths. coax uses no data from epg3r: the names are read from your own provider.
 - Provider ingest, group selection, connection limits and refresh follow the behavior of
   [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.

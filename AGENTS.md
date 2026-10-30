@@ -39,6 +39,7 @@ app/
   guide/
     gracenote.py     station search and matching through Channels DVR's Gracenote data; region lineup index
     xmltv.py         download, parse and merge XMLTV sources; picker ids (every display name kept)
+    events.py        airings read from event channel names ("NHL 01: A vs. B @ 30 Oct 06:00 PM ET"), from epg3r
     output.py        M3U per lineup
   providers/         xtream.py, m3u.py (streaming parser), catalog.py (cache), scheduler.py, net.py,
                      vod.py (movie and series lists, episodes, title cleanup, M3U VOD split)
@@ -294,6 +295,23 @@ calls `on_change`), debounces 3 s, and refreshes every added lineup's source whe
 guide when enabled channels or guide ids changed). The M3U it compares is `App.lineup_m3u`, the same text the
 DVR downloads, so a provider renumbering a lineup sorted by provider number is pushed too. Disabled channels
 are not in the M3U and do not count as members. Sources must never need a manual Refresh in Channels DVR.
+The snapshot also holds `events.fingerprint` (each event channel's event id and start, no filler), so a provider
+refresh that gives a slot a new event rebuilds the XMLTV and downloads the guide.
+
+## Event channels (app/guide/events.py)
+
+Ported from epg3r (Jon Maddox, https://github.com/maddox/epg3r; credited in the README). A channel with no guide of
+its own in a lineup (`has_guide`: none, a gracenote channel without a station, an xmltv channel without an id; a
+gracenote-only lineup takes no XMLTV) whose first enabled stream's current catalog name parses (`parse`) gets
+entries in the lineup XMLTV (`xmltv._add_events` -> `entries`): *Up next* filler from the hour it was built, the
+airing, *No event scheduled* to 24 h. Names read: a slot label first (`NHL 01:`, `NFL | 02 -`, `US (Peacock 002) |`)
+or last (`... | US: ESPN+ PPV 13`), then a date, a time and a zone at the end. Not read: a time with no day, a time
+with no zone, a `start: ... stop:` window, a date more than 30 days away; anything else is not an event channel and
+gets nothing. The airing: league title and genre from `LEAGUES` (else the event's name), live, new, "Sports event"
+and "Sports", `episode-num` `episode/<sha1 of league or label, day in coax's zone, sorted sides, DISTINCT notes>`:
+Channels DVR honors an episode-num value starting with `episode/` as the identity, so feeds of one game share one
+listing and one recording. Notes that name a feed (Broadcast, In-Arena, a network) do not split it; a language,
+women's/men's or game N do. No series ids or team ids (epg3r's Gracenote roster) are used.
 
 ## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)
 
