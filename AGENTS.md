@@ -331,7 +331,11 @@ games of that league (`team_ids`; `Guide.teams` remembers every name and id seen
 one warning per rebuild. `Espn` gives the picture of an airing Gracenote did not supply: the home team's logo
 (after "at"/"@", else the first side; the other side when that one is ambiguous) from ESPN's public team list
 (`ESPN_TEAMS`, read only when such a game needs one, kept 7 days in `cache/espn-teams-<path>.json`, the old copy
-used when ESPN does not answer), else the league's logo. No series-id is ever written (a league series id on slot games could make an existing
+used when ESPN does not answer), else the league's logo. `Espn.game`: a dated two-team event in a slot of no known
+league that Gracenote did not match is looked up on ESPN's scoreboards (`ESPN_BOARDS`, about 35, for the event's
+day in Eastern time, once per day per rebuild, all skipped for the rebuild after one failure): same two teams
+within 2 h on exactly one scoreboard; it takes ESPN's league name as title, the matchup, the venue and the home
+logo, and keeps coax's own `episode/` id. No series-id is ever written (a league series id on slot games could make an existing
 pass record every one of them).
 
 ## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)

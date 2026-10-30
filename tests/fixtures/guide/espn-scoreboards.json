@@ -1,0 +1,268 @@
+{
+ "soccer/usa.ncaa.m.1": {
+  "leagues": [
+   {
+    "name": "NCAA Men's Soccer"
+   }
+  ],
+  "events": [
+   {
+    "id": "401901640",
+    "name": "Northern Kentucky at Oakland",
+    "date": "2026-10-30T18:00Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": "Oakland Soccer Field",
+       "address": {
+        "city": "Rochester",
+        "country": "USA"
+       }
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Oakland",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2473.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Northern Kentucky",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/94.png"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "401899252",
+    "name": "Georgia Southern at Kentucky",
+    "date": "2026-10-30T23:00Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": "Wendell & Vickie Bell Soccer Complex",
+       "address": {
+        "city": "Lexington, Kentucky",
+        "country": "USA"
+       }
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Kentucky",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/96.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Georgia Southern",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/290.png"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "volleyball/womens-college-volleyball": {
+  "leagues": [
+   {
+    "name": "NCAA Women's Volleyball"
+   }
+  ],
+  "events": [
+   {
+    "id": "401900514",
+    "name": "Georgia Southern Eagles at Marshall Thundering Herd",
+    "date": "2026-10-30T22:00Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": "Cam Henderson Center",
+       "address": {
+        "city": "Huntington",
+        "state": "West Virginia"
+       }
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Marshall Thundering Herd",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/276.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Georgia Southern Eagles",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/290.png"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "401898636",
+    "name": "Buffalo Bulls at Central Michigan Chippewas",
+    "date": "2026-10-30T22:30Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": "McGuirk Arena",
+       "address": {
+        "city": "Mount Pleasant",
+        "state": "Michigan"
+       }
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Central Michigan Chippewas",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2117.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Buffalo Bulls",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2084.png"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "soccer/usa.ncaa.w.1": {
+  "leagues": [
+   {
+    "name": "NCAA Women's Soccer"
+   }
+  ],
+  "events": [
+   {
+    "id": "401888045",
+    "name": "Tulsa at Temple",
+    "date": "2026-10-30T23:00Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": "Temple Sports Complex",
+       "address": {
+        "city": "Philadelphia, Pennsylvania",
+        "country": "USA"
+       }
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Temple",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/218.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Tulsa",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/202.png"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "field-hockey/womens-college-field-hockey": {
+  "leagues": [
+   {
+    "name": "NCAA Women's Field Hockey"
+   }
+  ],
+  "events": [
+   {
+    "id": "401884228",
+    "name": "Providence Friars at Temple Owls",
+    "date": "2026-10-30T16:30Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": null,
+       "address": null
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Temple Owls",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/218.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Providence Friars",
+         "logo": "https://a.espncdn.com/i/teamlogos/ncaa/500/2507.png"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "soccer/aus.1": {
+  "leagues": [
+   {
+    "name": "Australian A-League Men"
+   }
+  ],
+  "events": [
+   {
+    "id": "401892150",
+    "name": "Auckland FC at Brisbane Roar FC",
+    "date": "2026-10-30T09:00Z",
+    "competitions": [
+     {
+      "venue": {
+       "fullName": "Suncorp Stadium",
+       "address": {
+        "city": "Brisbane",
+        "country": "Australia"
+       }
+      },
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Brisbane Roar FC",
+         "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/5326.png"
+        }
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Auckland FC",
+         "logo": "https://a.espncdn.com/i/teamlogos/soccer/500/22344.png"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

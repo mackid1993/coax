@@ -993,7 +993,15 @@ Bills*), description, picture, start and end. That is also how a name with a tim
 needs the *Channels DVR URL* in Settings, and asks Channels DVR once per guide rebuild, only when a lineup has an
 event channel.
 
-**Games your guide does not list** (an out-of-market game only the provider carries) are read from the name
+**Streaming and pay-per-view games** (ESPN+, SECN+, Peacock and the like, which no TV guide lists) are looked
+up on ESPN's public scoreboards, which list games by league whoever streams them: college football, basketball,
+volleyball, soccer, hockey, field hockey, baseball, softball and lacrosse, the US pro leagues, the main soccer
+leagues and UFC. A slot of no known league whose two teams play there at the name's time takes ESPN's league as
+its title (*NCAA Women's Volleyball*), ESPN's matchup, the venue and the home team's logo. On one provider's
+event slots this matched about two in three ESPN+ and Disney+ games. Events that are not two-team games (a cross
+country meet, a horse race, a golf round) keep the airing their name gives.
+
+**Games no guide or scoreboard lists** (an out-of-market game only the provider carries) are read from the name
 alone, when it has a date, a time and a time zone. A league channel shows as *NHL Hockey* with the matchup as
 the episode, like Gracenote shows it; any other event is titled with its own name. The airing runs for the
 league's usual game length (from 2 hours for MLS to 3 hours 45 minutes for college football; 3 hours for any
@@ -1451,7 +1459,8 @@ Actions by commit SHA.
   league game lengths. The only data taken from epg3r is the short table of league names, airing titles and
   game lengths; its team list, artwork and test playlists are not used. The events are read from your own
   provider's channel names, the Gracenote listings, series ids and team ids come from your own Channels DVR, and
-  team logos from ESPN's public team lists (`site.api.espn.com`, images on `a.espncdn.com`).
+  team logos and streaming games from ESPN's public team lists and scoreboards (`site.api.espn.com`, images on
+  `a.espncdn.com`).
 - Provider ingest, group selection, connection limits and refresh follow the behavior of
   [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.

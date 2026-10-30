@@ -14,7 +14,8 @@ airings of one series on the user's sources; the series ids in SERIES were check
 same two teams play there at the time the name gives, the airing takes Gracenote's title, matchup, description,
 picture, start and end. That also places a name with a time but no day ("NFL | 02 - 1pm Ravens at Bills"): the
 day comes from Gracenote, never from a guess. The teams Gracenote names there give the Gracenote team ids of
-games it does not list (an out-of-market game only the provider carries).
+games it does not list (an out-of-market game only the provider carries). A streaming game no TV guide lists
+(ESPN+, Peacock, ...) is looked up on ESPN's public scoreboards, and team logos come from ESPN's team lists.
 
 The approach and the Channels DVR details come from epg3r by Jon Maddox (https://github.com/maddox/epg3r),
 written in Go and ported here in coax's own terms:
@@ -92,6 +93,20 @@ ESPN_PATHS = {
 ESPN_TEAMS = "https://site.api.espn.com/apis/site/v2/sports/%s/teams?limit=1000"
 ESPN_LEAGUE_LOGO = "https://a.espncdn.com/i/teamlogos/leagues/500/%s.png"   # nfl, mlb, nba, nhl, wnba, mls
 ESPN_DAYS = 7            # team lists change a few times a year; kept on disk this long
+# ESPN's public scoreboards list games by league whoever streams them (ESPN+, SECN+, Peacock, ...): asked, one day at
+# a time, only for a game in a slot of no known league that Channels DVR's guide does not have.
+ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s&limit=500"
+ESPN_BOARDS = (
+    "football/college-football", "basketball/mens-college-basketball", "basketball/womens-college-basketball",
+    "volleyball/womens-college-volleyball", "soccer/usa.ncaa.m.1", "soccer/usa.ncaa.w.1", "hockey/mens-college-hockey",
+    "hockey/womens-college-hockey", "field-hockey/womens-college-field-hockey", "baseball/college-baseball",
+    "baseball/college-softball", "lacrosse/mens-college-lacrosse", "lacrosse/womens-college-lacrosse",
+    "football/nfl", "basketball/nba", "basketball/wnba", "hockey/nhl", "baseball/mlb", "soccer/usa.1",
+    "soccer/usa.nwsl", "soccer/usa.usl.1", "soccer/eng.1", "soccer/eng.2", "soccer/esp.1", "soccer/ger.1",
+    "soccer/ger.2", "soccer/ita.1", "soccer/fra.1", "soccer/mex.1", "soccer/aus.1", "soccer/uefa.champions",
+    "soccer/uefa.europa", "soccer/uefa.europa.conf", "mma/ufc",
+)
+SPORTS = {"mma": "Mixed martial arts", "field-hockey": "Field hockey"}
 
 # Zone abbreviations as providers write them. "EST" all year means New York, not a fixed offset: providers never
 # switch to "EDT".
@@ -497,6 +512,53 @@ class Espn:
     def __init__(self, get_json=None):
         self.get_json = get_json
         self._teams = {}
+        self._days = {}
+        self._down = False
+
+    def game(self, p):
+        """ESPN's listing of a game no Gracenote guide has (most streaming and pay-per-view games), or None: the same
+        two teams within MATCH_HOURS of the name's time, on exactly one scoreboard."""
+        if p["kind"] != "event" or len(p.get("sides") or []) != 2 or any(
+                _LANGUAGE.search(t) for t in [p["event"]] + p["notes"]):
+            return None
+        day = p["start"].astimezone(zoneinfo.ZoneInfo("America/New_York")).strftime("%Y%m%d")
+        near = [g for g in self._day(day)
+                if abs((g["start"] - p["start"]).total_seconds()) <= MATCH_HOURS * 3600]
+        hits = _hits(lambda level: {g["id"]: g for g in near if _same_game(p["sides"], g["teams"], level)})
+        return next(iter(hits.values())) if len(hits) == 1 else None
+
+    def _day(self, day):
+        if day in self._days or self._down:
+            return self._days.get(day, [])
+        get_json = self.get_json or _espn_json
+        games = []
+        for path in ESPN_BOARDS:
+            try:
+                data = get_json(ESPN_SCOREBOARD % (path, day)) or {}
+            except Exception as exc:  # noqa: BLE001 - names alone still give a guide
+                log.warning("ESPN scoreboards not read (%s); streaming events use their names only", exc)
+                self._down = True
+                break
+            league = ((data.get("leagues") or [{}])[0].get("name")) or ""
+            sport = path.split("/")[0]
+            for event in data.get("events") or []:
+                comp = (event.get("competitions") or [{}])[0]
+                teams = [c.get("team") or {} for c in comp.get("competitors") or []]
+                home = next((c.get("team") or {} for c in comp.get("competitors") or []
+                             if c.get("homeAway") == "home"), {})
+                try:
+                    start = datetime.datetime.fromisoformat(event["date"].replace("Z", "+00:00"))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                venue = comp.get("venue") or {}
+                place = ", ".join(x for x in [venue.get("fullName"), (venue.get("address") or {}).get("city"),
+                                              (venue.get("address") or {}).get("state")] if x)
+                games.append({"id": str(event.get("id")), "league": league, "name": event.get("name") or "",
+                              "start": start, "teams": [(t.get("displayName") or "", "") for t in teams],
+                              "logo": home.get("logo") or "", "place": place,
+                              "genre": SPORTS.get(sport, sport.replace("-", " ").capitalize())})
+        self._days[day] = games
+        return games
 
     def logo(self, league, p):
         """The home team's logo for a game (the side after "at" or "@", else the first), else the league's."""
@@ -767,6 +829,14 @@ def _airing(p, game, guide, zone):
                 "live": game["live"], "new": game["new"], "teams": [], "key": key}
     if p["kind"] != "event":
         return None
+    espn = guide.espn.game(p) if not p["league"] else None
+    if espn is not None:
+        # A game only a streaming service carries, as ESPN's scoreboard lists it.
+        desc = (espn["name"] + (". At " + espn["place"] if espn["place"] else "")) + notes
+        return {"title": espn["league"] or espn["name"], "name": espn["name"], "desc": desc, "image": espn["logo"],
+                "start": espn["start"], "stop": espn["start"] + datetime.timedelta(hours=GENERIC_HOURS),
+                "categories": [espn["genre"]] + list(CATEGORIES), "live": True, "new": True, "teams": [],
+                "key": p["key"]}
     title, genre, hours = LEAGUES.get(p["league"], (p["event"], "", GENERIC_HOURS))
     # A game only the provider carries: its team ids let a team pass record it.
     return {"title": title, "name": p["event"], "desc": p["event"] + notes,

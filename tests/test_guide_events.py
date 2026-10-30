@@ -453,6 +453,68 @@ class EspnTests(unittest.TestCase):
         self.assertEqual(events.Espn(get_json=down).teams("NFL"), [])  # never read: no logos, no error
 
 
+BOARDS = os.path.join(os.path.dirname(__file__), "fixtures", "guide", "espn-scoreboards.json")
+
+
+def fake_boards(fail=False):
+    """ESPN's scoreboards for Oct 30 2026, trimmed from the real ones (men's and women's college soccer, college
+    volleyball, field hockey, A-League)."""
+    with open(BOARDS, encoding="utf-8") as f:
+        data = json.load(f)
+    calls = []
+
+    def get_json(url):
+        calls.append(url)
+        if fail:
+            raise OSError("ESPN not reachable")
+        path = url.split("/sports/", 1)[1].split("/scoreboard", 1)[0]
+        return data.get(path, {"events": []}) if "dates=20261030" in url else {"events": []}
+    return get_json, calls
+
+
+class EspnScoreboardTests(unittest.TestCase):
+    def setUp(self):
+        self.get_json, self.calls = fake_boards()
+        self.espn = events.Espn(get_json=self.get_json)
+
+    def test_streaming_games_found(self):
+        g = self.espn.game(parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 7:00PM ET"))
+        self.assertEqual((g["league"], g["name"], g["genre"]), ("NCAA Men's Soccer", "Georgia Southern at Kentucky", "Soccer"))
+        g = self.espn.game(parse("ESPN+ 93: Buffalo vs. Central Michigan @ Oct 30 6:30PM ET"))
+        self.assertEqual(g["league"], "NCAA Women's Volleyball")
+        g = self.espn.game(parse("ESPN+ 01: Brisbane Roar FC vs. Auckland FC @ Oct 30 4:55AM ET"))
+        self.assertEqual((g["league"], g["start"]), ("Australian A-League Men",
+                                                     datetime.datetime(2026, 10, 30, 9, 0, tzinfo=datetime.timezone.utc)))
+        self.assertEqual(len(self.calls), len(events.ESPN_BOARDS))      # one day, asked once
+
+    def test_same_school_other_sport_is_told_apart_by_time(self):
+        self.assertEqual(self.espn.game(parse("ESPN+ 20: Tulsa vs. Temple @ Oct 30 7:00PM ET"))["league"],
+                         "NCAA Women's Soccer")
+        self.assertEqual(self.espn.game(parse("ESPN+ 21: Providence vs. Temple @ Oct 30 12:30PM ET"))["league"],
+                         "NCAA Women's Field Hockey")
+
+    def test_not_a_game_or_not_listed(self):
+        self.assertIsNone(self.espn.game(parse("ESPN+ 06: The Golics @ Oct 30 10:00AM ET")))
+        self.assertIsNone(self.espn.game(parse("ESPN+ 13: Temple vs. East Carolina @ Oct 30 12:00PM ET")))
+        self.assertIsNone(self.espn.game(parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 1:00PM ET")))
+
+    def test_espn_down(self):
+        get_json, calls = fake_boards(fail=True)
+        espn = events.Espn(get_json=get_json)
+        self.assertIsNone(espn.game(parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 7:00PM ET")))
+        espn.game(parse("ESPN+ 93: Buffalo vs. Central Michigan @ Oct 30 6:30PM ET"))
+        self.assertEqual(len(calls), 1)                                  # gave up for the rest of the rebuild
+
+    def test_entry(self):
+        get_json, _calls = fake_boards()
+        guide_obj = events.Guide(make_config(), now=NOW, espn=events.Espn(get_json=get_json))
+        p = parse("ESPN+ 110: Georgia Southern vs. Kentucky @ Oct 30 7:00PM ET")
+        a = events._airing(p, None, guide_obj, NY)
+        self.assertEqual((a["title"], a["name"]), ("NCAA Men's Soccer", "Georgia Southern at Kentucky"))
+        self.assertEqual(a["categories"][0], "Soccer")
+        self.assertTrue(a["image"].startswith("https://a.espncdn.com/"))
+
+
 class GuideEntriesTests(unittest.TestCase):
     def setUp(self):
         streams = {("p1", "1"): "NFL  | 02 - 1pm Ravens at Bills",
