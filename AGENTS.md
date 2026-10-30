@@ -345,7 +345,9 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 - Image: `Dockerfile` (python:3.13-slim-trixie by digest, Debian snapshot, Jellyfin ffmpeg pinned by SHA-256; the
   build fails without `h264_vaapi`, `h264_nvenc` and the VAAPI/CUDA filters).
 - Release: `gh workflow run image.yml -f version=X -f tag=latest`; it tests, smoke-runs the image, then pushes
-  `ghcr.io/mackid1993/coax:X` and `:latest` (amd64).
+  `ghcr.io/mackid1993/coax:X` and `:latest` (amd64). The smoke run includes `scripts/check-ffmpeg-errors.py`
+  against the image's ffmpeg: the GPU decoding fallback (`gpufail`) reads ffmpeg's messages, so an ffmpeg
+  upgrade that rewords an audio failure fails the build (update `AUDERR`/`GPUERR` and `GpuFallbackTest`).
 - Compose: `docker-compose.yml` and `docker-compose.vpn.yml` need no editing; every setting is a
   `${VAR:-default}` read from `.env` (`TAG`, `CONTAINER_NAME`, `HOST_PORT`, `HOST_DIR` (coax appends `/data`), `TZ`, `GPU_DEVICE`,
   `DOCKER_RUNTIME`, plus the common Gluetun values; `LAN_SUBNETS` and `VPN_SERVICE_PROVIDER` are required). The README embeds these files and the

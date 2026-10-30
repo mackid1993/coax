@@ -119,6 +119,8 @@ jobs:
           curl -fsS http://127.0.0.1:7780/api/config >/dev/null
           curl -fsS http://127.0.0.1:7780/api/version | grep -qF "\"$(cat app/VERSION)\""
           docker exec coax ffmpeg -hide_banner -encoders | grep -E "h264_(vaapi|nvenc)"
+          # The engines tell a GPU decoding failure from an audio failure by ffmpeg's messages: fail on a reworded one.
+          python3 scripts/check-ffmpeg-errors.py docker exec -i coax ffmpeg
           docker exec coax python -c "import cryptography, requests; print('python deps ok')"
           test -f data/config.json
 
