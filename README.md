@@ -988,9 +988,9 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   MPEG-TS get the provider's audio converted directly. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep
   working. Passthrough sends the provider's audio untouched.
 
-  This costs a little CPU: the extra audio inputs are decoded all the time, even while silent. Measured on an
-  Intel i7-12700K: about 1 to 1.5% of one core per transcoded channel, against about 0.5% for the single input of
-  earlier versions. Very low-power hardware will feel it more.
+  This costs a little CPU: the extra audio inputs are decoded all the time, even while silent, and the upmix runs
+  continuously. Measured: about 1.5 to 2% of one core per transcoded channel on a modern CPU, against about 0.5%
+  for the single input of earlier versions. Very low-power hardware will feel it more.
 - Interlaced sources are deinterlaced.
 
 ### How the GPU is used

@@ -59,7 +59,7 @@ function render() {
             <p class="faint small" style="margin-top:6px">For providers that send Dolby audio. Every channel goes to Channels DVR as Dolby Digital 5.1 at 640 kbps, all the time, so your receiver never switches formats. Stereo channels and stereo ads are upmixed to 5.1 (dialog to the center), as your receiver's own upmixer would do. Off: AAC stereo at 192 kbps.</p></div>
           <div class="field"><label for="sLang">Audio language</label><select class="input" id="sLang" data-alang>${langOptions(d.audio_language)}</select>
             <span class="hint">When a channel carries this language, coax plays it; otherwise the provider's main track.</span></div>
-          <p class="faint small">Both apply only while transcoding, to channels tuned after you save. Passthrough sends the provider's audio untouched. Keeping the sound seamless through format changes costs a little CPU: about 1 to 1.5% of one core per transcoded channel on a modern Intel CPU (about 0.5% before), more on very low-power hardware.</p>
+          <p class="faint small">Both apply only while transcoding, to channels tuned after you save. Passthrough sends the provider's audio untouched. Keeping the sound seamless through format changes costs a little CPU: about 1.5 to 2% of one core per transcoded channel on a modern CPU (about 0.5% before), more on very low-power hardware.</p>
         </div></div>
       <div class="help">
         <h4>Which frame rate?</h4><p>Pick the highest one your channels use.</p>
