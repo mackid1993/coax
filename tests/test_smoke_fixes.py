@@ -24,6 +24,22 @@ class RedactTests(unittest.TestCase):
         self.assertNotIn("alice9", rec.getMessage())
         self.assertNotIn("hunter2", rec.getMessage())
 
+    def test_signed_session_tokens(self):
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJsaW5lIjo0MiwiaXAiOiIxLjIuMy40In0.c2lnbmF0dXJlX2J5dGVz"
+        for line, kept in (("GET https://cdn.example/play/hls/%s/index.m3u8 403" % jwt, "/index.m3u8 403"),
+                           ("GET https://cdn.example/play/hls/%s.m3u8 403" % jwt, ".m3u8 403"),
+                           ("https://cdn.example/live/%s.ts: 403" % jwt, ".ts: 403"),
+                           ("url /play/%s, retry" % jwt, ", retry"),
+                           ("https://cdn.example/seg.ts?jwt=%s&x=1" % jwt, "&x=1"),
+                           ("https://cdn.example/seg.ts?a=%s&b=1" % jwt, "&b=1"),
+                           ("https://cdn.example/play#%s" % jwt, ""),
+                           ("url /play/%s" % jwt, "")):
+            out = hub._redact(line)
+            self.assertNotIn("eyJ", out, line)
+            self.assertTrue(out.endswith(kept), out)
+        self.assertEqual(hub._redact("/hls/2f9c0a1b3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8.ts"),
+                         "/hls/2f9c0a1b3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8.ts")
+
     def test_plain_line_unchanged(self):
         self.assertEqual(hub._redact("reserve: refilled to 37s"), "reserve: refilled to 37s")
 

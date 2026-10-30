@@ -109,10 +109,12 @@ _REDACT = [
                 r"(\d+(?:\.(?:ts|m3u8))?)(?=[\s?'\")]|$)"), r"\1********/********/\2"),
     (re.compile(r"((?:username|user|password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
     # Signed session tokens inside URL paths (/play/hls/eyJ.../...): they carry the line id and client IP.
-    (re.compile(r"(?<=/)eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]+){0,2}(?=[/?\s\x27\")]|$)"), "********"),
+    # Also after = or # (any query key, a fragment); whatever follows it (/index.m3u8, .m3u8, a colon or comma in
+    # a log line), the token alone is masked.
+    (re.compile(r"(?<=[/=#])eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]+){0,2}(?![A-Za-z0-9_-])"), "********"),
     (re.compile(r"(?<=/)[A-Za-z0-9_-]{48,}(?:\.[A-Za-z0-9_-]{16,}){0,2}(?=[/?\s\x27\")]|$)"), "********"),
     # CDN segment URLs carry a session token as a short query key (?t=..., &s=..., &e=...).
-    (re.compile(r"([?&](?:t|s|e|sig|st|hash|key|auth|session)=)[^&\s'\")]+"), r"\1********"),
+    (re.compile(r"([?&](?:t|s|e|sig|st|hash|key|auth|session|jwt)=)[^&\s'\")]+"), r"\1********"),
 ]
 _SECRETS = []      # every configured line username and password, longest first (set by Hub._config)
 _SECRETS_FROM = [None]
