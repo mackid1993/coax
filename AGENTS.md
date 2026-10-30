@@ -313,7 +313,21 @@ gets nothing. The airing: league title and genre from `LEAGUES` (else the event'
 and "Sports", `episode-num` `episode/<sha1 of league or label, day in coax's zone, sorted sides, DISTINCT notes>`:
 Channels DVR honors an episode-num value starting with `episode/` as the identity, so feeds of one game share one
 listing and one recording. Notes that name a feed (Broadcast, In-Arena, a network) do not split it; a language,
-women's/men's or game N do. No series ids or team ids (epg3r's Gracenote roster) are used.
+women's/men's or game N do.
+
+`Guide` (one per `xmltv.refresh`, shared by every lineup) reads Channels DVR's own Gracenote guide:
+`GET /dvr/guide/airings/<series id>` for the `SERIES` ids (checked against Channels DVR; NHL is 191278), only when
+an event channel with two sides is matched, and never `/devices/ANY/guide` (12 to 45 MB). Only `Source == "tms"`
+airings (coax's own XMLTV comes back as `xmltv:coax`), no alt casts. `match`: same two teams (one name's words all
+in the other's), at the name's time within 2 h, or for an `undated` name (a time of day, no date: "1pm Ravens at
+Bills") at that time of day within 30 min in a US zone in the next 8 days; one program only (live airing first;
+two live programs: no match); a language note never matches. A match takes Gracenote's title, EventTitle, summary,
+image and times, keeps coax's own `episode/` id and gets no team ids (the game is already on a real channel; a team
+pass could record it twice if Channels DVR does not merge the two). A dated game with no match keeps the name's
+airing and gets `<team-id system="tms">` for both sides when each resolves to exactly one team among the guide's
+games of that league (`team_ids`). An undated name with no match gets nothing. The DVR down or no URL: names only,
+one warning per rebuild. No series-id is ever written (a league series id on slot games could make an existing
+pass record every one of them).
 
 ## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)
 
