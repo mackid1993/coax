@@ -279,7 +279,7 @@ def _stream_name(ref):
 def lineup_events(config, lineup_id, now=None, covered=None):
     """[(channel, parsed)] for the lineup's channels with no guide whose main stream's name is an event or says
     nothing is on. A channel whose guide is an XMLTV id counts as having none when its provider's XMLTV gave it no
-    programmes: covered is the set of channel ids that got some (None: unknown, count it as none). A lineup
+    programs: covered is the set of channel ids that got some (None: unknown, count it as none). A lineup
     switched off, or one that takes Gracenote only (no XMLTV reaches Channels DVR), has none."""
     from app.guide import output
     lineup = output.find_lineup(config, lineup_id)
@@ -324,7 +324,7 @@ def _text(parent, tag, text, **attrs):
     return elem
 
 
-def _programme(cid, start, stop, title, desc="", logo=""):
+def _program(cid, start, stop, title, desc="", logo=""):
     elem = ET.Element("programme", {"start": _stamp(start), "stop": _stamp(stop), "channel": f"coax-{cid}"})
     _text(elem, "title", title, lang="en")
     if desc:
@@ -335,13 +335,13 @@ def _programme(cid, start, stop, title, desc="", logo=""):
 
 
 def entries(config, lineup_id, now=None, covered=None, listed=()):
-    """XMLTV <channel> and <programme> elements for the lineup's event channels: (channels, programmes).
-    covered as in lineup_events; listed holds channel ids that already have a <channel> element."""
+    """XMLTV channel and program elements for the lineup's event channels: (channels, programs).
+    covered as in lineup_events; listed holds channel ids that already have a channel element."""
     now = now or datetime.datetime.now(datetime.timezone.utc)
     hour = now.astimezone(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
     until = hour + datetime.timedelta(hours=FILLER_HOURS)
     zone = _zone(config)
-    channels, programmes = [], []
+    channels, programs = [], []
     for ch, p in lineup_events(config, lineup_id, now, covered):
         cid, logo = ch["id"], ch.get("logo") or ""
         if cid not in listed:
@@ -352,16 +352,16 @@ def entries(config, lineup_id, now=None, covered=None, listed=()):
             channels.append(elem)
         nothing = "No event scheduled"
         if p["kind"] == "idle":
-            programmes.append(_programme(cid, hour, until, nothing, logo=logo))
+            programs.append(_program(cid, hour, until, nothing, logo=logo))
             continue
         title, genre, hours = LEAGUES.get(p["league"], (p["event"], "", GENERIC_HOURS))
         start = p["start"]
         stop = start + datetime.timedelta(hours=hours)
         if start > hour:
-            programmes.append(_programme(cid, hour, start, "Up next: " + p["event"],
+            programs.append(_program(cid, hour, start, "Up next: " + p["event"],
                                          "Starts " + start.astimezone(zone).strftime("%a %b %-d, %-I:%M %p"),
                                          logo))
-        airing = _programme(cid, start, stop, title, logo=logo)
+        airing = _program(cid, start, stop, title, logo=logo)
         if title != p["event"]:
             _text(airing, "sub-title", p["event"], lang="en")
         desc = p["event"] + "".join(" (%s)" % n for n in p["notes"])
@@ -372,13 +372,13 @@ def entries(config, lineup_id, now=None, covered=None, listed=()):
         _text(airing, "date", start.astimezone(zone).strftime("%Y%m%d"))
         _text(airing, "live", None)
         _text(airing, "new", None)
-        programmes.append(_order(airing))
+        programs.append(_order(airing))
         if stop < until:
-            programmes.append(_programme(cid, max(stop, hour), until, nothing, logo=logo))
-    return channels, programmes
+            programs.append(_program(cid, max(stop, hour), until, nothing, logo=logo))
+    return channels, programs
 
 
-# Child order of <programme> in the XMLTV DTD, which strict readers check.
+# Child order of a program element in the XMLTV DTD, which strict readers check.
 _ORDER = ("title", "sub-title", "desc", "date", "category", "icon", "episode-num", "new", "live")
 
 

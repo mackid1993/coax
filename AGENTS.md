@@ -302,7 +302,7 @@ downloads the guide.
 ## Event channels (app/guide/events.py)
 
 Ported from epg3r (Jon Maddox, https://github.com/maddox/epg3r; credited in the README). A channel with no guide of
-its own in a lineup (`guide_source` is "", or "xmltv" and the provider's XMLTV wrote no programme for it this
+its own in a lineup (`guide_source` is "", or "xmltv" and the provider's XMLTV wrote no program for it this
 refresh: `_LineupWriter.covered`; a new channel's tvg-id hint is the guide in a both or xmltv lineup; a
 gracenote-only lineup takes no XMLTV) whose first enabled stream's current catalog name parses (`parse`) gets
 entries in the lineup XMLTV (`xmltv._add_events` -> `entries`): *Up next* filler from the hour it was built, the

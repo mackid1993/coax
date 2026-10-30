@@ -196,7 +196,7 @@ class _LineupWriter:
         self.channel_count = 0
         self.programme_count = 0
         self.listed = set()        # coax channel ids with a <channel> element
-        self.covered = set()       # coax channel ids with at least one <programme>
+        self.covered = set()       # coax channel ids with at least one program
 
     def finish(self, final_path):
         """Assemble the lineup file and move it into place atomically."""
@@ -404,18 +404,18 @@ def _refresh(config):
 
 def _add_events(config, lineup_id, writer):
     """Airings read from event channels' stream names (app.guide.events), for channels with no guide of their own
-    or whose XMLTV id got no programmes. A failure leaves them out and keeps the rest of the guide."""
+    or whose XMLTV id got no programs. A failure leaves them out and keeps the rest of the guide."""
     from app.guide import events
     try:
-        channels, programmes = events.entries(config, lineup_id, covered=writer.covered, listed=writer.listed)
+        channels, programs = events.entries(config, lineup_id, covered=writer.covered, listed=writer.listed)
     except Exception:  # noqa: BLE001
         log.exception("event guide entries for lineup %s failed", lineup_id)
         return
-    for elem, out in [(c, writer.channels) for c in channels] + [(p, writer.programmes) for p in programmes]:
+    for elem, out in [(c, writer.channels) for c in channels] + [(p, writer.programmes) for p in programs]:
         elem.tail = "\n"
         out.write("  " + ET.tostring(elem, encoding="unicode"))
     writer.channel_count += len(channels)
-    writer.programme_count += len(programmes)
+    writer.programme_count += len(programs)
 
 
 def _fetch_and_parse(url, provider, wanted, route, folder):

@@ -179,12 +179,12 @@ class EntriesTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def programmes(self, cfg=None):
+    def programs(self, cfg=None):
         _channels, progs = events.entries(cfg or make_config(), "main", NOW)
         return [(p.get("channel"), p) for p in progs], _channels
 
     def test_airings_and_blocks(self):
-        progs, chans = self.programmes()
+        progs, chans = self.programs()
         # CNN is not an event channel, channel 5 has a station: neither gets entries.
         self.assertEqual([c.get("id") for c in chans], ["coax-1", "coax-2", "coax-3"])
         one = [p for c, p in progs if c == "coax-1"]
@@ -217,7 +217,7 @@ class EntriesTests(unittest.TestCase):
         cfg["providers"][0]["enabled"] = False
         self.assertEqual(events.lineup_events(cfg, "main", NOW), [])
 
-    def test_xmltv_id_without_programmes_gets_entries(self):
+    def test_xmltv_id_without_programs_gets_entries(self):
         from app import server
         cfg = make_config()
         cfg["lineups"][0]["guide"] = "both"
@@ -230,7 +230,7 @@ class EntriesTests(unittest.TestCase):
         self.assertIn("coax-1", {p.get("channel") for p in progs})
         self.assertNotIn("coax-1", {c.get("id") for c in chans})   # the provider's <channel> is already there
         _chans, progs = events.entries(cfg, "main", NOW, covered={1}, listed={1})
-        self.assertNotIn("coax-1", {p.get("channel") for p in progs})   # the provider's XMLTV has programmes
+        self.assertNotIn("coax-1", {p.get("channel") for p in progs})   # the provider's XMLTV has programs
 
     def test_gracenote_lineup_has_no_entries(self):
         cfg = make_config()
