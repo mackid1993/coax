@@ -360,6 +360,9 @@ def remux(why=None, ofs=None):
     OFS[0] = ofs if ofs is not None else tout + 1.4 - ADJ[0]
     if old:
         EI.pop(old.pid, None)
+    if old is not None and NB[0] == 0:
+        QUIET.add(old.pid)   # never fed: its 'no input' errors are expected
+        SK.add(old.pid)
     AC[0] = bool(ADOL[0])
     NB[0] = 0
     ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
@@ -401,6 +404,7 @@ def aud(d):
         RP[0] = "the provider's audio is %s now; sending %s" % (("Dolby Digital", "Dolby Digital") if v else ("not Dolby", "AAC"))
         RP[1] = mono()
 
+QUIET = set()   # encoders replaced before any input; their ffmpeg messages are dropped
 DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |^\s*Last message repeated")
 
 def fferr(p):
@@ -414,6 +418,8 @@ def fferr(p):
         for raw in iter(p.stderr.readline, b""):
             s = raw.decode("utf-8", "replace").rstrip()
             if not s:
+                continue
+            if p.pid in QUIET:
                 continue
             if DECN.search(s):
                 if mono() - t0 > 10:
@@ -1451,9 +1457,11 @@ while not gone():
         if new:
             fresh = mono()
             lnew = fresh
-            # Logged only when it mattered: two or more segments missing and at least 15 s without new video.
-            if last is not None and since > max(3 * tgt, 15):
-                log("playlist stale %ds before new video arrived; the reserve covered it" % since)
+            # Logged only when it mattered: a long gap that used up over half the reserve or left it under 15 s.
+            # A shorter gap is routine provider jitter that the reserve hides completely.
+            left = Qs[0] + max(wlead, 0.0)
+            if last is not None and since > max(3 * tgt, 15) and (since > 0.5 * (left + since) or left < 15):
+                log("playlist stale %ds before new video arrived; reserve down to %ds" % (since, left))
         if mono() - got > lim or (mono() - got > cushlim() and Qs[0] + max(wlead, 0.0) < 10.0):
             handoff("no new video for %ds" % (mono() - got))
             if not stalled:
