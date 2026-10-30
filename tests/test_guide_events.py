@@ -313,6 +313,25 @@ def guide_config():
     return cfg
 
 
+class TeamNameTests(unittest.TestCase):
+    def test_names(self):
+        same = events._same_team
+        self.assertTrue(same("Devils", "New Jersey Devils"))
+        self.assertTrue(same("NY Jets", "New York Jets"))
+        self.assertTrue(same("KC Chiefs", "Kansas City Chiefs"))
+        self.assertFalse(same("Clevland Browns", "Cleveland Browns"))
+        self.assertTrue(same("Clevland Browns", "Cleveland Browns", 2))
+        self.assertFalse(same("Kansas", "Arkansas", 2))                    # too far apart even when loose
+
+    def test_exact_first_then_misspelled(self):
+        teams = {("Kansas", "1"), ("Kansas State", "2"), ("Cleveland Browns", "3"), ("Ohio", "4"), ("Ohio State", "5")}
+        pick = lambda side: events._hits(lambda level: {t for n, t in teams if events._same_team(side, n, level)})  # noqa: E731
+        self.assertEqual(pick("Clevland"), {"3"})
+        self.assertEqual(pick("Kansas State"), {"2"})
+        self.assertEqual(pick("Ohio"), {"4"})
+        self.assertEqual(pick("Browns"), {"3"})
+
+
 class GuideTests(unittest.TestCase):
     def setUp(self):
         self.get_json, self.calls = fake_dvr()
@@ -358,6 +377,12 @@ class GuideTests(unittest.TestCase):
         self.assertIsNone(self.guide.match(p))
         self.assertEqual(self.guide.team_ids(p), ["34", "52"])
         self.assertEqual(self.guide.team_ids(parse("NFL 08: Bills vs. Titans @ 8 Nov 01:00 PM ET")), [])  # unknown side
+
+    def test_misspelled_team_still_matches(self):
+        g = self.guide.match(parse("NFL  | 02 - 1pm Ravens at Bils"))
+        self.assertIsNone(g)                                    # "Bils" is too short to be read as misspelled
+        g = self.guide.match(parse("NCAAF 02: Tulane vs. Charlote @ 30 Oct 07:00 PM ET"))
+        self.assertEqual(g["program"], "EP062700991085")
 
     def test_teams_are_remembered_after_their_games_leave_the_guide(self):
         p = parse("NFL 07: Bills vs. Jets @ 8 Nov 01:00 PM ET")

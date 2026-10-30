@@ -985,8 +985,9 @@ name is an event, the lineup's XMLTV gets an airing for it.
 
 **Matched to your own Gracenote guide.** coax looks the game up in Channels DVR's guide: the upcoming NFL, MLB,
 NBA, NHL, WNBA, MLS and college football and basketball games on the sources you already have in Channels DVR,
-with the same Gracenote data Channels DVR shows for them. When the same two teams play there at the time the
-name gives, the airing takes Gracenote's own title (*NFL Football*), matchup (*Baltimore Ravens at Buffalo
+with the same Gracenote data Channels DVR shows for them. Team names are compared word by word, so "Devils" is
+the New Jersey Devils, initials count ("NY Jets", "KC"), and a small misspelling ("Clevland") still matches when
+nothing matches exactly. When the same two teams play there at the time the name gives, the airing takes Gracenote's own title (*NFL Football*), matchup (*Baltimore Ravens at Buffalo
 Bills*), description, picture, start and end. That is also how a name with a time but no day
 (`NFL | 02 - 1pm Ravens at Bills`) gets its airing: Channels DVR's guide says which day that game is. This
 needs the *Channels DVR URL* in Settings, and asks Channels DVR once per guide rebuild, only when a lineup has an

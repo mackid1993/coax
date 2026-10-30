@@ -38,6 +38,7 @@ written in Go and ported here in coax's own terms:
 """
 
 import datetime
+import difflib
 import hashlib
 import logging
 import re
@@ -320,17 +321,46 @@ def _tokens(text):
     return set(_key(text).split()) - _STOP
 
 
-def _same_team(ours, theirs):
-    """"Devils" is "New Jersey Devils", "UCF" is "UCF": one name's words are all in the other's."""
-    a, b = _tokens(ours), _tokens(theirs)
-    return bool(a) and bool(b) and (a <= b or b <= a)
+FUZZY = 0.9     # how alike two words of 5 letters or more must be to count as one misspelled ("Clevland")
 
 
-def _same_game(sides, teams):
+def _word_in(word, words, loose):
+    """A word is in a name when it is one of its words, the initials of words next to each other ("NY" in "New
+    York Jets", "KC"), or, loose, the same word misspelled."""
+    if word in words:
+        return True
+    if 2 <= len(word) <= 3 and word.isalpha() and word in "".join(w[0] for w in words):
+        return True
+    return loose and len(word) >= 5 and any(
+        len(w) >= 5 and difflib.SequenceMatcher(None, word, w).ratio() >= FUZZY for w in words)
+
+
+def _same_team(ours, theirs, level=1):
+    """Level 0: the same words. Level 1: every word of one name is in the other ("Devils" is "New Jersey Devils",
+    "NY Jets" is "New York Jets"). Level 2: a word may also be misspelled ("Clevland"). Callers try the levels in
+    turn (_hits), so "Kansas State" is Kansas State and not Kansas, and "Kansas" never becomes "Arkansas"."""
+    a, b = _key(ours).split(), _key(theirs).split()
+    a, b = [w for w in a if w not in _STOP], [w for w in b if w not in _STOP]
+    if not a or not b:
+        return False
+    if level == 0:
+        return set(a) == set(b)
+    loose = level == 2
+    return all(_word_in(w, b, loose) for w in a) or all(_word_in(w, a, loose) for w in b)
+
+
+def _same_game(sides, teams, level=1):
     if len(sides) != 2 or len(teams) != 2:
         return False
     (a, b), (x, y) = sides, [t[0] for t in teams]
-    return (_same_team(a, x) and _same_team(b, y)) or (_same_team(a, y) and _same_team(b, x))
+    return ((_same_team(a, x, level) and _same_team(b, y, level))
+            or (_same_team(a, y, level) and _same_team(b, x, level)))
+
+
+def _hits(match):
+    """match(level) for the closest level that finds anything: the same name, then a shorter one, then a
+    misspelled one."""
+    return match(0) or match(1) or match(2)
 
 
 class Guide:
@@ -376,9 +406,9 @@ class Guide:
         if len(p.get("sides") or []) != 2 or any(_LANGUAGE.search(t) for t in [p["event"]] + p["notes"]):
             return None
         series = SERIES.get(p["league"])
-        hits = [g for g in self.games()
-                if not (series and g["series"] != series) and not g["alt"] and _same_game(p["sides"], g["teams"])
-                and self._at_time(p, g["start"])]
+        hits = _hits(lambda level: [g for g in self.games()
+                                    if not (series and g["series"] != series) and not g["alt"]
+                                    and _same_game(p["sides"], g["teams"], level) and self._at_time(p, g["start"])])
         # One program can air several times (live, then reruns) and on several channels: keep its live airing, else
         # the one nearest the time the name gives.
         target = p.get("start") or self.now
@@ -418,7 +448,7 @@ class Guide:
         teams = self.teams(series)
         ids = []
         for side in p["sides"]:
-            hits = {tid for name, tid in teams if _same_team(side, name)}
+            hits = _hits(lambda level: {tid for name, tid in teams if _same_team(side, name, level)})
             if len(hits) != 1:
                 return []
             ids.append(hits.pop())
@@ -474,17 +504,18 @@ class Espn:
         if league in ESPN_PATHS and len(sides) == 2:
             home = sides[1] if re.search(r"\s(?:at|@)\s", p["event"], re.I) else sides[0]
             for side in (home, sides[0] if home is sides[1] else sides[1]):
-                hits = {t["logo"] for t in self.teams(league) if t["logo"] and self._is(side, t)}
+                hits = _hits(lambda level: {t["logo"] for t in self.teams(league)
+                                            if t["logo"] and self._is(side, t, level)})
                 if len(hits) == 1:
                     return hits.pop()
         short = {"NFL", "MLB", "NBA", "NHL", "WNBA", "MLS"}
         return ESPN_LEAGUE_LOGO % league.lower() if league in short else ""
 
     @staticmethod
-    def _is(side, team):
+    def _is(side, team, level=1):
         if side.strip().upper() == team["abbreviation"] and len(side.strip()) >= 2:
             return True
-        return _same_team(side, team["name"])
+        return _same_team(side, team["name"], level)
 
     def teams(self, league):
         path = ESPN_PATHS[league]

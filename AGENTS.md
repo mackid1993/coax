@@ -318,8 +318,9 @@ women's/men's or game N do.
 `Guide` (one per `xmltv.refresh`, shared by every lineup) reads Channels DVR's own Gracenote guide:
 `GET /dvr/guide/airings/<series id>` for the `SERIES` ids (checked against Channels DVR; NHL is 191278), only when
 an event channel with two sides is matched, and never `/devices/ANY/guide` (12 to 45 MB). Only `Source == "tms"`
-airings (coax's own XMLTV comes back as `xmltv:coax`), no alt casts. `match`: same two teams (one name's words all
-in the other's), at the name's time within 2 h, or for an `undated` name (a time of day, no date: "1pm Ravens at
+airings (coax's own XMLTV comes back as `xmltv:coax`), no alt casts. `match`: same two teams (`_same_team` levels, tried in turn by
+`_hits`: the same words, then every word of one in the other with initials such as NY or KC, then a word of 5+
+letters at least 90% alike), at the name's time within 2 h, or for an `undated` name (a time of day, no date: "1pm Ravens at
 Bills") at that time of day within 30 min in a US zone in the next 8 days; one program only (live airing first;
 two live programs: no match); a language note never matches. A match takes Gracenote's title, EventTitle, summary,
 image and times, keeps coax's own `episode/` id and gets no team ids (the game is already on a real channel; a team
