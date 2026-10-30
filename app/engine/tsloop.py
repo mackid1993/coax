@@ -338,8 +338,31 @@ def aud(d):
         RP[0] = "the provider's audio is %s now; sending %s" % (("Dolby Digital", "Dolby Digital") if v else ("not Dolby", "AAC"))
         RP[1] = mono()
 
+ALAY = [None]   # {audio PID: channels} of the feed as last seen
+
+def laychg(d):
+    # A provider's Dolby track often switches between 5.1 and stereo (stereo for ads, 5.1 for the show). The
+    # encoder drops audio frames whose layout changed (-drop_changed:a), so it is restarted at the next keyframe
+    # to pick up the new layout, instead of going silent until the silent-audio guard steps in.
+    import fmtprobe
+    try:
+        v = fmtprobe.layout(d)
+    except Exception:
+        return
+    if not v:
+        return
+    old = ALAY[0]
+    ALAY[0] = v
+    if not old or NB[0] == 0 or RP[0]:
+        return
+    ch = [(old[k], v[k]) for k in v if k in old and old[k] != v[k]]
+    if ch:
+        nm = {1: "mono", 2: "stereo", 6: "5.1", 8: "7.1"}
+        RP[0] = "the provider's audio switched from %s to %s" % (nm.get(ch[0][0], "%d channels" % ch[0][0]), nm.get(ch[0][1], "%d channels" % ch[0][1]))
+        RP[1] = mono()
+
 QUIET = set()   # encoders replaced before any input; their ffmpeg messages are dropped
-DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |^\s*Last message repeated")
+DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |\[dec:[a-z0-9_]+ @ 0x[0-9a-f]+\] |^\s*Last message repeated")
 
 def fferr(p):
     # ffmpeg's own messages. A decoder joining a feed between keyframes reports the frames before the first
@@ -1040,6 +1063,7 @@ def writer():
             i = it[6]
             if TRANSCODE and i == 0 and it[7] == 0:
                 aud(d)
+                laychg(d)
             if i < len(ix):
                 en, ca, sn = ix[i]
             else:

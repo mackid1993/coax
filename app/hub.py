@@ -108,6 +108,8 @@ _REDACT = [
     (re.compile(r"(https?://[^/\s]+/)(?!(?:dvr|api|devices|providers|internal|stream|output|tms)/)[^/\s?]+/[^/\s?]+/"
                 r"(\d+(?:\.(?:ts|m3u8))?)(?=[\s?'\")]|$)"), r"\1********/********/\2"),
     (re.compile(r"((?:username|user|password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
+    # CDN segment URLs carry a session token as a short query key (?t=..., &s=..., &e=...).
+    (re.compile(r"([?&](?:t|s|e|sig|st|hash|key|auth|session)=)[^&\s'\")]+"), r"\1********"),
 ]
 _SECRETS = []      # every configured line username and password, longest first (set by Hub._config)
 _SECRETS_FROM = [None]
