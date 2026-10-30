@@ -362,12 +362,14 @@ def ffcmd():
         # to 5.1 (dialog to the center, ambience to the surrounds), as a receiver's own upmixer (Neural:X, Dolby
         # Surround) would do with a stereo signal: it never gets the chance, because coax always sends 5.1.
         # The upmix holds back half its window (2048 samples, 43 ms); trimming them keeps both buses in step.
+        # No generated bass channel (lfe=0): receivers play LFE 10 dB up, so an upmixed ad drove the sub hot; the
+        # receiver's bass management still sends the mains' low bass to the sub.
         su = [x for x in slots if aslots.chans(x["key"]) >= 3 or x["fam"] == "pcm"]
         st = [x for x in slots if x not in su]
         fc = ";".join(["[0:i:%d]%s5.1[a%d]" % (x["pid"], rs, k) for k, x in enumerate(su)] +
                       ["[0:i:%d]%sstereo[b%d]" % (x["pid"], rs, k) for k, x in enumerate(st)])
         fc += ";" + "".join("[a%d]" % k for k in range(len(su))) + "amix=inputs=%d:normalize=0:duration=longest[su]" % len(su)
-        fc += ";" + "".join("[b%d]" % k for k in range(len(st))) + "amix=inputs=%d:normalize=0:duration=longest,surround=chl_out=5.1:win_size=4096:overlap=0.5,atrim=start_sample=2048[st]" % len(st)
+        fc += ";" + "".join("[b%d]" % k for k in range(len(st))) + "amix=inputs=%d:normalize=0:duration=longest,surround=chl_out=5.1:win_size=4096:overlap=0.5:lfe=0,atrim=start_sample=2048[st]" % len(st)
         fc += ";[su][st]amix=inputs=2:normalize=0:duration=longest" + tempo + "[ao]"
     else:
         fc = ";".join("[0:i:%d]%s%s[s%d]" % (x["pid"], rs, lay, k) for k, x in enumerate(slots))
