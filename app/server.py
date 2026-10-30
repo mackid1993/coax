@@ -215,6 +215,8 @@ class App:
         self.refresh_results = {}   # provider id -> last result dict
         self.refreshing = set()
         self.dvr = None             # app.channels_dvr.Syncer, set by main (created on demand otherwise)
+        self.vod = None             # app.vod.Library, set by main
+        self.vod_plays = None       # app.vodproxy.Plays, set by main
         self.health = None          # app.feedhealth.FeedHealth, set by main
         self.automatch_job = None   # {id, state, done, total, phase, started, finished, result, error}
         self.automatch_lock = threading.Lock()
@@ -628,6 +630,7 @@ class Handler(BaseHTTPRequestHandler):
         ("GET", r"/output/m3u/([A-Za-z0-9_-]+)\.m3u", "h_output_m3u"),
         ("GET", r"/output/xmltv/([A-Za-z0-9_-]+)\.xml", "h_output_xmltv"),
         ("GET", r"/stream/([A-Za-z0-9-]+)\.ts", "h_stream"),
+        ("GET", r"/vod/([A-Za-z0-9_-]+)/(m|e)/([A-Za-z0-9_-]+)\.([A-Za-z0-9]{1,5})", "h_vod"),
         ("GET", r"/internal/channels/(\d+)/streams/?", "h_internal_streams"),
         ("GET", r"/internal/channels/(\d+)/?", "h_internal_channel"),
         ("GET", r"/api/config", "h_config_get"),
@@ -642,6 +645,9 @@ class Handler(BaseHTTPRequestHandler):
         ("POST", r"/api/providers/([A-Za-z0-9_-]+)/refresh", "h_provider_refresh"),
         ("GET", r"/api/providers/([A-Za-z0-9_-]+)/groups", "h_provider_groups"),
         ("PUT", r"/api/providers/([A-Za-z0-9_-]+)/groups", "h_provider_groups_save"),
+        ("GET", r"/api/providers/([A-Za-z0-9_-]+)/vod", "h_provider_vod"),
+        ("PUT", r"/api/providers/([A-Za-z0-9_-]+)/vod", "h_provider_vod_save"),
+        ("POST", r"/api/providers/([A-Za-z0-9_-]+)/vod/sync", "h_provider_vod_sync"),
         ("GET", r"/api/catalog/streams", "h_catalog_streams"),
         ("GET", r"/api/channels", "h_channels_list"),
         ("POST", r"/api/channels", "h_channels_create"),
@@ -926,6 +932,17 @@ class Handler(BaseHTTPRequestHandler):
                 log.exception("error closing session for %s", uuid)
             log.debug("stream %s to %s ended after %d bytes", uuid, self.client_address[0], sent)
 
+    def h_vod(self, provider_id, kind, item_id, ext):
+        """A movie or episode for a Channels DVR Stream File: the provider's bytes passed through untouched."""
+        plays = self.app.vod_plays
+        if plays is None:
+            raise ApiError(503, "video on demand is not running")
+        try:
+            self.connection.settimeout(STREAM_CHUNK_TIMEOUT)
+        except OSError:
+            pass
+        plays.serve(self, provider_id, kind, item_id, ext)
+
     def _client_gone(self):
         """True when the DVR has closed its end. Used while coax has nothing to send yet."""
         try:
@@ -1154,6 +1171,8 @@ class Handler(BaseHTTPRequestHandler):
             return changed
         self.app.edit_held(drop_provider)   # held backups from it could never be saved
         log.info("provider %s deleted", provider_id)
+        if self.app.vod is not None:
+            self.app.vod.request()   # takes its movies and series out of Channels DVR
         return {"deleted": provider_id, "channels_detached": detached, "only_disabled_streams": stuck}
 
     def h_providers_test_unsaved(self):
@@ -1201,6 +1220,56 @@ class Handler(BaseHTTPRequestHandler):
         self.app.store.update(mutate)
         log.info("provider %s: %d groups selected", provider_id, len(groups))
         return self.h_provider_groups(provider_id)
+
+    def h_provider_vod(self, provider_id):
+        """The provider's movie and series groups with counts and picks, and the state of its Channels DVR library.
+        ?refresh=1 downloads the lists first (the first time the dialog opens on an Xtream provider)."""
+        from app.providers import vod as vodcat
+        provider = find_provider(self.app.store.get(), provider_id)
+        data = vodcat.load(provider_id)
+        if self.query.get("refresh") in ("1", "true") or (data is None and provider["type"] == "xtream"):
+            try:
+                data = vodcat.refresh(provider) if provider["type"] == "xtream" else data
+            except Exception as exc:  # noqa: BLE001 - shown in the dialog
+                from app.providers.net import redact, secrets_of
+                raise ApiError(502, "could not read the provider's movies and series: %s"
+                               % redact(getattr(exc, "args", [exc])[0], secrets_of(provider)))
+        counts = vodcat.group_counts(data)
+        picks = provider.get("vod") or {}
+        out = {"provider": provider_id, "fetched_at": (data or {}).get("fetched_at")}
+        for kind in ("movies", "series"):
+            chosen = set(picks.get(kind) or [])
+            rows = [dict(row, selected=row["name"] in chosen) for row in counts[kind]]
+            rows += [{"name": g, "count": 0, "selected": True} for g in picks.get(kind) or []
+                     if g not in {r["name"] for r in rows}]
+            out[kind] = rows
+        out["library"] = self.app.vod.status(provider_id) if self.app.vod is not None else None
+        return out
+
+    def h_provider_vod_save(self, provider_id):
+        body = self._body_object()
+        picks = {}
+        for kind in ("movies", "series"):
+            value = body.get(kind, [])
+            if not isinstance(value, list) or not all(isinstance(g, str) for g in value):
+                raise bad_request("%s must be a list of group names" % kind)
+            picks[kind] = list(dict.fromkeys(value))
+
+        def mutate(cfg):
+            find_provider(cfg, provider_id)["vod"] = picks
+        self.app.store.update(mutate)
+        log.info("provider %s: %d movie and %d series groups picked for Channels DVR", provider_id,
+                 len(picks["movies"]), len(picks["series"]))
+        if self.app.vod is not None:
+            self.app.vod.request(provider_id)
+        return self.h_provider_vod(provider_id)
+
+    def h_provider_vod_sync(self, provider_id):
+        find_provider(self.app.store.get(), provider_id)
+        if self.app.vod is None:
+            raise ApiError(503, "video on demand is not running")
+        self.app.vod.request(provider_id)
+        return {"requested": True}
 
     # ------------------------------------------------------------ catalog
     def h_catalog_streams(self):

@@ -133,6 +133,12 @@ def main(argv=None):
         log.exception("feed health failed to start")
     app.dvr = start_dvr_sync(store, app.lineup_m3u)
     try:
+        vod = importlib.import_module("app.vod")
+        app.vod = vod.Library(store, os.path.dirname(os.path.abspath(path))).start()
+        app.vod_plays = importlib.import_module("app.vodproxy").Plays(hub, store.get, title=app.vod.title)
+    except Exception:  # noqa: BLE001 - live TV works without video on demand
+        log.exception("video on demand failed to start")
+    try:
         importlib.import_module("app.snapshots").start(store)
     except Exception:  # noqa: BLE001 - backups are optional
         log.exception("config backup scheduler failed to start")
