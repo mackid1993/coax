@@ -1454,7 +1454,7 @@ Actions by commit SHA.
   ported from its Go code (`main.go`, `m3uintegration.go`). ah4c is released under an MIT-style license,
   Copyright 2023 Fancy Bits, LLC.
 - Guide data for event channels (`app/guide/events.py`) borrows from
-  [epg3r](https://github.com/maddox/epg3r) by Jon Maddox, ported from its Go code: reading the event, its
+  [epg3r](https://github.com/maddox/epg3r) by Jon Maddox, reimplemented in Python from the ideas in its Go code: reading the event, its
   time and its time zone from the channel name, the time-with-no-day and window rules, one listing per event
   across channels (the `episode/` episode id Channels DVR honors), the live, new and *Sports* markings, and the
   league game lengths. The only data taken from epg3r is the short table of league names, airing titles and
