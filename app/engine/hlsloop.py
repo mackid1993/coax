@@ -50,10 +50,10 @@
 import os, sys, time, json, signal, re, select, shutil, hashlib, threading, collections, subprocess as sp, urllib.parse as up
 
 def load_settings(path=None):
-    """Return (channels_dvr_url, transcode, port, always_dolby) from coax's config.json.
+    """Return (channels_dvr_url, transcode, port, always_dolby, audio_language) from coax's config.json.
 
     Never raises: a missing, unreadable or malformed file (or any bad value)
-    falls back to "", "off", 7780 and False.
+    falls back to "", "off", 7780, False and "".
     """
     path = path or os.environ.get("COAX_CONFIG") or "/data/config.json"
     try:
@@ -75,12 +75,15 @@ def load_settings(path=None):
             raise ValueError
     except Exception:
         port = 7780
-    return (dvr if isinstance(dvr, str) else ""), (tc if isinstance(tc, str) else "off"), port, c.get("transcode_dolby") is True
-CHANNELS_DVR, TRANSCODE, COAX_PORT, DOLBY51 = load_settings()
+    return (dvr if isinstance(dvr, str) else ""), (tc if isinstance(tc, str) else "off"), port, c.get("transcode_dolby") is True, \
+        (c.get("audio_language") if isinstance(c.get("audio_language"), str) else "")
+CHANNELS_DVR, TRANSCODE, COAX_PORT, DOLBY51, ALANG = load_settings()
 TCP = {"1080p60": (1080, 59.94, "6M"), "1080p30": (1080, 29.97, "4.5M"), "720p60": (720, 59.94, "4.5M"), "720p30": (720, 29.97, "3M"), "1080p50": (1080, 50, "6M"), "1080p25": (1080, 25, "4.5M"), "720p50": (720, 50, "4.5M"), "720p25": (720, 25, "3M")}
 TC_HEIGHT, TC_FPS, TC_VBITRATE = TCP.get(str(TRANSCODE).lower().strip(), (0, 0, ""))
 TRANSCODE = TC_HEIGHT > 0
 TC_LEAD = 4.0
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import aslots  # noqa: E402
 try:
     import requests
 except ImportError:
@@ -339,17 +342,17 @@ def ffcmd():
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "h264_nvenc", "-preset", "p4"] + rc + ["-bf", "0"]
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
-    # Audio: the feed's best track (APID, picked and kept by aud()), in one format for the whole DVR connection:
-    # Dolby Digital 5.1 at 640k with the "Always send Dolby Digital 5.1" setting (DOLBY51), else AAC 384k with the
-    # source's channels as found at tune time (ACH: stereo stays stereo). When the provider switches between 5.1 and
-    # stereo (ads) or a failover lands on a different feed, ffmpeg rebuilds its audio filter and fits the audio to
-    # that format (stereo plays in the front left and right of 5.1), with no encoder restart and nothing for
-    # players or receivers to re-adjust to. During a slowdown the audio timestamps are scaled from 0 like the
-    # video's (setpts=PTS*x), so a rebuilt filter keeps the same stretch.
-    ac, an = ("ac3", 6) if DOLBY51 else ("aac", ACH[0] or 2)
-    af = "aresample=async=1:min_hard_comp=0.1" + (",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA) if SPA != 1.0 else "")
-    mp = ["-map", "0:v:0?", "-map", "0:i:%d?" % APID[0]] if APID[0] else []
-    return b + ["-i", "pipe:0"] + mp + ["-sn", "-dn"] + vc + ["-af", af, "-c:a", ac, "-b:a", "640k" if ac == "ac3" else "384k", "-ac", str(an), "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
+    # Audio (see aslots): the feeder gives ffmpeg one fixed input per exact audio format and sends the provider's
+    # chosen track, frame by frame, to the input of its format; every other input gets silence. ffmpeg mixes them
+    # into one format for the whole DVR connection (AOUT: Dolby Digital 5.1 at 640k with the "Always send Dolby
+    # Digital 5.1" setting, else AAC stereo at 384k). A codec switch, a 5.1/stereo ad or the audio moving to
+    # another track never changes what ffmpeg decodes, so it never restarts or rebuilds a filter. During a
+    # slowdown the audio timestamps are scaled from 0 like the video's (setpts=PTS*x).
+    ac, an, lay = AOUT[0]
+    fc = ";".join("[0:i:%d]aresample=async=1:min_hard_comp=0.1,aformat=sample_rates=48000:channel_layouts=%s[s%d]" % (x["pid"], lay, k) for k, x in enumerate(aslots.SLOTS))
+    fc += ";" + "".join("[s%d]" % k for k in range(len(aslots.SLOTS))) + "amix=inputs=%d:normalize=0:duration=longest" % len(aslots.SLOTS)
+    fc += (",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA) if SPA != 1.0 else "") + "[ao]"
+    return b + ["-i", "pipe:0", "-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]", "-sn", "-dn"] + vc + ["-c:a", ac, "-b:a", "640k" if ac == "ac3" else "384k", "-ac", str(an), "-ar", "48000", "-output_ts_offset", "%.3f" % (OFS[0]), "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt
@@ -390,39 +393,9 @@ NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
 AQ = {"pid": None, "t0": 0.0, "a": None, "told": False, "ever": False, "n": 0, "next": 0.0}
 SK = set()   # encoders coax itself killed (not a GPU decoding failure)
 
-APID = [None]   # the audio track (PID) the encoder plays: the feed's best one, kept while listed (None: ffmpeg picks)
-APT = [None]    # whether that track is Dolby, to notice the provider changing its codec
-ACH = [None]    # AAC output channels of this DVR connection (2 or 6), fixed once chosen (unused with DOLBY51)
 NB = [0]        # bytes sent to the running encoder
-
-def aud(d):
-    # Pick the feed's best audio track and keep it while the provider lists it with the same codec, so a 5.1 track
-    # that is stereo during an ad is never traded for another track; a 5.1/stereo switch never restarts anything.
-    # Before the encoder has had any input (tune time) it is replaced at once, which nobody can see, unless a
-    # pending stream switch restart is about to rebuild it anyway. Only when the track disappears or changes codec
-    # (ffmpeg cannot follow either in place) is the encoder restarted, at the next keyframe.
-    import fmtprobe
-    try:
-        t = fmtprobe.tracks(d)
-    except Exception:
-        t = None
-    if not t:
-        return
-    cur = APID[0]
-    v = cur if cur in t and t[cur][0] == APT[0] else fmtprobe.pick(t)
-    ch = v != cur
-    APID[0], APT[0] = v, t[v][0]
-    if ACH[0] is None and not DOLBY51:
-        ACH[0] = 2 if NB[0] else 6 if t[v][1] >= 6 else 2   # already sending the default: keep it
-        ch = True
-    if not ch:
-        return
-    if NB[0] == 0:
-        if not RP[0]:
-            remux()
-    elif cur is not None and not RP[0]:
-        RP[0] = "the provider's audio track %s; continuing on its track %d" % ("changed codec" if cur in t else "went away", v)
-        RP[1] = mono()
+AOUT = [("ac3", 6, "5.1") if DOLBY51 else ("aac", 2, "stereo")]   # output audio of this DVR connection
+FEED = aslots.Feeder(ALANG, log) if TRANSCODE else None
 
 QF = set()   # encoders replaced before any input; their ffmpeg messages are dropped
 DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |\[dec:[a-z0-9_]+ @ 0x[0-9a-f]+\] |^\s*Last message repeated")
@@ -564,6 +537,8 @@ def gone():
         return False
 
 def put(b):
+    if FEED:
+        b = (FEED.psi() if NB[0] == 0 else b"") + FEED.feed(b)   # a new encoder learns the audio inputs at once
     NB[0] += len(b)
     if TRANSCODE:
         note(b)
@@ -733,8 +708,8 @@ try:
         rstk = bool(j.get("stk")) and RST
         wlead = max(j.get("lead", 0.0) - (time.time() - j["t"]), 0.0) if RST else 0.0
         log("resuming after an engine restart")
-    if time.time() - j["t"] < RSW and j.get("ach"):
-        ACH[0] = int(j["ach"])   # the same DVR connection keeps its audio format (engine restart, hand switch)
+    if time.time() - j["t"] < RSW and isinstance(j.get("aout"), list) and len(j["aout"]) == 3:
+        AOUT[0] = tuple(j["aout"])   # the same DVR connection keeps its audio format (engine restart, hand switch)
 except Exception:
     pass
 hasseq = True
@@ -743,7 +718,7 @@ def save():
     try:
         with sl:
             with open(st + ".tmp", "w") as f:
-                json.dump({"res": round(Qs[0] + max(wlead, 0.0), 1), "last": wlast, "part": wpart, "hasseq": hasseq, "seen": list(seen), "off": off, "oend": oend, "cur": cur, "src": src, "dep": dep, "lead": wlead, "xb": xb, "pk": pk, "stk": skf, "to": tout, "ach": ACH[0], "t": time.time()}, f)
+                json.dump({"res": round(Qs[0] + max(wlead, 0.0), 1), "last": wlast, "part": wpart, "hasseq": hasseq, "seen": list(seen), "off": off, "oend": oend, "cur": cur, "src": src, "dep": dep, "lead": wlead, "xb": xb, "pk": pk, "stk": skf, "to": tout, "aout": list(AOUT[0]), "t": time.time()}, f)
             os.replace(st + ".tmp", st)
     except Exception:
         pass
@@ -1241,7 +1216,8 @@ def writer():
                 if it[0] == "remux":
                     if len(it) > 4:
                         AQ.update(ever=False, n=0, next=0.0)   # a new stream: the silent-audio guard judges it on its own
-                        APID[0] = APT[0] = None   # and its best audio track is read again from its first segment
+                        if FEED:
+                            FEED.reset()   # and its audio tracks and clock are read afresh
                     if it[3] is not None:
                         off = it[3]
                     if TRANSCODE:
@@ -1275,8 +1251,6 @@ def writer():
             d = it[1]
             if len(it) < 7:
                 it.append(tix(d))
-                if TRANSCODE:
-                    aud(d)
             k = min(65424, max(len(d) // 100 // 188 * 188, 188), len(d) - it[5])
             e = it[5] + k
             cd = (it[2] if e >= len(d) else tpos(it[6], e, it[2])) - tpos(it[6], it[5], it[2]) if it[6] else it[2] * k / max(len(d), 1)
@@ -1562,6 +1536,10 @@ while not gone():
                     sig = None
                     cmap = None
             g = tsig(d)
+            if g and FEED:
+                # Transcoding: the audio feeder takes any change in the provider's audio tracks without a restart;
+                # only a change in the video stream needs a new encoder.
+                g = tuple(e for e in g if e[0] in (1, 2, 27, 36)) or None
             if g and sig and (g != sig):
                 enq(["remux", "stream layout changed", 0, None])
                 cmap = None
