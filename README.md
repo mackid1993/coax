@@ -967,7 +967,7 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   Australia and others) use 50 or 25, since 60 or 30 there makes motion judder.
 - **Which size?** 1080p with a GPU, 720p on weak hardware or when encoding on the CPU. The bitrates match what
   IPTV providers typically send.
-- Audio is AAC at 48 kHz, 384 kbps, with the source's channels kept: 5.1 stays 5.1 and stereo stays stereo (when a feed has several audio tracks, the one with the most channels is used). Interlaced sources are deinterlaced.
+- Audio keeps the source's channels (5.1 stays 5.1, stereo stays stereo; when a feed has several audio tracks, the one with the most channels is used). When the provider sends Dolby Digital or Dolby Digital Plus, coax sends Dolby Digital at 640 kbps, the highest Dolby Digital allows; otherwise AAC at 384 kbps, both at 48 kHz. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep working. Interlaced sources are deinterlaced.
 
 ### How the GPU is used
 

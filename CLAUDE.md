@@ -358,7 +358,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **ffmpeg (1.0.6):** input `-dts_delta_threshold 86400 -fflags +discardcorrupt -probesize 1000000
   -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s); passthrough `-map 0:v? -map 0:a? -c copy
   -copyts`; transcode `-drop_changed:a 1 -i pipe:0 -map 0:v:0? -map 0:a:0?`, audio
-  `aresample=async=1:min_hard_comp=0.1`, AAC 384k 48 kHz keeping the source's channels (1.0.7: the track with the most channels, 5.1 kept); output `-output_ts_offset ... -f mpegts`.
+  `aresample=async=1:min_hard_comp=0.1`, 48 kHz keeping the source's channels (1.0.7: the track with the most channels, 5.1 kept), AC-3 640k when the provider sends Dolby, else AAC 384k (1.0.7-1); output `-output_ts_offset ... -f mpegts`.
   Presets `1080p60` (6M), `1080p30`/`720p60` (4.5M), `720p30` (3M), plus 50 Hz variants. Jellyfin ffmpeg 8.1.3.
 - **Performance:** one 1080p60 VAAPI transcode about 10% of one core for the container; engine memory about
   78 MB. Overnight runs at 0% buffering on both the old profile and coax.
@@ -456,6 +456,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   Switched off means hidden: the Channels page and Status counts leave out channels that are only on providers or
   only in lineups switched off; Status lists no lines (unless still holding a stream) or refreshes of a provider
   switched off.
+- **1.0.7-1** (Oct 30) transcode sends Dolby Digital (AC-3 640k, re-encoded so the refill and gap correction still
+  work) when the provider sends Dolby, else AAC 384k. Quieter logs: decoder noise and keepalive at tune start,
+  routine playlist gaps and normal catch-ups are no longer logged as problems. Checked offline on both engines
+  (Dolby from the first byte; AAC to Dolby mid-stream with a continuous timeline).
 
 ---
 
