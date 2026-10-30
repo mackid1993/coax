@@ -342,7 +342,9 @@ def ffcmd():
     # Audio: no -map, so ffmpeg takes the best video and the audio track with the most channels (a feed often
     # lists a stereo track before its 5.1 one), and no -ac, so 5.1 stays 5.1 and stereo stays stereo.
     af = "aresample=async=1:min_hard_comp=0.1" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-drop_changed:a", "1", "-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", af, "-c:a"] + (["ac3", "-b:a", "640k"] if ADOL[0] else ["aac", "-b:a", "384k"]) + ["-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
+    # Dolby channels always send 5.1: when the provider drops to stereo (ads), ffmpeg keeps running and puts it
+    # in the front left and right, so the output format never changes and players and receivers never re-adjust.
+    return b + ([] if ADOL[0] else ["-drop_changed:a", "1"]) + ["-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", af, "-c:a"] + (["ac3", "-b:a", "640k", "-ac", "6"] if ADOL[0] else ["aac", "-b:a", "384k"]) + ["-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt
@@ -419,6 +421,8 @@ def laychg(d):
         return
     old = ALAY[0]
     ALAY[0] = v
+    if ADOL[0]:
+        return   # Dolby output is always 5.1: a layout change needs no restart
     if not old or NB[0] == 0 or RP[0]:
         return
     ch = [(old[k], v[k]) for k in v if k in old and old[k] != v[k]]
