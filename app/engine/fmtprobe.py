@@ -50,3 +50,45 @@ def describe(ff, data, dur):
     r = subprocess.run([probe, "-v", "quiet", "-show_streams", "-of", "json", "-i", "pipe:0"], input=data,
                        capture_output=True, timeout=30)
     return summarize(json.loads(r.stdout or b"{}").get("streams") or [], len(data), dur)
+
+
+def dolby(d):
+    """True when the program table (PMT) of this MPEG-TS lists a Dolby Digital (AC-3) or Dolby Digital Plus
+    (E-AC-3) track, False when it lists none, None when no PMT was found."""
+    pmt = None
+    for i in range(0, min(len(d), 188 * 2000) - 187, 188):
+        p = d[i:i + 188]
+        if p[0] != 71 or not p[1] & 64:
+            continue
+        pid = (p[1] & 31) << 8 | p[2]
+        af = p[3] >> 4 & 3
+        if af == 2:
+            continue
+        o = 5 + p[4] if af == 3 else 4
+        if o >= 187:
+            continue
+        o += 1 + p[o]
+        if o + 12 > 188:
+            continue
+        end = min(o + 3 + ((p[o + 1] & 15) << 8 | p[o + 2]) - 4, 188)
+        if pid == 0 and p[o] == 0:
+            for j in range(o + 8, end - 3, 4):
+                if p[j] << 8 | p[j + 1]:
+                    pmt = (p[j + 2] & 31) << 8 | p[j + 3]
+                    break
+        elif pid == pmt and p[o] == 2:
+            j = o + 12 + ((p[o + 10] & 15) << 8 | p[o + 11])
+            while j + 5 <= end:
+                il = (p[j + 3] & 15) << 8 | p[j + 4]
+                if p[j] in (0x81, 0x87):            # ATSC AC-3 / E-AC-3 stream types
+                    return True
+                k, ke = j + 5, min(j + 5 + il, end)
+                while k + 2 <= ke:
+                    if p[k] in (0x6A, 0x7A):        # DVB AC-3 / E-AC-3 descriptors
+                        return True
+                    if p[k] == 5 and bytes(p[k + 2:k + 6]) in (b"AC-3", b"EAC3"):
+                        return True
+                    k += 2 + p[k + 1]
+                j += 5 + il
+            return False
+    return None

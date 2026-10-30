@@ -280,7 +280,7 @@ def ffcmd():
     # Audio: no -map, so ffmpeg takes the best video and the audio track with the most channels (a feed often
     # lists a stereo track before its 5.1 one), and no -ac, so 5.1 stays 5.1 and stereo stays stereo.
     af = "aresample=async=1:min_hard_comp=0.1" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-drop_changed:a", "1", "-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "384k", "-ar", "48000", "-output_ts_offset", "%.3f" % (tout + 1.4 - ADJ[0]), "-f", "mpegts", "pipe:1"]
+    return b + ["-drop_changed:a", "1", "-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", af, "-c:a"] + (["ac3", "-b:a", "640k"] if ADOL[0] else ["aac", "-b:a", "384k"]) + ["-ar", "48000", "-output_ts_offset", "%.3f" % (tout + 1.4 - ADJ[0]), "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return RES
@@ -295,7 +295,10 @@ def remux(why=None):
         log("transcode: GPU decoding failed on this stream, decoding on the CPU instead (encoding stays on the GPU)")
     SPA = SPD
     RP[0] = None
-    ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE)
+    AC[0] = bool(ADOL[0])
+    NB[0] = 0
+    ff = sp.Popen(ffcmd(), stdin=sp.PIPE, stdout=sp.PIPE, stderr=sp.PIPE)
+    threading.Thread(target=fferr, args=(ff,), daemon=True).start()
     FST[0] = mono()
     ADJ[0] = 0.0
     with fql:
@@ -312,6 +315,55 @@ NUL = (b"G\x1f\xff\x10" + b"\xff" * 184) * 7
 AQ = {"pid": None, "t0": 0.0, "a": None, "told": False, "ever": False, "n": 0, "next": 0.0}
 SK = set()   # encoders coax itself killed (not a GPU decoding failure)
 
+ADOL = [None]   # the feed carries Dolby Digital (None: not known yet)
+AC = [False]    # the running encoder sends Dolby Digital
+NB = [0]        # bytes sent to the running encoder
+
+def aud(d):
+    # Transcode audio: Dolby Digital (AC-3 640k) when the provider sends Dolby, else AAC. AC-3 is re-encoded,
+    # not copied, so the 3 percent slowdown and the gap correction keep working on it.
+    import fmtprobe
+    v = fmtprobe.dolby(d)
+    if v is None:
+        return
+    ADOL[0] = v
+    if v == AC[0]:
+        return
+    if NB[0] == 0:
+        remux()   # this encoder has had no video yet: start the right one now
+    elif not RP[0]:
+        RP[0] = "the provider's audio is %s now; sending %s" % (("Dolby Digital", "Dolby Digital") if v else ("not Dolby", "AAC"))
+        RP[1] = mono()
+
+DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |^\s*Last message repeated")
+
+def fferr(p):
+    # ffmpeg's own messages. A decoder joining a feed between keyframes reports the frames before the first
+    # keyframe and its headers as errors: expected, so an encoder's first 10 s of decoder messages are dropped.
+    # Later decoder errors mean damaged video or audio from the provider, summed up at most once a minute.
+    t0 = mono()
+    tl = t0
+    n = 0
+    try:
+        for raw in iter(p.stderr.readline, b""):
+            s = raw.decode("utf-8", "replace").rstrip()
+            if not s:
+                continue
+            if DECN.search(s):
+                if mono() - t0 > 10:
+                    n += 1
+            else:
+                sys.stderr.write(s + "\n")
+                sys.stderr.flush()
+            if n and mono() - tl >= 60:
+                log("input: the provider sent damaged video or audio (%d decoder errors in the last minute); ffmpeg skipped it" % n)
+                n = 0
+                tl = mono()
+        if n:
+            log("input: the provider sent damaged video or audio (%d decoder errors); ffmpeg skipped it" % n)
+    except Exception:
+        pass
+
 def silent(pid, b):
     # -drop_changed drops audio frames whose format changes. If the provider's audio changes for good, the
     # encoder would send video without sound, so it is restarted to pick up the new format. If sound is still
@@ -323,7 +375,7 @@ def silent(pid, b):
         if b[j] == 71 and b[j + 1] & 64:
             af = b[j + 3] >> 4 & 3
             o = j + (5 + b[j + 4] if af == 3 else 4)
-            if af & 1 and o + 4 <= j + 188 and b[o:o + 3] == b"\x00\x00\x01" and 192 <= b[o + 3] <= 223:
+            if af & 1 and o + 4 <= j + 188 and b[o:o + 3] == b"\x00\x00\x01" and (192 <= b[o + 3] <= 223 or b[o + 3] == 189):
                 AQ.update(a=now, ever=True, n=0, next=0.0)
                 return False
     if AQ["told"] or not AQ["ever"] or now < AQ["next"] or now - AQ["t0"] < 15 or now - (AQ["a"] or AQ["t0"]) < 10:
@@ -337,6 +389,8 @@ def pump():
     ob = 0
     lw = mono()
     kas = None
+    t0p = mono()
+    kq = False
     kag = False
     while True:
         with fql:
@@ -352,7 +406,9 @@ def pump():
             if kas is None:
                 kas = lw
                 hc["ks"] = kas
-                log("output: no video to send for 3s, sending keepalive packets so the stream stays open")
+                kq = mono() - t0p < 15   # the first encoder warming up at tune time: expected, not logged
+                if not kq:
+                    log("output: no video to send for 3s, sending keepalive packets so the stream stays open")
             try:
                 os.write(1, NUL)
                 lw = mono()
@@ -405,7 +461,8 @@ def pump():
             if kas is not None:
                 hc["k"] += lw - kas
                 hc["ks"] = None
-                log("output: video flowing again after %.1fs without video" % (lw - kas))
+                if not kq or lw - kas > 8:
+                    log("output: video flowing again after %.1fs without video" % (lw - kas))
                 kas = None
         except OSError:
             bye()
@@ -419,6 +476,7 @@ def gone():
         return False
 
 def put(b):
+    NB[0] += len(b)
     try:
         ff.stdin.write(b)
         ff.stdin.flush()
@@ -974,6 +1032,8 @@ def writer():
             d = it[1]
             ix = it[5]
             i = it[6]
+            if TRANSCODE and i == 0 and it[7] == 0:
+                aud(d)
             if i < len(ix):
                 en, ca, sn = ix[i]
             else:
