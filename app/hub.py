@@ -108,6 +108,9 @@ _REDACT = [
     (re.compile(r"(https?://[^/\s]+/)(?!(?:dvr|api|devices|providers|internal|stream|output|tms)/)[^/\s?]+/[^/\s?]+/"
                 r"(\d+(?:\.(?:ts|m3u8))?)(?=[\s?'\")]|$)"), r"\1********/********/\2"),
     (re.compile(r"((?:username|user|password|pass|pwd|token)=)[^&\s'\")]+", re.I), r"\1********"),
+    # Signed session tokens inside URL paths (/play/hls/eyJ.../...): they carry the line id and client IP.
+    (re.compile(r"(?<=/)eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]+){0,2}(?=[/?\s\x27\")]|$)"), "********"),
+    (re.compile(r"(?<=/)[A-Za-z0-9_-]{48,}(?:\.[A-Za-z0-9_-]{16,}){0,2}(?=[/?\s\x27\")]|$)"), "********"),
     # CDN segment URLs carry a session token as a short query key (?t=..., &s=..., &e=...).
     (re.compile(r"([?&](?:t|s|e|sig|st|hash|key|auth|session)=)[^&\s'\")]+"), r"\1********"),
 ]
