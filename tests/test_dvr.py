@@ -13,12 +13,13 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from app import channels_dvr as dvr
 from app import config as configmod
 from app import server as servermod
-from app.guide import output
+from app.guide import events, output
 
 
 class FakeDvr:
@@ -304,6 +305,13 @@ class SyncerTests(DvrTestCase):
         self.store.update(new_station)
         self.wait_idle()
         self.assertIn(("PUT", "/dvr/lineups/X-coaxcable"), self.fake.calls())
+
+    def test_new_event_on_a_slot_downloads_guide(self):
+        with mock.patch.object(events, "fingerprint", lambda cfg, lineup_id: [(1, "event", "abc", "2026-10-30")]):
+            self.syncer.on_change(None, None)     # what a provider refresh does
+            self.wait_idle()
+        self.assertIn(("PUT", "/dvr/lineups/X-coaxcable"), self.fake.calls())
+        self.assertEqual(len(self.xmltv_calls), 1)
 
     def test_unrelated_change_does_nothing(self):
         def unrelated(cfg):

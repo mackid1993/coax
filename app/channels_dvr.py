@@ -289,8 +289,14 @@ def _snapshot(cfg, lineup_id, m3u_func):
         text = m3u_func(cfg, lineup_id)
     except Exception as exc:  # noqa: BLE001 - a broken playlist must not stop the syncer
         text = "error: %s" % exc
+    try:
+        from app.guide import events
+        event_entries = events.fingerprint(cfg, lineup_id)
+    except Exception:  # noqa: BLE001 - event entries never stop the syncer
+        log.exception("could not read the event channels of lineup %s", lineup_id)
+        event_entries = []
     return {"m3u": text, "channels": set(members), "guide": lineup.get("guide"), "guide_fields": guide_fields,
-            "base_url": (cfg.get("server") or {}).get("base_url")}
+            "events": event_entries, "base_url": (cfg.get("server") or {}).get("base_url")}
 
 
 def _default_m3u(cfg, lineup_id):
@@ -408,7 +414,8 @@ class Syncer:
                 settings_changed = any(old.get(k) != new[k] for k in ("guide", "base_url"))
                 playlist_changed = force or old.get("m3u") != new["m3u"]
                 guide_changed = (force or settings_changed or bool(new["channels"] - old.get("channels", set()))
-                                 or old.get("guide_fields") != new["guide_fields"])
+                                 or old.get("guide_fields") != new["guide_fields"]
+                                 or old.get("events", []) != new["events"])   # a slot got a new event
                 if not (settings_changed or playlist_changed or guide_changed):
                     return None
                 if settings_changed and lineup.get("dvr"):
