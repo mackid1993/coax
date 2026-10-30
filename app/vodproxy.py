@@ -20,7 +20,9 @@ one-connection line answers 509 and a recording on the line can die. So, per pla
   yet) is retried for a few seconds;
 - a tune or recording that finds every line busy stops the play to take its line (Hub.open).
 
-A viewer who starts another title on the same provider hands the line over to it at once.
+A play is one viewer (client address) playing one title. Viewers that share an address (behind NAT, or a relay)
+each get their own play and line. A viewer who starts another title takes the line of their own idle play (one with
+no request open) when the provider has no free line, so backing out of one movie into another never waits.
 """
 
 import logging
@@ -40,6 +42,7 @@ LINGER = 8.0                 # a play keeps its line this long after its last re
 BURST = 1.0                  # requests closer together than this are a burst of seeks...
 DEBOUNCE = 0.35              # ...and wait this long, so only the newest one connects
 RETRY_FOR = 10.0             # keep retrying a busy provider this long
+TAKEOVER_WAIT = 3.0          # a viewer's new title waits this long for their old title's connection to close
 STOP_WAIT = 2.5              # a tune taking the line waits at most this long for the movie's connection to go
 CLOSE_WAIT = 20.0            # longest wait for an older connection of the play to open or close (slow panels: 5 s)
 TIMEOUT = (5, 30)
@@ -88,7 +91,8 @@ def _hard_close(resp):
 
 
 class Play:
-    """One viewer playing one title from one provider."""
+    """One viewer playing one title from one provider. The title never changes: its size and kept end of file
+    belong to it."""
 
     def __init__(self, plays, client_ip, provider_id, item, name):
         self.plays = plays
@@ -110,18 +114,6 @@ class Play:
         self.content_type = None
         self.source = None             # an M3U title's provider address
         self.sent = 0
-
-    def switch(self, item, name):
-        """The same viewer started another title: the line goes with them."""
-        with self.cond:
-            self.gen += 1
-            if self.upstream is not None:
-                _hard_close(self.upstream)
-            self.item, self.name = item, name
-            self.size = self.tail = self.content_type = self.source = None
-            self.sent = 0
-            if self.hold is not None:
-                self.hold.name = "VOD: " + name
 
     def stop(self):
         """End the play: close its provider connection, wait for it to be gone, then give the line back."""
@@ -146,17 +138,18 @@ class Plays:
     def __init__(self, hub, get_config, title=None, session=None):
         self.hub = hub
         self.get_config = get_config
-        self.title = title or (lambda kind, item_id: None)
+        self.title = title or (lambda kind, item_id, provider_id=None: None)
         self.http = session or requests   # no shared pool: an idle kept-alive connection counts at the panel
         self._lock = threading.Lock()
-        self._plays = {}               # (client ip, provider id) -> Play
+        self._plays = {}               # (client ip, provider id, item) -> Play
         self._janitor = None
 
     # -- bookkeeping ------------------------------------------------------------------------------------------------
     def forget(self, play):
+        key = (play.client_ip, play.provider_id, play.item)
         with self._lock:
-            if self._plays.get((play.client_ip, play.provider_id)) is play:
-                del self._plays[(play.client_ip, play.provider_id)]
+            if self._plays.get(key) is play:
+                del self._plays[key]
 
     def _sweep(self):
         while True:
@@ -169,27 +162,58 @@ class Plays:
 
     def _play_for(self, client_ip, provider, item):
         kind, item_id, _ext = item
-        name = self.title(kind, item_id) or ("%s %s" % (kind, item_id))
+        key = (client_ip, provider["id"], item)
         with self._lock:
             if self._janitor is None:
                 self._janitor = threading.Thread(target=self._sweep, name="vod-janitor", daemon=True)
                 self._janitor.start()
-            play = self._plays.get((client_ip, provider["id"]))
+            play = self._plays.get(key)
             if play is not None and not play.stopped:
-                if play.item != item:
-                    log.info("VOD: %s switched from %s to %s", client_ip, play.name, name)
-                    play.switch(item, name)
                 return play
-            play = Play(self, client_ip, provider["id"], item, name)
-            play.hold = self.hub.vod_hold(provider["id"], "VOD: " + name, play.stop) if self.hub else None
-            if play.hold is None:
-                return None
-            self._plays[(client_ip, provider["id"])] = play
-        log.info("VOD: %s playing %s on %s / %s", client_ip, name, play.hold.provider_name, play.hold.line_name)
+        name = self.title(kind, item_id, provider["id"]) or ("%s %s" % (kind, item_id))
+        play = Play(self, client_ip, provider["id"], item, name)
+        hold = self.hub.vod_hold(provider["id"], "VOD: " + name, play.stop) if self.hub else None
+        if hold is None:
+            # No free line: this viewer's own play of another title gives its line up once it is idle (nothing
+            # open). The player closes the old title's connection as it starts the new one, so wait a moment for it.
+            deadline = time.monotonic() + TAKEOVER_WAIT
+            while hold is None:
+                with self._lock:
+                    mine = [p for (ip, pid, _i), p in self._plays.items()
+                            if ip == client_ip and pid == provider["id"] and not p.stopped]
+                idle = [p for p in mine if p.active == 0]
+                for old in idle:
+                    log.info("VOD: %s moved on from %s to %s", client_ip, old.name, name)
+                    old.stop()
+                    hold = self.hub.vod_hold(provider["id"], "VOD: " + name, play.stop)
+                    if hold is not None:
+                        break
+                if hold is not None or not mine or time.monotonic() > deadline:
+                    break
+                time.sleep(0.1)
+        if hold is None:
+            return None
+        play.hold = hold
+        with self._lock:
+            other = self._plays.get(key)
+            if other is not None and not other.stopped:   # a second request for it got there first
+                self.hub.vod_release(hold)
+                return other
+            self._plays[key] = play
+        log.info("VOD: %s playing %s on %s / %s", client_ip, name, hold.provider_name, hold.line_name)
         return play
 
     # -- the provider -----------------------------------------------------------------------------------------------
     def _url(self, provider, play):
+        try:
+            return self._address(provider, play)
+        except UpstreamError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a bad line rewrite or the like: a clean 502, not a traceback
+            log.warning("VOD: no provider address for %s: %s", play.name, exc)
+            raise UpstreamError(502)
+
+    def _address(self, provider, play):
         kind, item_id, ext = play.item
         line = play.hold.line
         if (provider.get("type") or "xtream").lower() == "m3u":

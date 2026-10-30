@@ -19,6 +19,11 @@ from tests.fixtures.hub.support import channel, config, fake_stream_url, provide
 
 SIZE = 12 * 1024 * 1024
 DATA = random.Random(7).randbytes(SIZE)
+OTHER = random.Random(8).randbytes(SIZE - 300_000)   # title 43: other bytes, another size
+
+
+def data_for(path):
+    return OTHER if path.endswith("/43.mkv") else DATA
 
 
 class FakePanel(ThreadingHTTPServer):
@@ -73,6 +78,8 @@ class PanelHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        data = data_for(self.path)
+        size = len(data)
         try:
             match = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range") or "")
             if match and not match.group(1):
@@ -82,11 +89,11 @@ class PanelHandler(BaseHTTPRequestHandler):
                 return
             if match:
                 start = int(match.group(1))
-                end = min(int(match.group(2)), SIZE - 1) if match.group(2) else SIZE - 1
+                end = min(int(match.group(2)), size - 1) if match.group(2) else size - 1
                 self.send_response(206)
-                self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, SIZE))
+                self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
             else:
-                start, end = 0, SIZE - 1
+                start, end = 0, size - 1
                 self.send_response(200)
             self.send_header("Content-Type", "video/x-matroska")
             self.send_header("Content-Length", str(end - start + 1))
@@ -94,7 +101,7 @@ class PanelHandler(BaseHTTPRequestHandler):
             pos = start
             while pos <= end:
                 n = min(64 * 1024, end - pos + 1)
-                self.wfile.write(DATA[pos:pos + n])
+                self.wfile.write(data[pos:pos + n])
                 pos += n
                 time.sleep(0.002)
         except OSError:
@@ -201,6 +208,43 @@ class ProxyTests(unittest.TestCase):
         conn.close()
         self.assertEqual((status, body), (206, DATA[-1000:]))
         self.assertNotIn(True, [bool(r) and r.startswith("bytes=-") for r in self.panel.requests])
+
+    def test_quick_switch_to_another_title_never_serves_the_old_titles_bytes(self):
+        # 42 starts and reads its ending; the viewer backs out and starts 43 while 42's ending is still coming
+        _s, _b, c42, _ = get(self.port, "/vod/p1/m/42.mkv", "bytes=0-", read=1000)
+        t = threading.Thread(target=lambda: get(self.port, "/vod/p1/m/42.mkv", "bytes=%d-" % (SIZE - 2000)),
+                             daemon=True)
+        t.start()
+        c42.close()
+        status, body, c43, r43 = get(self.port, "/vod/p1/m/43.mkv", "bytes=0-", read=5000)
+        self.assertEqual((status, body), (206, OTHER[:5000]))
+        self.assertTrue(r43.getheader("Content-Range").endswith("/%d" % len(OTHER)))
+        c43.close()
+        status, body, conn, _ = get(self.port, "/vod/p1/m/43.mkv", "bytes=%d-" % (len(OTHER) - 1016))
+        conn.close()
+        self.assertEqual((status, body), (206, OTHER[-1016:]))
+        t.join(5)
+        self.assertEqual(self.panel.max_open, 1)
+
+    def test_two_viewers_behind_one_address_get_their_own_plays(self):
+        self.cfg["providers"][0]["lines"][0]["max_streams"] = 2
+        self.panel.strict = False
+        a = get(self.port, "/vod/p1/m/42.mkv", "bytes=100-", read=1000)
+        b = get(self.port, "/vod/p1/m/43.mkv", "bytes=100-", read=1000)
+        self.assertEqual((a[1], b[1]), (DATA[100:1100], OTHER[100:1100]))
+        self.assertEqual(self.hub.line_status()[0]["used"], 2)
+        a[2].close()
+        b[2].close()
+
+    def test_a_movie_cannot_take_back_the_line_a_tune_is_freeing(self):
+        _s, _b, conn, _ = get(self.port, "/vod/p1/m/7.mp4", "bytes=0-", read=1000)
+        self.assertTrue(self.hub._evict_vod({"p1"}, "Channel 1"))
+        self.assertIsNone(self.hub.vod_hold("p1", "VOD: retry", lambda: None))
+        session = self.hub._open({"id": 1, "uuid": "uuid-1", "name": "Channel 1", "streams": self.cfg["channels"][0]["streams"]},
+                                 [(self.cfg["channels"][0]["streams"][0], self.cfg["providers"][0])], "dvr", "ua")
+        self.assertIsNotNone(session)
+        session.close()
+        conn.close()
 
     def test_busy_answer_after_a_reconnect_is_retried(self):
         self.panel.busy_next = 2
@@ -338,6 +382,30 @@ class EpisodeTests(unittest.TestCase):
         self.assertEqual(out["j"][0]["id"], "j")
 
 
+class ShrinkTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.saved = vodcat.catalog.DATA_DIR
+        vodcat.catalog.DATA_DIR = self.tmp
+
+    def tearDown(self):
+        vodcat.catalog.DATA_DIR = self.saved
+        shutil.rmtree(self.tmp)
+
+    def test_a_short_answer_never_replaces_the_list_until_it_lasts_three_days(self):
+        movies = [{"id": str(i), "name": "M %d" % i, "groups": ["A"]} for i in range(100)]
+        vodcat.save("p1", {"movies": movies, "series": []})
+        with self.assertRaises(vodcat.ProviderError):
+            vodcat.save("p1", {"movies": movies[:30], "series": []})
+        self.assertEqual(len(vodcat.load("p1")["movies"]), 100)
+        groups = vodcat.cache_path("p1", "-groups")
+        data = vodcat._load_json(groups)
+        data["shrink_seen"] = time.time() - vodcat.SHRINK_ACCEPT - 1
+        vodcat.catalog.atomic_write_json(groups, data)
+        vodcat.save("p1", {"movies": movies[:30], "series": []})
+        self.assertEqual(len(vodcat.load("p1")["movies"]), 30)
+
+
 class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -422,6 +490,10 @@ class LibraryTests(unittest.TestCase):
             lib.sync("p2")
             self.assertEqual(lib.state["p2"].get("error"), "")
             self.assertTrue(os.path.isfile(os.path.join(self.imports, "Movies/coax/p2/Up (2009).strm")))
+            for folder in ("Movies/coax", "Movies/coax/p2", "TV/coax/p2/Breaking Bad (2008)/Season 01"):
+                self.assertEqual(os.stat(os.path.join(self.imports, folder)).st_mode & 0o777, 0o777)
+            self.assertEqual(os.stat(os.path.join(self.imports, "Movies/coax/p2/Up (2009).strm")).st_mode & 0o777,
+                             0o666)
             self.assertIn(("PUT", "/dvr/scanner/scan", None), calls)
             names = [b["Name"] for m, p, b in calls if p == "/dvr/collections/content/new"]
             self.assertEqual(names, ["TPS · Action", "TPS · 4K", "TPS · Drama"])
@@ -445,6 +517,13 @@ class LibraryTests(unittest.TestCase):
             self.provider["vod"]["library"] = {"movies": [], "series": []}
             lib.sync("p2")   # and hidden again on command
             self.assertEqual(len([p for m, p, b in calls if p.endswith("/visibility/hidden")]), 5)
+            # one group unpicked: its titles are deleted from the DVR one by one, never a DVR-wide prune
+            calls.clear()
+            self.provider["vod"] = {"movies": ["Action", "4K"], "series": []}
+            lib.sync("p2")
+            dropped = [p for m, p, b in calls if p.endswith("/permanently_delete")]
+            self.assertTrue(dropped)
+            self.assertFalse([p for m, p, b in calls if "prune" in p])
             # picks cleared: files, collections and section go; the user's own file stays
             self.provider["vod"] = {"movies": [], "series": []}
             lib.sync("p2")
@@ -518,6 +597,12 @@ class LibraryTests(unittest.TestCase):
             handle.write("x")
         lib.sync("p2")
         self.assertTrue(os.path.isfile(rel))
+
+    def test_vod_hours(self):
+        self.assertIsNone(vodlib.vod_hours({"refresh_hours": 0}))
+        self.assertEqual(vodlib.vod_hours({"refresh_hours": 1}), 12.0)
+        self.assertEqual(vodlib.vod_hours({"refresh_hours": 24}), 24.0)
+        self.assertEqual(vodlib.vod_hours({}), 24.0)
 
     def test_imports_check(self):
         self.assertEqual(vodlib.imports_ready(self.imports), (True, ""))

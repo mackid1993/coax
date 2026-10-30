@@ -327,7 +327,7 @@ async function vodModal(p) {
         <label class="search" style="flex:1;min-width:220px"><span class="sr-only">Search groups</span>${icon("search")}<input class="input" id="vQ" placeholder="Search groups"></label>
         <button class="btn btn-sm" data-all>Select all</button><button class="btn btn-sm" data-none>Select none</button>
         <span class="badge badge-accent num" id="vCount" style="display:none"></span></div>
-      <div class="row small" style="margin-bottom:12px"><span class="faint">In library:</span><button class="btn btn-sm" data-lib-all title="Every picked group shown">All</button><button class="btn btn-sm" data-lib-none title="Every picked group shown">None</button></div>
+      <div class="row small" style="margin-bottom:12px"><span class="faint">In library:</span><button class="btn btn-sm" data-lib-all title="List every picked group shown in Movies and TV Shows">All</button><button class="btn btn-sm" data-lib-none title="Take every picked group shown out of Movies and TV Shows">None</button></div>
       <div class="group-list" id="vList">${Array.from({ length: 8 }, () => `<div class="group-item"><span class="skel" style="width:18px;height:18px"></span><span class="skel" style="flex:1"></span></div>`).join("")}</div>`,
     foot: `<button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save</button>`,
   });

@@ -11,7 +11,8 @@ Each file holds coax's own address (<Base URL>/vod/<provider>/<m|e>/<id>.<ext>),
 stays out of the DVR, and every play goes through coax, which holds a line slot for it (app/vodproxy.py). The DVR's
 scanner reads the files only; it never opens the address.
 
-After writing, coax asks the DVR to scan (and to prune what it deleted), then keeps one DVR collection per picked
+After writing, coax asks the DVR to scan (and deletes the titles it removed, one by one: never a DVR-wide prune,
+which would also drop the user's own imports on a drive that is offline), then keeps one DVR collection per picked
 group and one Personal Section per provider showing them. By default the titles are set to Hidden, so they stay out
 of the main Movies and TV Shows listings and live in their section; a group can be set to show its titles with the
 user's own library instead (vod.library), and switching it either way changes them on the next sync. The sync runs when the picks change and on the provider's refresh schedule (default daily).
@@ -36,7 +37,7 @@ BATCH_SERIES = 300           # episode lists read before the batch goes to Chann
 BATCH_SECONDS = 600          # ...or after this long, whichever comes first (each batch is one DVR scan)
 CONTINUE_AFTER = 900         # a sync that ran out of time carries on this soon, not at the next refresh
 THROTTLE_WAIT = 3600         # after EPISODE_FAILURES failed calls in a row, the panel rests this long
-SCAN_WAIT = 6 * 3600         # how long to wait for the DVR's scanner before updating collections anyway
+SCAN_WAIT = 1800             # how long to wait for the DVR's scanner before updating collections anyway
 SCAN_POLL = 5
 SECTION_ICON = "film"
 _BAD_CHARS = re.compile(r'[\\/*?"<>|\x00-\x1f]')
@@ -51,9 +52,31 @@ def imports_ready(path=None):
     if not (os.path.isdir(os.path.join(path, "Movies")) or os.path.isdir(os.path.join(path, "TV"))):
         return False, ("The folder mounted at /imports is not Channels DVR's Imports folder (it has no Movies or TV "
                        "folder). Point CHANNELS_DVR_IMPORTS at the Imports folder inside the DVR's storage folder.")
-    if not os.access(path, os.W_OK):
-        return False, "coax cannot write to the Channels DVR Imports folder mounted at /imports."
+    for kind in ("Movies", "TV"):
+        mine = os.path.join(path, kind, SUBDIR)
+        folder = mine if os.path.isdir(mine) else os.path.join(path, kind)
+        if os.path.isdir(folder) and not os.access(folder, os.W_OK | os.X_OK):
+            return False, ("coax cannot write to %s in the Channels DVR Imports folder (uid 1000 needs write access)."
+                           % folder.replace(path, "Imports", 1))
     return True, ""
+
+
+def _makedirs(path):
+    """Create a folder and its missing parents open to everyone (777). coax never changes an owner: the folders and
+    files it makes must stay usable by whatever user Channels DVR and the host's tools run as."""
+    missing = []
+    while path and not os.path.isdir(path):
+        missing.append(path)
+        path = os.path.dirname(path)
+    for folder in reversed(missing):
+        try:
+            os.mkdir(folder)
+        except FileExistsError:
+            continue
+        try:
+            os.chmod(folder, 0o777)
+        except OSError:
+            pass
 
 
 def safe_name(text, limit=150):
@@ -63,6 +86,18 @@ def safe_name(text, limit=150):
     while len(text.encode("utf-8")) > limit:
         text = text[:-1]
     return text.strip(" .") or "Untitled"
+
+
+def vod_hours(provider):
+    """Hours between VOD syncs: the provider's refresh schedule, at least 12 (the movie and series lists are tens of
+    megabytes), None for a provider refreshed by hand (refresh_hours 0)."""
+    try:
+        hours = float(provider.get("refresh_hours", 24))
+    except (TypeError, ValueError):
+        hours = 24.0
+    if hours == 0:
+        return None
+    return max(hours, 12.0) if hours == hours and hours > 0 else 24.0
 
 
 def selected(provider):
@@ -159,6 +194,7 @@ class Library:
         self._stop = threading.Event()
         self._thread = None
         self._titles = {}
+        self._titles_read = set()
         self.running = {}                      # provider id -> what the running sync is doing
         self.state = self._load_state()
 
@@ -179,8 +215,22 @@ class Library:
     def _pstate(self, pid):
         return self.state.setdefault(str(pid), {"collections": {}, "section": None})
 
-    def title(self, kind, item_id):
-        return self._titles.get((kind, str(item_id)))
+    def _titles_path(self, pid):
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(pid)) or "_"
+        return os.path.join(os.path.dirname(self.state_path), "vod-%s-titles.json" % safe)
+
+    def title(self, kind, item_id, provider_id=None):
+        """A title's name for the log and the Status page; after a restart, read once from the last sync's list."""
+        name = self._titles.get((kind, str(item_id)))
+        if name is None and provider_id is not None and provider_id not in self._titles_read:
+            self._titles_read.add(provider_id)
+            from app.providers import vod as vodcat
+            stored = vodcat._load_json(self._titles_path(provider_id)) or {}
+            for key, value in stored.items():
+                k, _sep, i = key.partition(":")
+                self._titles.setdefault((k, i), value)
+            name = self._titles.get((kind, str(item_id)))
+        return name
 
     def status(self, provider_id):
         ok, why = imports_ready(self.imports_dir)
@@ -196,10 +246,21 @@ class Library:
         from app import channels_dvr
         return channels_dvr._call(cfg, method, path, body, timeout=timeout)
 
-    def _scan(self, cfg, prune):
-        """Ask the DVR to import the new files (and drop the deleted ones), then wait for its scanner."""
-        if prune:
-            self._call(cfg, "PUT", "/dvr/scanner/imports/prune")
+    def _drop(self, cfg, pid, deleted):
+        """Delete the titles whose Stream Files coax removed from Channels DVR, one by one (trash, then for good)."""
+        if not deleted:
+            return
+        movie_ids, episodes = self._dvr_ids(cfg, pid)
+        ids = dict(movie_ids)
+        ids.update({rel: fid for rel, (fid, _show) in episodes.items()})
+        gone = set(deleted)
+        for rel, fid in ids.items():
+            if rel in gone and fid:
+                self._call(cfg, "DELETE", "/dvr/files/%s" % fid)
+                self._call(cfg, "PUT", "/dvr/files/%s/permanently_delete" % fid)
+
+    def _scan(self, cfg):
+        """Ask the DVR to import the new files, then wait for its scanner."""
         self._call(cfg, "PUT", "/dvr/scanner/scan")
         deadline = time.monotonic() + SCAN_WAIT
         time.sleep(SCAN_POLL if self._dvr_call is None else 0)
@@ -339,9 +400,9 @@ class Library:
         return out
 
     def _write(self, pid, files):
-        """Make the provider's folders hold exactly these files. Returns (written, deleted)."""
+        """Make the provider's folders hold exactly these files. Returns (count written, paths deleted)."""
         existing = self._existing(pid)
-        written = deleted = 0
+        written, deleted = 0, []
         for rel, content in files.items():
             full = os.path.join(self.imports_dir, *rel.split("/"))
             if rel in existing:
@@ -351,18 +412,21 @@ class Library:
                             continue
                 except OSError:
                     pass
-            os.makedirs(os.path.dirname(full), exist_ok=True)
+            _makedirs(os.path.dirname(full))
             tmp = full + ".tmp"
             with open(tmp, "w", encoding="utf-8") as handle:
                 handle.write(content)
-            os.chmod(tmp, 0o666)
+            try:
+                os.chmod(tmp, 0o666)
+            except OSError:
+                pass
             os.replace(tmp, full)
             written += 1
         for rel, full in existing.items():
             if rel not in files:
                 try:
                     os.unlink(full)
-                    deleted += 1
+                    deleted.append(rel)
                 except OSError as exc:
                     log.warning("VOD: could not remove %s: %s", rel, exc)
         for root in self._roots(pid):
@@ -415,9 +479,10 @@ class Library:
             raise RuntimeError("set coax's Base URL in Settings first: the Stream Files point at it")
         self.running[pid] = "reading the provider's movies and series"
         vod = vodcat.load(pid)
-        hours = provider.get("refresh_hours") or 24
+        hours = vod_hours(provider)
         age = catalog.age_hours(vod) if vod else None
-        if (provider.get("type") or "xtream") == "xtream" and (vod is None or age is None or age >= hours):
+        if (provider.get("type") or "xtream") == "xtream" and \
+                (vod is None or age is None or (hours is not None and age >= hours)):
             vod = vodcat.refresh(provider)
         vod = vod or {}
         wanted = set(series_groups)
@@ -465,14 +530,17 @@ class Library:
                   episodes=sum(1 for r in files if r.startswith("TV/")),
                   shows=len({r.split("/")[3] for r in files if r.startswith("TV/")}))
         log.info("VOD provider %s: %d movies, %d episodes of %d shows (%d written, %d removed)", pid,
-                 st["movies"], st["episodes"], st["shows"], written, deleted)
+                 st["movies"], st["episodes"], st["shows"], written, len(deleted))
+        from app.providers import catalog
+        catalog.atomic_write_json(self._titles_path(pid), {"%s:%s" % key: name for key, name in titles.items()})
         if not ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
             st["dvr_note"] = "Set the Channels DVR URL in Settings so coax can make the collections."
             return
         st.pop("dvr_note", None)
+        self._drop(cfg, pid, deleted)
         if written or deleted or not st.get("collections"):
             self.running[pid] = "waiting for Channels DVR to import them"
-            if not self._scan(cfg, prune=bool(deleted)):
+            if not self._scan(cfg):
                 log.warning("VOD provider %s: Channels DVR is still scanning; collections updated anyway", pid)
         self.running[pid] = "updating the collections"
         self._collections(cfg, provider, members, visible)
@@ -486,9 +554,10 @@ class Library:
         if os.path.isdir(self.imports_dir):
             _written, deleted = self._write(pid, {})
         else:
-            deleted = 0
+            deleted = []
         if st and ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
             try:
+                self._drop(cfg, pid, deleted)
                 existing = {str(c.get("ID")) for c in self._call(cfg, "GET", "/dvr/collections/content") or []}
                 for cid in (st.get("collections") or {}).values():
                     if cid in existing:
@@ -496,12 +565,10 @@ class Library:
                 sections = {str(s.get("ID")) for s in self._call(cfg, "GET", "/dvr/custom_sections") or []}
                 if st.get("section") in sections:
                     self._call(cfg, "DELETE", "/dvr/custom_sections/%s" % st["section"])
-                if deleted:
-                    self._call(cfg, "PUT", "/dvr/scanner/imports/prune")
             except Exception as exc:  # noqa: BLE001
                 log.warning("VOD: could not remove provider %s from Channels DVR: %s", pid, exc)
         if st or deleted:
-            log.info("VOD provider %s removed from Channels DVR (%d Stream Files)", pid, deleted)
+            log.info("VOD provider %s removed from Channels DVR (%d Stream Files)", pid, len(deleted))
         self.state.pop(pid, None)
 
     # -- schedule ---------------------------------------------------------------------------------------------------
@@ -519,7 +586,9 @@ class Library:
             return bool(st)   # picks cleared: clean up once
         if st.get("continue_at") and time.time() >= st["continue_at"]:
             return True   # episode lists still to read
-        hours = provider.get("refresh_hours") or 24
+        hours = vod_hours(provider)
+        if hours is None:
+            return False   # manual: Save and Sync now only
         last = max(st.get("last_sync") or 0, st.get("last_try") or 0)
         return time.time() - last >= hours * 3600
 
@@ -537,6 +606,8 @@ class Library:
             with self._lock:
                 self.remove(pid, cfg)
                 self._save_state()
+            from app.providers import vod as vodcat
+            vodcat.forget(pid)
 
     def start(self):
         def loop():

@@ -573,6 +573,7 @@ class Hub:
         self._bad = {}                  # (provider_id, stream_id) -> [retry after (monotonic), strikes]
         self._released = {}             # (provider_id, line_id) -> monotonic time it was last released
         self.health = None              # app.feedhealth.FeedHealth, set by main
+        self._evicting = {}             # provider id -> monotonic deadline: a tune is taking a movie's line
 
     def _config(self):
         try:
@@ -823,9 +824,14 @@ class Hub:
                        key=lambda sp: (self._blocked(channel_cfg.get("id"), sp),
                                        self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
         session = self._open(channel_cfg, cands, client_ip, user_agent)
-        if session is None and self._evict_vod({p.get("id") for _s, p in cands if p.get("enabled", True)},
-                                               channel_cfg.get("name")):
-            session = self._open(channel_cfg, cands, client_ip, user_agent)
+        pids = {p.get("id") for _s, p in cands if p.get("enabled", True)}
+        if session is None and self._evict_vod(pids, channel_cfg.get("name")):
+            try:
+                session = self._open(channel_cfg, cands, client_ip, user_agent)
+            finally:
+                with self._lock:
+                    for pid in pids:
+                        self._evicting.pop(pid, None)
         if session is None:
             log.warning("[%s] no free line for any stream of this channel", channel_cfg.get("name"))
         return session
@@ -873,6 +879,8 @@ class Hub:
             return None
         for line in self._lines(provider):
             with self._lock:
+                if self._evicting.get(provider_id, 0) > time.monotonic():
+                    return None   # a tune is taking a movie's line here: the movie's retry must not grab it back
                 if self._free_locked(provider, line):
                     hold = VodHold(provider, line, name, stop)
                     self._hold_locked(hold, (hold.provider_id, hold.line_id))
@@ -888,6 +896,9 @@ class Hub:
         with self._lock:
             holds = [h for (pid, _lid), holders in self._slots.items() if pid in provider_ids
                      for h in holders if isinstance(h, VodHold)]
+            if holds:
+                for pid in provider_ids:
+                    self._evicting[pid] = time.monotonic() + 10.0
         for hold in holds:
             log.info("[%s] every line is busy: stopping VOD %s on %s / %s to free its line", for_name, hold.name,
                      hold.provider_name, hold.line_name)

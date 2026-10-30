@@ -26,7 +26,7 @@ from .net import ProviderError
 
 log = logging.getLogger("coax.providers")
 
-EPISODE_PAUSE = 0.25        # seconds between get_series_info calls
+EPISODE_PAUSE = 0.5         # seconds between get_series_info calls (gentle: a sync carries on later anyway)
 EPISODE_FAILURES = 5        # failed calls in a row that end a run (a throttling panel); the next sync carries on
 
 _locks_guard = threading.Lock()
@@ -209,18 +209,43 @@ def summary(provider_id):
     return data
 
 
+SHRINK_LIMIT = 0.5          # a new list under half the old one is a panel hiccup, not the provider's library...
+SHRINK_ACCEPT = 3 * 86400   # ...unless the provider keeps answering that way for three days
+
+
 def save(provider_id, vod):
-    """Write a VOD catalog and its summary, unless it is empty and the cached one is not (a panel hiccup)."""
-    if not vod.get("movies") and not vod.get("series"):
-        previous = summary(provider_id) or {}
-        if any(g.get("count") for g in (previous.get("movies") or []) + (previous.get("series") or [])):
-            raise ProviderError("provider returned no movies or series; keeping the previous list")
+    """Write a VOD catalog and its summary, unless it lost more than half its titles (a panel hiccup: a short
+    answer would otherwise delete Stream Files, and with them Channels DVR's watch state)."""
+    previous = summary(provider_id) or {}
+    for kind in ("movies", "series"):
+        before = sum(g.get("count") or 0 for g in previous.get(kind) or [])
+        after = len(vod.get(kind) or [])
+        if before and after < before * SHRINK_LIMIT:
+            first = previous.get("shrink_seen") or time.time()
+            if time.time() - first < SHRINK_ACCEPT:   # still short three days on: the provider really cut it
+                catalog.atomic_write_json(cache_path(provider_id, "-groups"), dict(previous, shrink_seen=first))
+                raise ProviderError("provider returned %d %s, under half of the %d before; keeping the previous "
+                                    "list" % (after, kind, before))
     data = {"fetched_at": catalog.now_iso()}
     data.update(vod)
     catalog.atomic_write_json(cache_path(provider_id), data)
     catalog.atomic_write_json(cache_path(provider_id, "-groups"),
                               dict(group_counts(data), fetched_at=data["fetched_at"]))
+    urls = {"m:" + str(m["id"]): m["url"] for m in data.get("movies") or [] if m.get("url")}
+    urls.update({"e:" + str(e["id"]): e["url"] for eps in (data.get("episodes") or {}).values() for e in eps
+                 if e.get("url")})
+    if urls:   # M3U: a play finds its provider address without reading the whole list
+        catalog.atomic_write_json(cache_path(provider_id, "-urls"), urls)
     return data
+
+
+def forget(provider_id):
+    """Remove a deleted provider's VOD cache files."""
+    for suffix in ("", "-groups", "-episodes", "-urls", "-titles"):
+        try:
+            os.unlink(cache_path(provider_id, suffix))
+        except OSError:
+            pass
 
 
 def refresh(provider):
@@ -326,6 +351,10 @@ def episodes_for(provider, series, deadline=None, progress=None, fetch=True, max
 
 def find(provider_id, kind, item_id):
     """The cached movie or episode with this id (M3U addresses live there), or None."""
+    urls = _load_json(cache_path(provider_id, "-urls"))
+    if isinstance(urls, dict):
+        url = urls.get(("m:" if kind == "movie" else "e:") + str(item_id))
+        return {"id": str(item_id), "url": url} if url else None
     vod = load(provider_id) or {}
     item_id = str(item_id)
     if kind == "movie":

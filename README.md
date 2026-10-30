@@ -981,6 +981,9 @@ you stopped. They never appear in the guide.
    folder inside the folder where Channels DVR keeps its recordings (on Unraid, for example,
    `/mnt/user/TV/DVR/Imports`), then run `docker compose up -d`. If Channels DVR runs on another machine, share
    that folder over the network and mount it on the coax machine first.
+   coax needs to be able to write in `Imports/Movies` and `Imports/TV` (Unraid's usual shares allow it). It never
+   changes an owner: the folders and files it makes are open to every user (folders 777, files 666), so whatever
+   user Channels DVR or your other tools run as can still manage them.
 2. Set the *Base URL* and the *Channels DVR URL* in coax Settings (they are needed for live TV anyway).
 3. On the **Providers** page, press **On demand** on a provider and tick the movie and series groups you want.
 
