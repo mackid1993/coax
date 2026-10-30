@@ -599,6 +599,11 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    - *M3U*: the playlist URL, and optionally an XMLTV URL.
 
    Press *Test connection*.
+
+   The switch on a provider's card turns it off without deleting it: coax stops refreshing it, tuning it,
+   downloading its guide and suggesting its streams as backups. A channel with a stream on another provider
+   plays from that one; a channel whose streams are all on the switched-off provider leaves the lineups until
+   you switch it back on. A stream already playing from it keeps playing until the next tune.
 3. **Lines.** Add one line per login you have with that provider and set *max streams* to what your plan
    allows (0 means unlimited, for M3U sources without a limit). If you have three logins on one service, add
    three lines; coax spreads tunes across them. Channel list and guide downloads use a line nobody is watching
@@ -628,7 +633,8 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    station clears the channel's XMLTV id, and picking an XMLTV id clears its station. Auto-match works the
    same way: a matched station replaces the XMLTV id.
 7. **Lineups.** A default lineup holds all channels. Add more lineups if you want separate sources in the
-   DVR (for example kids or sports).
+   DVR (for example kids or sports). The switch on a lineup's card turns it off: its playlist is served empty,
+   so Channels DVR drops its channels, and they come back with the same numbers when you switch it on.
 8. **Add each lineup to Channels DVR.** On the *Lineups* page, press **Add to Channels DVR** on a lineup and
    pick:
    - **Guide data**: Gracenote, XMLTV, or Gracenote with XMLTV as the fallback.

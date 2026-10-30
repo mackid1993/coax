@@ -51,12 +51,12 @@ scripts/make_logo.py brand asset generator
 
 `/data/config.json` (mode 0600, holds passwords) is the only source of truth for settings. Keys: `server`
 (port, base_url), `channels_dvr.url`, `transcode` (`off` or a preset like `1080p60`), `providers` (each with
-`lines`, `groups`, `format` hls|ts, `max_streams`), `channels` (id, uuid, number, name, group, logo, enabled,
+`lines`, `groups`, `format` hls|ts, `max_streams`, `enabled`), `channels` (id, uuid, number, name, group, logo, enabled,
 `streams` = ordered list of `{provider, stream_id}`, optionally `"disabled": true`, `guide` =
 mode gracenote|xmltv|none, station_id, xmltv_id, ...; one source only: `config.one_guide` keeps the station and
 drops the XMLTV id beside it, on every load and save; new channels start as gracenote with the provider tvg-id
 as an Auto-match hint; a stored "both" in XMLTV-only lineups becomes xmltv), `lineups`
-(id, name, guide source, channel ids, sort, start_number, DVR options), `xmltv_sources`, `gracenote.regions`,
+(id, name, guide source, channel ids, sort, start_number, enabled, DVR options), `xmltv_sources`, `gracenote.regions`,
 `backups`, `timezone`, `autosave_minutes` (unused since the held suggestions replaced autosave),
 `next_provider_id` (provider ids are never reused), and per channel `number_stream` (the stream whose provider
 number orders a provider-sorted lineup; it stays while that stream is on the channel). Held suggestions are

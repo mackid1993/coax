@@ -366,7 +366,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **The owner's lineup:** 247 channels, 207 Gracenote stations; Gracenote region US 10954. Bravo: main `45446`,
   backups `174571`, `2151823` (11 to 12 s sound ahead). Comedy Central HE-AAC backup `2151800` is out of sync at
   the provider and disabled. Real stream ids never go in the README.
-- **Tests:** 333 after 1.0.6-7, about 45 s.
+- **Tests:** 338 after 1.0.6-8, about 45 s.
 
 ---
 
@@ -444,6 +444,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   from identity keys only, Xtream empty categories refused only over a catalog with named groups, A to Z key
   matching the browser's ICU order, verified against Node on the owner's 208 names). Deploying it renumbers 15
   channels of the owner's A to Z Trex lineup in Channels DVR, to match the Channels page.
+- **1.0.6-8** (Oct 29) on/off switches on provider and lineup cards. A provider switched off is not refreshed,
+  tuned, guide-downloaded or offered as a backup; channels whose every stream is on it leave the playlists (a
+  playing stream keeps going until the next tune). A lineup switched off serves an empty playlist, so Channels
+  DVR drops its channels; they come back with the same numbers.
 
 ---
 
