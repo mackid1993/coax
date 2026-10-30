@@ -322,6 +322,7 @@ class TranscodeAudioTest(unittest.TestCase):
             self.assertIn('"-c:a", ac, "-b:a", "640k" if ac == "ac3" else "192k", "-ac", str(an), "-ar", "48000"', src, name)
             self.assertIn('"-filter_complex", fc, "-map", "0:v:0?", "-map", "[ao]"', src, name)
             self.assertIn("surround=chl_out=5.1", src, name)   # stereo upmixed when the output is 5.1
+            self.assertIn('b += ["-drc_scale:a", "0"]', src, name)   # Dolby at its own levels, no DRC
             self.assertIn('",asetpts=PTS*%.4f,atempo=%.6f" % (SPA, 1 / SPA) if SPA != 1.0', src, name)
 
     def test_tsloop_reconnect_quiet_time_is_a_number(self):

@@ -260,6 +260,10 @@ def ffcmd():
     b = [FF, "-hide_banner", "-loglevel", "error", "-dts_delta_threshold", "86400", "-fflags", "+discardcorrupt", "-probesize", "1000000", "-analyzeduration", "1000000"] + (["-probesize", "5000000", "-analyzeduration", "3000000"] if TRANSCODE else [])
     if not TRANSCODE:
         return b + ["-i", "pipe:0", "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-copyts"] + (["-output_ts_offset", "%.3f" % off] if off else []) + ["-f", "mpegts", "pipe:1"]
+    # Decode Dolby at the provider's own levels: ffmpeg applies the stream's dynamic range compression by
+    # default (drc_scale 1), a gain that rides the program up and down by several dB, heard as the sound going
+    # quiet and coming back. A receiver playing the provider's Dolby directly does not do that.
+    b += ["-drc_scale:a", "0"]
     h = hwpick()
     fr = frs(TC_FPS)
     g = str(int(round(2 * TC_FPS)))

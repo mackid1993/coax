@@ -408,7 +408,7 @@ class Helper:
         self.t_in = self.t_out = self.mono()
         try:
             self.p = subprocess.Popen(
-                [ff, "-hide_banner", "-loglevel", "error", "-probesize", "2048", "-analyzeduration", "0",
+                [ff, "-hide_banner", "-loglevel", "error", "-probesize", "2048", "-analyzeduration", "0", "-drc_scale:a", "0",
                  "-f", HELPER_FMT[fam], "-i", "pipe:0",
                  "-af", "aresample=48000,aformat=sample_rates=48000:channel_layouts=5.1",
                  "-strict", "-2", "-c:a", "s302m", "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
