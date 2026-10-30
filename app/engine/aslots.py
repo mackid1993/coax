@@ -543,6 +543,7 @@ class Feeder:
         self.helper = None
         self.said_keys = set()
         self.resting = {}           # family -> when its helper was given up having decoded nothing
+        self.duds = {}              # family -> helpers in a row that neither decoded nor ended when finished
         self.rest = b""             # a packet split across two chunks
         self.bypass = False         # not MPEG-TS (fMP4 HLS): passed through, the encoder maps the audio itself
         self.built_bypass = None    # what the running encoder was built for
@@ -920,9 +921,16 @@ class Feeder:
         t = h.mono()
         while not h.done and h.mono() - t < 1.0:
             time.sleep(0.002)
-        if not h.done and not h.got:
-            self.resting[h.fam] = time.monotonic()   # it neither decoded nor ended: never wait on this format again
         out = self._helper_out()
+        if h.got:
+            self.duds.pop(h.fam, None)
+        elif not h.done:
+            # It neither decoded nor ended. Twice in a row is a hung decoder, not one slow to start: the format
+            # rests as silence instead of holding the writer 1 s at every new helper.
+            self.duds[h.fam] = self.duds.get(h.fam, 0) + 1
+            if self.duds[h.fam] >= 2:
+                self.resting[h.fam] = time.monotonic()
+                self.duds.pop(h.fam)
         if self.helper is h:
             h.kill()
             self.helper = None
