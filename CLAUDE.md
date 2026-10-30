@@ -497,6 +497,9 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **1.0.7-8** (Oct 30) the stereo upmix (`surround`) holds back 2048 samples: trimmed (`atrim=start_sample=2048`,
   window and overlap named), so ads are no longer 43 ms late with a jump at each 5.1/stereo switch. Sync measured
   back on a direct transcode's numbers (AAC -12 ms, AC-3 +5 ms, +0 ms after a switch).
+- **1.0.7-9** (Oct 30) the upmix no longer generates an LFE channel (`lfe=0`): at about 29 dB down plus the
+  receiver's +10 dB LFE gain it drove the owner's sub hot on ads (heard as clipping). Nothing clipped digitally
+  (upmix peaks 3 dB under the source; loudness about 2 dB under the stereo).
 
 ---
 
