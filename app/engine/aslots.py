@@ -285,6 +285,8 @@ def describe(desc):
     while k + 2 <= len(desc):
         tag, n = desc[k], desc[k + 1]
         b = desc[k + 2:k + 2 + n]
+        if len(b) < n:
+            break                                        # a descriptor cut short (a damaged table): the rest is unread
         if tag == 0x0A and n >= 4:                       # ISO 639 language: code + audio_type
             lang = lang or b[:3].decode("latin-1")
             if b[3] in (2, 3):

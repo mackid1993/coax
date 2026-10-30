@@ -90,6 +90,15 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual([aslots.canon(c) for c in ("es", "SPA", "fre", "ger", "uz", "fil", "und", "qab", "", "xx")],
                          ["spa", "spa", "fra", "deu", "uzb", "tgl", "", "", "", ""])
 
+    def test_a_descriptor_cut_short_is_ignored(self):
+        self.assertEqual(aslots.describe(bytes([0x0A, 4]) + b"eng"), ("", True))
+        for tag in (0x7F, 0x6A, 0x7A, 0x81):
+            self.assertEqual(aslots.describe(bytes([tag, 5, 6])), ("", True))
+        f = aslots.Feeder("")
+        f.psi()
+        f.feed(program([(0x81, 0x102, bytes([0x0A, 4]) + b"eng")]))   # a damaged PMT never stops the feeder
+        self.assertEqual(f.fam, {0x102: "ac3"})
+
     def test_extra_tracks(self):
         self.assertEqual(aslots.describe(lang("eng")), ("eng", True))
         self.assertEqual(aslots.describe(lang("eng", 3)), ("eng", False))          # audio description
