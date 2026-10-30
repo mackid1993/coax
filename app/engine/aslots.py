@@ -24,6 +24,7 @@ audio simply arrives in another input. No restart, no filter rebuild, no change 
 import base64
 import json
 import os
+import time
 
 import aframes
 
@@ -181,6 +182,7 @@ LAG = 45000            # silence on the video clock trails the picture by 0.5 s
 GAP = 90000            # no frame from the playing track for 1 s of video: every input gets silence
 JUMP = 90000 * 10      # a clock jump (provider restart, wrap): an input's silence restarts there
 MAXPES = 60000
+HELPER_REST = 30.0     # a format whose helper decoded nothing plays as silence this long before another try
 HELPER_WAIT = 2.0      # a helper that was given audio but sent nothing back for 2 s is given up (silence instead)
 
 
@@ -410,7 +412,7 @@ class Helper:
             self.p = subprocess.Popen(
                 [ff, "-hide_banner", "-loglevel", "error", "-probesize", "2048", "-analyzeduration", "0", "-drc_scale:a", "0",
                  "-f", HELPER_FMT[fam], "-i", "pipe:0",
-                 "-af", "aresample=48000,aformat=sample_rates=48000:channel_layouts=5.1",
+                 "-af", "aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=5.1",
                  "-strict", "-2", "-c:a", "s302m", "-muxdelay", "0", "-muxpreload", "0", "-flush_packets", "1",
                  "-f", "mpegts", "pipe:1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL)
@@ -473,12 +475,14 @@ class Helper:
     def wait(self):
         """Hold the writer (a few milliseconds; at most 0.3 s, 1 s while the helper starts) until the helper has
         decoded about all it was given, so its PCM goes into the stream where it belongs."""
-        if self.p is None or self.done:
-            return
+        if self.p is None or self.done or (not self.got and getattr(self, "waited", False)):
+            return                       # a helper that sent nothing in its first second is not waited on again
         t = self.mono()
         cap = 0.3 if self.got else 1.0
-        while self.got * 1.875 + 13500 < getattr(self, "nf", 0.0) and self.mono() - t < cap and not self.done:
-            import time
+        while self.got * 1.875 + 13500 < getattr(self, "nf", 0.0) and not self.done:
+            if self.mono() - t >= cap:
+                self.waited = not self.got
+                break
             time.sleep(0.002)
 
     def stuck(self):
@@ -535,6 +539,7 @@ class Feeder:
         self.active = CORE          # the inputs the running encoder has
         self.helper = None
         self.said_keys = set()
+        self.resting = {}           # family -> when its helper was given up having decoded nothing
         self.rest = b""             # a packet split across two chunks
         self.bypass = False         # not MPEG-TS (fMP4 HLS): passed through, the encoder maps the audio itself
         self.built_bypass = None    # what the running encoder was built for
@@ -867,7 +872,13 @@ class Feeder:
         return out
 
     def _to_helper(self, fam, frame, pts, dur):
-        """A frame of a format with no open input: decode it to PCM in a helper."""
+        """A frame of a format with no open input: decode it to PCM in a helper. A format whose helper sent
+        nothing back plays as silence for a while (HELPER_REST) instead of starting a new helper on every frame."""
+        rest = self.resting.get(fam)
+        if rest is not None and time.monotonic() - rest < HELPER_REST:
+            self._end_helper(now=True)
+            upto = (pts + int(dur)) % WRAP
+            return self._fill(PCM, upto) + self._fill_all(upto, but=PCM)
         if self.helper and (self.helper.fam != fam or self.helper.done or not self.helper.write(frame, pts)):
             self._end_helper()
             self.helper = None
@@ -875,9 +886,10 @@ class Feeder:
             self.helper = Helper(self.ff, fam, pts, self.log)
             if not self.helper.write(frame, pts):
                 self.helper = None
-                return
+                return b""
         self.helper.advance(dur)
         self.aclk, self.vadv = pts, 0
+        return b""
 
     def _finish_helper(self):
         """The helper's input ends: wait (at most 1 s) for the rest of its PCM and send it, in order, before the
@@ -913,6 +925,8 @@ class Feeder:
         if h.done and not h.out or dead:
             if dead and not h.done:
                 self.log("audio: the decoder for %s stopped answering; filling with silence" % h.fam)
+            if not h.got:
+                self.resting[h.fam] = time.monotonic()   # it never decoded anything: let it rest
             h.kill()
             self.helper = None
         return b"".join(out)
@@ -1003,7 +1017,7 @@ class Feeder:
             if s == PCM:
                 if self.grp:
                     out.append(self._flush())
-                self._to_helper(fam, data, pts, dur)
+                out.append(self._to_helper(fam, data, pts, dur))
                 i += size_all
                 continue
             if self.helper:
@@ -1026,7 +1040,8 @@ class Feeder:
             self.grp[3] += dur
             i += size_all
         del b[:i]
-        self.marks = [(o - i, t) for o, t in self.marks]
+        marks = [(o - i, t) for o, t in self.marks]
+        self.marks = [m for m in marks if m[0] < 0][-1:] + [m for m in marks if m[0] >= 0]
         if len(b) > MAXPES * 4:                # never a frame in sight: start over
             self._drop()
         return b"".join(out)
@@ -1175,6 +1190,8 @@ class Feeder:
                         # No audio playing (none on this stream, or the track stopped): silence on every input,
                         # moving with the picture, so the mix and the picture never wait for it.
                         out.append(self._flush())   # audio cut in this chunk goes out first, never behind silence
+                        if self.helper and self.aclk is not None:
+                            out.append(self._finish_helper())   # its last PCM, then the PCM input moves on too
                         out.append(self._fill_all((self.now() - LAG) % WRAP))
                         if self.aclk is not None and (self.said is None or abs(dif(v, self.said)) > 45000):
                             self.said = v
