@@ -361,7 +361,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **Smart Standby:** placeholder blocks at once; `dead` blocks on the 3rd confirmed takeover within 6 h;
   `frozen`/`novideo` rank only; blocks 12 h / 24 h / 3 days within a week; proven = 10 clean minutes.
 - **ffmpeg (1.0.6):** input `-dts_delta_threshold 86400 -fflags +discardcorrupt -probesize 1000000
-  -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s); passthrough `-map 0:v? -map 0:a? -c copy
+  -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s), transcode `-drc_scale:a 0` (1.0.7-11); passthrough `-map 0:v? -map 0:a? -c copy
   -copyts`; transcode `-i pipe:0 -map 0:v:0? -map 0:i:<best audio PID>?`, audio
   `aresample=async=1:min_hard_comp=0.1`, 48 kHz, AC-3 5.1 640k with the Dolby setting, else AAC stereo 192k, fixed per DVR connection (1.0.7-4); output `-output_ts_offset ... -f mpegts`.
   Presets `1080p60` (6M), `1080p30`/`720p60` (4.5M), `720p30` (3M), plus 50 Hz variants. Jellyfin ffmpeg 8.1.3.
@@ -506,6 +506,10 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   its tail was sent after the next audio. Paced like the engine, rare formats (AC-3 3.0, 44.1 kHz) and a six-codec
   chain now play with no gaps and no restarts; an unpaced burst at the switch can still leave about 0.3 s. Also: an
   E-AC-3 parser crash on short buffers, ID3 in encoder planning, and the From provider line follows the audio.
+- **1.0.7-11** (Oct 30) Dolby decoded at the provider's own levels (`-drc_scale:a 0`, engines and the PCM helper).
+  ffmpeg's AC-3/E-AC-3 decoder applies the stream's dynamic range compression by default; on real Dolby audio it moved
+  the level between +2 and -5 dB over 75 s, heard by the owner as shows going quiet and coming back (ads, already
+  compressed, barely moved). A receiver decoding the provider's Dolby directly does not do that.
 
 ---
 
