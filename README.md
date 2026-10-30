@@ -1002,7 +1002,8 @@ event slots this matched about two in three ESPN+ and Disney+ games. Events that
 country meet, a horse race, a golf round) keep the airing their name gives.
 
 **Games no guide or scoreboard lists** (an out-of-market game only the provider carries) are read from the name
-alone, when it has a date, a time and a time zone. A league channel shows as *NHL Hockey* with the matchup as
+alone, when it has a date, a time and a time zone. Airings from a name or from ESPN start 15 minutes before the
+listed time, so a recording catches the pregame and an early start (a Gracenote listing keeps its own times). A league channel shows as *NHL Hockey* with the matchup as
 the episode, like Gracenote shows it; any other event is titled with its own name. The airing runs for the
 league's usual game length (from 2 hours for MLS to 3 hours 45 minutes for college football; 3 hours for any
 other event). When both teams are ones Gracenote has named in your guide's games, the airing carries their

@@ -52,6 +52,7 @@ import zoneinfo
 log = logging.getLogger("coax.guide.events")
 
 GENERIC_HOURS = 3.0          # an event of no known league
+START_PAD = datetime.timedelta(minutes=15)   # a game read from a name or ESPN starts this early (pregame, early starts)
 FILLER_HOURS = 24            # a block with nothing on covers this much from the hour it was built in
 FAR_DAYS = 30                # a date further than this from today is a sentinel ("2098 12 31"), not an event
 
@@ -815,7 +816,7 @@ def entries(config, lineup_id, now=None, covered=None, listed=(), guide=None):
         start, stop = airing["start"], airing["stop"]
         if start > hour:
             programs.append(_program(cid, hour, start, "Up next: " + airing["name"],
-                                     "Starts " + start.astimezone(zone).strftime("%a %b %-d, %-I:%M %p"), logo))
+                                     "Starts " + airing["kickoff"].astimezone(zone).strftime("%a %b %-d, %-I:%M %p"), logo))
         elem = _program(cid, start, stop, airing["title"], logo=airing["image"] or logo)
         if airing["title"] != airing["name"]:
             _text(elem, "sub-title", airing["name"], lang="en")
@@ -823,9 +824,10 @@ def entries(config, lineup_id, now=None, covered=None, listed=(), guide=None):
         for cat in airing["categories"]:
             _text(elem, "category", cat, lang="en")
         _text(elem, "episode-num", "episode/" + airing["key"], system="coax")
-        _text(elem, "date", start.astimezone(zone).strftime("%Y%m%d"))
+        _text(elem, "date", airing["kickoff"].astimezone(zone).strftime("%Y%m%d"))
         if airing["live"]:
             _text(elem, "live", None)
+        _text(_text(elem, "video", None), "quality", "HDTV")
         if airing["new"]:
             _text(elem, "new", None)
         for tid in airing["teams"]:
@@ -849,7 +851,8 @@ def _airing(p, game, guide, zone):
                                                               p["notes"])
         cats = list(dict.fromkeys(game["genres"] + game["categories"] + list(CATEGORIES)))
         return {"title": game["title"] or name, "name": name, "desc": (game["summary"] or name) + notes,
-                "image": game["image"] or guide.espn.logo(p["league"], p), "start": game["start"],
+                "image": game["image"] or guide.espn.logo(p["league"], p), "kickoff": game["start"],
+                "start": game["start"],
                 "stop": game["stop"], "categories": cats,
                 "live": game["live"], "new": game["new"], "teams": [], "key": key}
     if p["kind"] != "event":
@@ -859,20 +862,20 @@ def _airing(p, game, guide, zone):
         # A game only a streaming service carries, as ESPN's scoreboard lists it.
         desc = (espn["name"] + (". At " + espn["place"] if espn["place"] else "")) + notes
         return {"title": espn["league"] or espn["name"], "name": espn["name"], "desc": desc, "image": espn["logo"],
-                "start": espn["start"], "stop": espn["start"] + datetime.timedelta(hours=GENERIC_HOURS),
+                "kickoff": espn["start"], "start": espn["start"] - START_PAD, "stop": espn["start"] + datetime.timedelta(hours=GENERIC_HOURS),
                 "categories": [espn["genre"]] + list(CATEGORIES), "live": True, "new": True, "teams": [],
                 "key": p["key"]}
     title, genre, hours = LEAGUES.get(p["league"], (p["event"], "", GENERIC_HOURS))
     # A game only the provider carries: its team ids let a team pass record it.
     return {"title": title, "name": p["event"], "desc": p["event"] + notes,
-            "image": guide.espn.logo(p["league"], p), "start": p["start"],
+            "image": guide.espn.logo(p["league"], p), "kickoff": p["start"], "start": p["start"] - START_PAD,
             "stop": p["start"] + datetime.timedelta(hours=hours),
             "categories": ([genre] if genre else []) + list(CATEGORIES), "live": True, "new": True,
             "teams": guide.team_ids(p), "key": p["key"]}
 
 
 # Child order of a program element in the XMLTV DTD, which strict readers check.
-_ORDER = ("title", "sub-title", "desc", "date", "category", "icon", "episode-num", "new", "live", "team-id")
+_ORDER = ("title", "sub-title", "desc", "date", "category", "icon", "episode-num", "video", "new", "live", "team-id")
 
 
 def _order(elem):

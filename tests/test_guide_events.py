@@ -235,15 +235,17 @@ class EntriesTests(unittest.TestCase):
         self.assertEqual([p.findtext("title") for p in one],
                          ["Up next: New Jersey Devils vs. Vegas Golden Knights", "NHL Hockey", "No event scheduled"])
         airing = one[1]
-        self.assertEqual((airing.get("start"), airing.get("stop")), ("20261030220000 +0000", "20261031010000 +0000"))
+        self.assertEqual((airing.get("start"), airing.get("stop")), ("20261030214500 +0000", "20261031010000 +0000"))
         self.assertEqual(airing.findtext("sub-title"), "New Jersey Devils vs. Vegas Golden Knights")
+        self.assertEqual(one[0].findtext("desc"), "Starts Fri Oct 30, 6:00 PM")     # the game's time, not the padded start
+        self.assertEqual(airing.findtext("video/quality"), "HDTV")
         self.assertEqual([c.text for c in airing.findall("category")], ["Hockey", "Sports event", "Sports"])
         self.assertTrue(airing.findtext("episode-num").startswith("episode/"))
         self.assertIsNotNone(airing.find("live"))
         self.assertIsNotNone(airing.find("new"))
         self.assertEqual([k.tag for k in airing],
                          ["title", "sub-title", "desc", "date", "category", "category", "category", "icon",
-                          "episode-num", "new", "live"])
+                          "episode-num", "video", "new", "live"])
         # The second feed of the same game has the same episode id: Channels DVR records it once.
         two = [p for c, p in progs if c == "coax-2"][1]
         self.assertEqual(two.findtext("episode-num"), airing.findtext("episode-num"))

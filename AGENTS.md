@@ -337,7 +337,9 @@ day in Eastern time, once per day per rebuild, only for starts from 6 h ago to 3
 HTTP error is skipped, ESPN unreachable or `LOOKUP_SECONDS` (60 s, also the cap on the Channels DVR reads) spent
 stops the lookups for the rebuild): same two teams
 within 2 h on exactly one scoreboard; it takes ESPN's league name as title, the matchup, the venue and the home
-logo, and keeps coax's own `episode/` id. No series-id is ever written (a league series id on slot games could make an existing
+logo, and keeps coax's own `episode/` id. Airings from a name or ESPN start `START_PAD` (15 min) before the listed time
+(Gracenote's keep their own); every airing carries `<video><quality>HDTV</quality></video>`. No series-id is ever
+written (a league series id on slot games could make an existing
 pass record every one of them).
 
 ## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)
