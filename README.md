@@ -53,6 +53,7 @@ Channel names, providers and logos below are made up for the demo.
 - [How playback stays smooth](#how-playback-stays-smooth)
 - [HLS or MPEG-TS](#hls-or-mpeg-ts)
 - [Recordings](#recordings)
+- [Video on demand](#video-on-demand)
 - [GPU transcoding](#gpu-transcoding)
 - [Updating](#updating)
 - [Data folder](#data-folder)
@@ -83,6 +84,9 @@ Channel names, providers and logos below are made up for the demo.
   **XMLTV** from your provider.
 - **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
   (VAAPI), NVIDIA (NVENC), or the CPU.
+- **Video on demand**: your providers' movies and series in Channels DVR's own library (Movies and TV Shows),
+  searchable, with a collection for each group you pick. They play exactly as the provider sends them, through
+  coax and its VPN. See [Video on demand](#video-on-demand).
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
   channel lists all its streams, with **Switch** to move to another one now, **Disable** to stop using one, and
@@ -120,6 +124,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
       - ${HOST_DIR:-.}/data:/data # Everything coax keeps (settings, backups, caches) goes in a data folder inside HOST_DIR. Created on first start; coax fixes its ownership itself
+      - ${CHANNELS_DVR_IMPORTS:-/dev/null}:/imports # Video on demand only. The Imports folder inside Channels DVR's storage folder (Unraid example: /mnt/user/TV/DVR/Imports). The default /dev/null leaves video on demand off
     restart: unless-stopped
 ```
 
@@ -205,6 +210,17 @@ GPU_DEVICE=
 # Do not set both: Intel/AMD uses GPU_DEVICE above, NVIDIA uses this one.
 # Default: runc
 DOCKER_RUNTIME=
+
+
+# ----- CHANNELS_DVR_IMPORTS (video on demand) --------------------------------------------------------
+# Only for bringing your providers' movies and series into Channels DVR (see "Video on demand").
+# The Imports folder inside the folder where Channels DVR keeps its recordings. Examples:
+#   Unraid:    CHANNELS_DVR_IMPORTS=/mnt/user/TV/DVR/Imports
+#   Linux:     CHANNELS_DVR_IMPORTS=/var/lib/channels-dvr/Imports
+# Channels DVR on another machine: share that folder over the network and mount it on this machine first.
+# Empty means /dev/null, a harmless placeholder that leaves video on demand off.
+# Default: /dev/null
+CHANNELS_DVR_IMPORTS=
 ```
 
 </details>
@@ -217,6 +233,7 @@ DOCKER_RUNTIME=
 | `HOST_DIR` | the compose folder | The folder for coax on the host, without `/data` (for example `/opt/coax`, `/mnt/user/appdata/coax` on Unraid, `/volume1/docker/coax` on Synology). coax keeps everything in a `data` folder inside it. |
 | `TZ` | `Etc/UTC` | Your timezone, for log timestamps and the daily backup. |
 | `GPU_DEVICE`, `DOCKER_RUNTIME` | `/dev/null`, `runc` | GPU transcoding. See [GPU transcoding](#gpu-transcoding). |
+| `CHANNELS_DVR_IMPORTS` | `/dev/null` (off) | Channels DVR's Imports folder, for your providers' movies and series. See [Video on demand](#video-on-demand). |
 
 Open `http://<this-host>:7780` and continue with [First run](#first-run).
 
@@ -302,6 +319,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-compute,video,utility} # NVIDIA only. Leave at the default
     volumes:
       - ${HOST_DIR:-.}/data:/data # Everything coax keeps (settings, backups, caches) goes in a data folder inside HOST_DIR. Created on first start; coax fixes its ownership itself
+      - ${CHANNELS_DVR_IMPORTS:-/dev/null}:/imports # Video on demand only. The Imports folder inside Channels DVR's storage folder (Unraid example: /mnt/user/TV/DVR/Imports). The default /dev/null leaves video on demand off
     restart: unless-stopped
 ```
 
@@ -397,6 +415,17 @@ GPU_DEVICE=
 # Do not set both: Intel/AMD uses GPU_DEVICE above, NVIDIA uses this one.
 # Default: runc
 DOCKER_RUNTIME=
+
+
+# ----- CHANNELS_DVR_IMPORTS (video on demand) --------------------------------------------------------
+# Only for bringing your providers' movies and series into Channels DVR (see "Video on demand").
+# The Imports folder inside the folder where Channels DVR keeps its recordings. Examples:
+#   Unraid:    CHANNELS_DVR_IMPORTS=/mnt/user/TV/DVR/Imports
+#   Linux:     CHANNELS_DVR_IMPORTS=/var/lib/channels-dvr/Imports
+# Channels DVR on another machine: share that folder over the network and mount it on this machine first.
+# Empty means /dev/null, a harmless placeholder that leaves video on demand off.
+# Default: /dev/null
+CHANNELS_DVR_IMPORTS=
 
 
 # #####################################################################################################
@@ -926,6 +955,63 @@ recording stops, and the ending would be cut off. coax handles this:
 The log line is `recording: <show> on ch N extended by Ns on top of its own padding (...)`, and Channels DVR
 shows the later end time. This needs the *Channels DVR URL* in Settings. If your provider runs more than
 about 45 seconds behind the broadcast, add a little end padding for those channels yourself.
+
+## Video on demand
+
+Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
+DVR's own library, next to your recordings and your own media: they show up under **Movies** and **TV Shows**,
+are found by search, get Channels DVR's artwork and descriptions, and remember where you stopped. They never
+appear in the guide.
+
+**Setting it up**
+
+1. Give coax Channels DVR's **Imports** folder: set `CHANNELS_DVR_IMPORTS` in the `.env` to the `Imports`
+   folder inside the folder where Channels DVR keeps its recordings (on Unraid, for example,
+   `/mnt/user/TV/DVR/Imports`), then run `docker compose up -d`. If Channels DVR runs on another machine, share
+   that folder over the network and mount it on the coax machine first.
+2. Set the *Base URL* and the *Channels DVR URL* in coax Settings (they are needed for live TV anyway).
+3. On the **Providers** page, press **On demand** on a provider and tick the movie and series groups you want.
+
+coax then writes the titles into Channels DVR and asks it to import them. A large group takes a while the
+first time: Channels DVR looks up each title, and for series coax asks the provider for each show's episodes.
+
+**How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
+provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with
+a row for each of its collections, so the provider's titles are easy to find apart from your own library.
+When the provider adds titles to a picked group, they appear on the provider's refresh schedule (every
+24 hours unless you changed it); titles the provider removes are removed. Untick a group and its titles,
+collection and row go away. Nothing else in Channels DVR is touched: coax only writes inside
+`Imports/Movies/coax` and `Imports/TV/coax`.
+
+**How it plays.** Each title is a Channels DVR *Stream File*: a small text file holding a coax address, never the
+provider's (your login stays out of Channels DVR). When you press play, the Channels app asks coax, and coax
+fetches the file from the provider through its own connection (and the VPN, if you use one) and passes the
+bytes on exactly as they are. There is no transcoding and no remuxing: 4K, HDR, Dolby Vision and Atmos reach
+your player untouched. A movie downloads much faster than it plays, so the player keeps its own buffer and the
+reserve that live TV needs is not used.
+
+**Provider connections.** A movie uses one of your provider's connections while it plays, like a channel, and
+never more than one, however the player reads the file:
+
+- The Channels app opens several connections to coax for one movie: one at the start, one to read the file's
+  index at its end, and a burst of them when you fast forward. coax turns these into a single connection to the
+  provider: a new read closes the old provider connection first, a burst of seeks connects only for the last
+  one, and the index (read once and kept in memory) is answered by coax itself.
+- If the provider answers "too many connections" right after a seek (it has not yet noticed the old connection
+  close), coax retries for a few seconds.
+- The line is kept for a few seconds after the last read, so a seek never loses it to someone else.
+- **Live TV and recordings come first.** If every line is busy and a channel is tuned or a recording starts,
+  coax stops the movie to free its line.
+- When no line is free, the movie does not start (the line usage is on the Status page, where a movie shows as
+  *VOD: title*).
+
+Movies and episodes play from coax's Base URL, so they play on your home network. Outside it they play only if
+the device can reach coax.
+
+**M3U providers.** In an M3U playlist, movies and episodes are told apart from live channels by their address
+(a video file such as `.mkv` or `.mp4`, or a `/movie/` or `/series/` path). They are kept out of the channel
+catalog and offered under **On demand** instead. An entry whose name has `S01E02` (or `1x02`) is an episode;
+the others are movies.
 
 ## GPU transcoding
 
