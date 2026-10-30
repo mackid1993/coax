@@ -494,6 +494,9 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   video timestamps, and B-frames (nearly all broadcast H.264) made it run about 1.65x fast: after a 5 s audio
   dropout the sound came back 3.5 s late, after a 20 s one never. Now it advances only past the newest video
   timestamp, and a provider clock jump shared by the pictures is followed.
+- **1.0.7-8** (Oct 30) the stereo upmix (`surround`) holds back 2048 samples: trimmed (`atrim=start_sample=2048`,
+  window and overlap named), so ads are no longer 43 ms late with a jump at each 5.1/stereo switch. Sync measured
+  back on a direct transcode's numbers (AAC -12 ms, AC-3 +5 ms, +0 ms after a switch).
 
 ---
 
