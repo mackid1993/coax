@@ -158,14 +158,12 @@ threads). `hlsloop.py` is the recommended path.
   Transcoding: whole chain on the GPU (VAAPI `-hwaccel vaapi`, `deinterlace_vaapi`,
   `scale_vaapi`, `h264_vaapi`; NVIDIA CUDA decode, `bwdif_cuda`, `scale_cuda`, `h264_nvenc`), falling back to CPU
   decode (`GPUDEC`) if GPU decode fails. Audio goes through `aslots.Feeder` (in `put()`): it rewrites the PMT so
-  the provider's audio tracks are replaced by 17 fixed inputs, one per exact decoded format (`aslots.SLOTS`:
+  the provider's audio tracks are replaced by fixed inputs, one per exact decoded format (`aslots.SLOTS`:
   AC-3 2.0/5.1/1.0/5.0, E-AC-3 2.0/5.1, AAC LC 2.0 48/44.1 kHz, 5.1, mono, HE-AAC 48/44.1, HE-AAC v2, MPEG audio
   2.0/mono, LATM, DTS 5.1; PIDs 0x1FC0+), cuts the chosen track into frames (`aframes.frame`) and sends each to
   the input of its format with its own PTS, and fills every other input with silent frames on the same clock
   (on the video clock when no audio plays). A new encoder gets `Feeder.psi()` first and every input starts at the
-  chunk's earliest timestamp (the probe always finds them; ffmpeg's start time is unchanged). ffmpeg decodes all
-  inputs and mixes them (`amix=normalize=0`) into `AOUT`: AC-3 5.1 640k with `transcode_dolby`, else AAC stereo
-  384k, fixed per DVR connection (state file `aout`). Track choice (`Feeder._choose`): `audio_language` (ISO
+  chunk's earliest timestamp (the probe always finds them; ffmpeg's start time is unchanged). Each encoder opens `CORE` (7 inputs: AC-3 2.0/5.1, E-AC-3 2.0/5.1, AAC 2.0 48/44.1 kHz, HE-AAC) plus any format the stream listed or showed (`Feeder.plan()`, called by `ffcmd`); before an encoder's first byte `put()` asks `wants_more()` and rebuilds it (invisible) if the first chunk shows more. A format with no open input goes to its family's first input (one filter rebuild, about 0.13 s); the PCM fallback decoder (`Helper`, `PCM_FALLBACK`) is written but off: offline its PCM reached the mix late. fMP4 HLS bypasses the feeder (`bypass`, plain `-af aresample`). Slot inputs use `min_hard_comp=0.01` (silence comes in whole frames; 0.1 left real audio up to a frame off the picture). ffmpeg mixes the inputs (`amix=normalize=0`) into `AOUT`: AC-3 5.1 640k with `transcode_dolby`, else AAC stereo 192k, fixed per DVR connection (state file `aout`). Track choice (`Feeder._choose`): `audio_language` (ISO
   639-2, `languages.json`), else the first-listed track's language (untagged counts as it); audio description
   and similar extra tracks only if nothing else; only tracks delivering in the last second; most channels, then
   Dolby; sticky (a stereo ad never trades the 5.1 track away; another track replaces it only after carrying

@@ -971,7 +971,7 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   second:
   - **Always send Dolby Digital 5.1 (640 kbps)**, for providers with Dolby audio: every channel goes out as Dolby
     Digital 5.1 at 640 kbps, the most Dolby Digital allows. Stereo channels and stereo ads play in the front left
-    and right speakers, so your receiver never switches formats. Off (the default): AAC stereo at 384 kbps.
+    and right speakers, so your receiver never switches formats. Off (the default): AAC stereo at 192 kbps.
   - **Audio language**: when a channel carries that language, coax plays it; otherwise the provider's main
     track. The list has every ISO 639-2 language, the most spoken first.
 
@@ -979,9 +979,12 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   when there is another) and keeps it. Whatever the provider does with its audio, nothing restarts and the sound
   never drops: a switch between 5.1 and stereo for ads, a different codec for an ad (Dolby to AAC and back), the
   audio moving to another track, a track that stops, a backup with other audio. coax cuts the provider's audio
-  into frames and gives ffmpeg one input per exact format (Dolby Digital 2.0 and 5.1, Dolby Digital Plus, AAC
-  and HE-AAC, MPEG audio, DTS), each fed silence when it is not playing, so the decoder and its filters never
-  see a change. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep
+  into frames and gives ffmpeg one input per exact format, each fed silence when it is not playing, so the
+  decoder and its filters never see a change. Every stream gets the common ones (Dolby Digital 2.0 and 5.1,
+  Dolby Digital Plus 2.0 and 5.1, AAC stereo at 48 and 44.1 kHz, HE-AAC), plus any other format it shows when
+  you tune (MPEG audio, DTS, AAC 5.1 and others). A rare format that appears mid-stream plays through its
+  family's input with one short hiccup (about a tenth of a second of sound). Providers that send fMP4 instead of
+  MPEG-TS get the provider's audio converted directly. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep
   working. Passthrough sends the provider's audio untouched.
 - Interlaced sources are deinterlaced.
 

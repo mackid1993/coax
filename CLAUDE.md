@@ -191,7 +191,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **Transcode audio:** `aresample=async=1:min_hard_comp=0.1` per input (plus `asetpts=PTS*x,atempo` in a refill,
   with video `setpts=PTS*x`, both from 0), no `first_pts`, never `async=1000` (it stretched audio 5 s off on a
   healthy feed). Output fixed per DVR connection by the owner's setting (Dolby Digital 5.1 640k, or AAC stereo
-  384k). Never an encoder restart or filter rebuild for an audio change (owner: restarts show on screen; "I
+  192k). Never an encoder restart or filter rebuild for an audio change (owner: restarts show on screen; "I
   can't accept any gaps"): the audio feeder (aslots) gives ffmpeg one input per exact format, so 5.1/stereo ads,
   codec switches, track moves and dropouts only move the audio between inputs. A rebuild in a multi-input graph
   dropped 0.13 s at random (7 of 15 runs); with fixed-format inputs, 0 of 30. `-drop_changed:a` is gone.
@@ -363,7 +363,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
 - **ffmpeg (1.0.6):** input `-dts_delta_threshold 86400 -fflags +discardcorrupt -probesize 1000000
   -analyzeduration 1000000` (tsloop transcode adds 5 MB / 3 s); passthrough `-map 0:v? -map 0:a? -c copy
   -copyts`; transcode `-i pipe:0 -map 0:v:0? -map 0:i:<best audio PID>?`, audio
-  `aresample=async=1:min_hard_comp=0.1`, 48 kHz, AC-3 5.1 640k for a Dolby source, else AAC 384k with the source's channels, fixed per DVR connection (1.0.7-4); output `-output_ts_offset ... -f mpegts`.
+  `aresample=async=1:min_hard_comp=0.1`, 48 kHz, AC-3 5.1 640k with the Dolby setting, else AAC stereo 192k, fixed per DVR connection (1.0.7-4); output `-output_ts_offset ... -f mpegts`.
   Presets `1080p60` (6M), `1080p30`/`720p60` (4.5M), `720p30` (3M), plus 50 Hz variants. Jellyfin ffmpeg 8.1.3.
 - **Performance:** one 1080p60 VAAPI transcode about 10% of one core for the container; engine memory about
   78 MB. Overnight runs at 0% buffering on both the old profile and coax.
@@ -469,7 +469,7 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   stereo ads in the front left and right; quieter logs; CDN session tokens masked.
 - **1.0.7-4** (Oct 30) audio rebuilt so a transcode never restarts or drops sound for an audio change: one
   ffmpeg input per exact audio format (aslots), the provider's track cut into frames and routed to its input,
-  silence elsewhere. Settings > Transcode: "Always send Dolby Digital 5.1 (640 kbps)" (else AAC stereo 384k) and
+  silence elsewhere. Settings > Transcode: "Always send Dolby Digital 5.1 (640 kbps)" (else AAC stereo 192k) and
   "Audio language" (all 482 ISO 639-2 languages, most spoken first). Track choice: preferred language, else the
   main track's, never audio description when there is another, sticky through stereo ads. Refill timestamps
   scaled from 0, so a 5.1/stereo switch during a refill no longer puts the sound ahead (it did, 1.2 s at 40 s in).
@@ -478,7 +478,11 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   MP2, HE-AAC, AC-3, AAC, DTS), no audio, late audio, a 30 s dropout, two languages, audio description, an empty
   second track, an encoder starting mid-stream, a PTS wrap, a two-packet PMT, the refill, stereo with the setting
   off; end to end with the real hub on HLS and MPEG-TS (with a reconnect). GPU paths not tested (no GPU on
-  Artemis); live test on Apollo pending.
+  Artemis); live test on Apollo pending. After the review: 7 always-open inputs plus formats the stream shows (CPU
+  about a third of 17), AAC stereo back to 192k, slot inputs at `min_hard_comp=0.01` (sync within about 10 ms of
+  a direct transcode, codec switches included; was up to a frame off), fMP4 HLS passes through, ID3 and split
+  packets resynced, no backward timestamps from the video-clock fill, E-AC-3 dependents kept, exact 44.1 kHz
+  silence durations. PCM fallback for rare formats written but off (its PCM reached the mix late offline).
 
 ---
 
