@@ -512,11 +512,26 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   compressed, barely moved). A receiver decoding the provider's Dolby directly does not do that.
 - **1.0.7-12** (Oct 30) Public IP shows the city and state or province (from ipinfo) under the address, and on the
   Status card.
+- **1.0.7-13** (Oct 30) from three adversarial audits (feeder, HLS/TS parity, everything else): PCM fallback helper
+  sends 16-bit like the silent PCM frames (24-bit made ffmpeg rebuild its audio graph at each switch, 0.1-0.2 s holes,
+  and a stream starting in a rare format killed the encoder); a helper whose track stops is ended (its input starved,
+  audio up to 4.5 s behind); a format the helper cannot decode rests 30 s as silence (it stalled the writer 1 s per
+  chunk); frame marks bounded; Gracenote station language only a tiebreak (it multiplied scores: exact-name Spanish
+  stations at 60%, other regions' own feeds lowered); Settings shows a language saved as es/ger/SPA; From provider no
+  longer shows "0 kHz 0 ch". Parity audit: every audio change is on both engines (TS runs: reconnects with 3 to 17 s
+  overlap, 25 s outage, flips with Dolby on and off, wrap, refill, six-codec chain).
 
 ---
 
 ## 8. Open items
 
+- About 1 s of silence at a codec-family switch on the playing track (both engines) when the provider's audio
+  arrives more than 1 s behind its video in byte order: the feeder's video-clock silence (GAP 1 s, LAG 0.5 s) runs
+  past the late frames, which are then skipped as overlap. Seen on the synthetic six-codec chain (0.8 to 1.0 s at four
+  of five switches); the 1.0.7-4 and 1.0.7-10 "no gaps" results for that chain were wrong, since check_out.py only
+  checks timestamp continuity, not silence the feeder inserted (use silencedetect). Not seen on a real feed;
+  5.1/stereo flips within one codec are not affected. Candidate fix: trail the silence further right after the
+  audio stops.
 - Two Channels DVR clients on the same coax channel use two provider slots (ah4c model, accepted).
 - Auto-match does not search by a call sign that is only in parentheses in the name (out-of-market locals such
   as KSHB): name cleanup strips it.
