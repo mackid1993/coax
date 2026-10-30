@@ -389,8 +389,9 @@ class Syncer:
         for lineup_id in list(self.baseline):
             if lineup_id not in lineups:
                 self.baseline.pop(lineup_id, None)
+        rebuilt = []    # the XMLTV is rebuilt once per pass, not once per lineup (each rebuild downloads every source)
         for lineup_id in lineups:
-            self._sync(cfg, lineup_id, force=False)
+            self._sync(cfg, lineup_id, force=False, rebuilt=rebuilt)
 
     def sync_now(self, lineup_id):
         """Refresh the DVR source and download its guide right away. Returns the result dict."""
@@ -398,7 +399,7 @@ class Syncer:
         _find_lineup(cfg, lineup_id)
         return self._sync(cfg, lineup_id, force=True)
 
-    def _sync(self, cfg, lineup_id, force):
+    def _sync(self, cfg, lineup_id, force, rebuilt=None):
         with self.lock:
             result = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "ok": True, "error": "",
                       "refreshed": False, "guide_started": False, "source_updated": False}
@@ -429,8 +430,10 @@ class Syncer:
                 result["refreshed"] = True
                 log.info("Channels DVR source %s reloaded", source_key(lineup_id))
                 if guide_changed:
-                    if lineup.get("guide") != "gracenote":
+                    if lineup.get("guide") != "gracenote" and not rebuilt:
                         # Rebuild the lineup's XMLTV file so the DVR downloads the new channels' guide.
+                        if rebuilt is not None:
+                            rebuilt.append(True)
                         try:
                             self.xmltv_refresh(cfg)
                         except Exception as exc:  # noqa: BLE001

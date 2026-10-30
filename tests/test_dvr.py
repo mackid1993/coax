@@ -307,11 +307,20 @@ class SyncerTests(DvrTestCase):
         self.assertIn(("PUT", "/dvr/lineups/X-coaxcable"), self.fake.calls())
 
     def test_new_event_on_a_slot_downloads_guide(self):
+        def second_lineup(cfg):
+            cfg["lineups"].append({"id": "sports", "name": "Sports", "guide": "per-channel", "channels": [1]})
+        self.store.update(second_lineup)
+        self.syncer.add("sports", {"guide": "gracenote_xmltv"})
+        self.wait_idle()
+        self.fake.requests.clear()
+        self.xmltv_calls.clear()
         with mock.patch.object(events, "fingerprint", lambda cfg, lineup_id: [(1, "event", "abc", "2026-10-30")]):
             self.syncer.on_change(None, None)     # what a provider refresh does
             self.wait_idle()
-        self.assertIn(("PUT", "/dvr/lineups/X-coaxcable"), self.fake.calls())
-        self.assertEqual(len(self.xmltv_calls), 1)
+        calls = self.fake.calls()
+        self.assertIn(("PUT", "/dvr/lineups/X-coaxcable"), calls)
+        self.assertIn(("PUT", "/dvr/lineups/X-coaxsports"), calls)
+        self.assertEqual(len(self.xmltv_calls), 1)   # one rebuild for both lineups
 
     def test_unrelated_change_does_nothing(self):
         def unrelated(cfg):
