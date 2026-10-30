@@ -339,8 +339,10 @@ def ffcmd():
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "h264_nvenc", "-preset", "p4"] + rc + ["-bf", "0"]
     else:
         vc = ["-vf", vf + ",format=yuv420p", "-c:v", "libx264", "-preset", "veryfast"] + rc
+    # Audio: no -map, so ffmpeg takes the best video and the audio track with the most channels (a feed often
+    # lists a stereo track before its 5.1 one), and no -ac, so 5.1 stays 5.1 and stereo stays stereo.
     af = "aresample=async=1:min_hard_comp=0.1" + (",atempo=%.6f" % (1 / SPA) if SPA != 1.0 else "")
-    return b + ["-drop_changed:a", "1", "-i", "pipe:0", "-map", "0:v:0?", "-map", "0:a:0?"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
+    return b + ["-drop_changed:a", "1", "-i", "pipe:0", "-sn", "-dn"] + vc + ["-af", af, "-c:a", "aac", "-b:a", "384k", "-ar", "48000", "-output_ts_offset", "%.3f" % OFS[0], "-f", "mpegts", "pipe:1"]
 
 def rtgt():
     return dep or 3 * tgt

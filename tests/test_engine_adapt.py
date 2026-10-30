@@ -401,3 +401,16 @@ class DownloadDeadlineTest(unittest.TestCase):
         r = self.Resp([b"#EXTM3U\n", b"seg.ts\n"], clock, 0.01)
         self.assertEqual(grab(r, 30, 2000000), b"#EXTM3U\nseg.ts\n")
         self.assertTrue(r.closed)
+
+
+class SurroundAudioTest(unittest.TestCase):
+    def test_transcode_keeps_surround_and_picks_the_richest_track(self):
+        import os
+        for name in ("hlsloop", "tsloop"):
+            src = open(os.path.join(os.path.dirname(__file__), "..", "app", "engine", name + ".py")).read()
+            i = src.index("def ffcmd():")
+            body = src[i:src.index("\ndef ", i + 10)]
+            self.assertNotIn('"-ac", "2"', body, name)          # 5.1 is not folded to stereo
+            self.assertNotIn('"0:a:0?"', body, name)            # not pinned to the first audio track
+            self.assertIn('"-sn", "-dn"', body, name)
+            self.assertIn('"-map", "0:a?"', body, name)          # passthrough still copies every audio track
