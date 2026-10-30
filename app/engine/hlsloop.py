@@ -363,7 +363,7 @@ def remux(why=None, ofs=None):
     if old:
         EI.pop(old.pid, None)
     if old is not None and NB[0] == 0:
-        QUIET.add(old.pid)   # never fed: its 'no input' errors are expected
+        QF.add(old.pid)   # never fed: its 'no input' errors are expected
         SK.add(old.pid)
     AC[0] = bool(ADOL[0])
     NB[0] = 0
@@ -431,7 +431,7 @@ def laychg(d):
         RP[0] = "the provider's audio switched from %s to %s" % (nm.get(ch[0][0], "%d channels" % ch[0][0]), nm.get(ch[0][1], "%d channels" % ch[0][1]))
         RP[1] = mono()
 
-QUIET = set()   # encoders replaced before any input; their ffmpeg messages are dropped
+QF = set()   # encoders replaced before any input; their ffmpeg messages are dropped
 DECN = re.compile(r"^\[(h264|hevc|mpeg2video|aac|ac3|eac3|mp2|mp3) @ 0x[0-9a-f]+\] |\[dec:[a-z0-9_]+ @ 0x[0-9a-f]+\] |^\s*Last message repeated")
 
 def fferr(p):
@@ -446,7 +446,7 @@ def fferr(p):
             s = raw.decode("utf-8", "replace").rstrip()
             if not s:
                 continue
-            if p.pid in QUIET:
+            if p.pid in QF:
                 continue
             if DECN.search(s):
                 if mono() - t0 > 10:
