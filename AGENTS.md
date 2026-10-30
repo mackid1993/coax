@@ -296,12 +296,14 @@ guide when enabled channels or guide ids changed). The M3U it compares is `App.l
 DVR downloads, so a provider renumbering a lineup sorted by provider number is pushed too. Disabled channels
 are not in the M3U and do not count as members. Sources must never need a manual Refresh in Channels DVR.
 The snapshot also holds `events.fingerprint` (each event channel's event id and start, no filler), so a provider
-refresh that gives a slot a new event rebuilds the XMLTV and downloads the guide.
+refresh that gives a slot a new event rebuilds the XMLTV (once per pass, whatever the number of lineups) and
+downloads the guide.
 
 ## Event channels (app/guide/events.py)
 
 Ported from epg3r (Jon Maddox, https://github.com/maddox/epg3r; credited in the README). A channel with no guide of
-its own in a lineup (`has_guide`: none, a gracenote channel without a station, an xmltv channel without an id; a
+its own in a lineup (`guide_source` is "", or "xmltv" and the provider's XMLTV wrote no programme for it this
+refresh: `_LineupWriter.covered`; a new channel's tvg-id hint is the guide in a both or xmltv lineup; a
 gracenote-only lineup takes no XMLTV) whose first enabled stream's current catalog name parses (`parse`) gets
 entries in the lineup XMLTV (`xmltv._add_events` -> `entries`): *Up next* filler from the hour it was built, the
 airing, *No event scheduled* to 24 h. Names read: a slot label first (`NHL 01:`, `NFL | 02 -`, `US (Peacock 002) |`)

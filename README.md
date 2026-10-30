@@ -979,8 +979,8 @@ time: `NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET` 
 tomorrow. They have no Gracenote station and rarely a useful XMLTV entry, so Channels DVR shows them blank and
 nothing on them can be recorded.
 
-When a channel has no guide data of its own (no Gracenote station, no XMLTV id), coax reads the name its main
-stream has in the provider's channel list. If that name is an event with a date, a time and a time zone, the
+When a channel has no guide data of its own (no Gracenote station, and no XMLTV id or one the provider's XMLTV
+has no programs for), coax reads the name its main stream has in the provider's channel list. If that name is an event with a date, a time and a time zone, the
 lineup's XMLTV gets an airing for it:
 
 - **Title and episode.** A league channel (NFL, MLB, NBA, NHL, WNBA, MLS, NCAA football and basketball) shows
@@ -1002,12 +1002,12 @@ Names coax does not read, on purpose:
 
 - **A time with no day** (`NFL | 02 - 1pm Ravens at Bills`). Providers leave a game's name on a channel long
   after it ended; reading it as today would put last week's game on tonight.
-- **A time with no time zone** (`2026-10-30 13:00:00`). The numbers do not say which clock they are on, and a
-  guessed zone would put the airing, and the recording, at the wrong time.
+- **A time with no time zone** (`2026-10-30 13:00:00`). The numbers do not say which clock they are on, so
+  coax does not guess: a wrong zone would put the airing, and the recording, hours off.
 - **A `start: ... stop: ...` window**, whose stop is the provider's block length rather than the game's end.
 
 Those channels stay as they were. Any channel that is not an event channel is never changed, and a channel
-you give a Gracenote station or an XMLTV id uses that instead. Lineups set to *Gracenote* guide data only
+with a Gracenote station, or an XMLTV id the provider has programs for, keeps that guide. Lineups set to *Gracenote* guide data only
 take no XMLTV, so they get none of this.
 
 The approach, and what Channels DVR needs to treat these airings as real sports airings, come from
@@ -1426,7 +1426,9 @@ Actions by commit SHA.
   [epg3r](https://github.com/maddox/epg3r) by Jon Maddox, ported from its Go code: reading the event, its
   time and its time zone from the channel name, the time-with-no-day and window rules, one listing per event
   across channels (the `episode/` episode id Channels DVR honors), the live, new and *Sports* markings, and the
-  league game lengths. coax uses no data from epg3r: the names are read from your own provider.
+  league game lengths. The only data taken from epg3r is the short table of league names, airing titles and
+  game lengths; its team list, Gracenote ids, artwork and test playlists are not used. The events themselves
+  are read from your own provider's channel names.
 - Provider ingest, group selection, connection limits and refresh follow the behavior of
   [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr).
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.
