@@ -415,7 +415,10 @@ US_LANGS = {"en", "en-US"}
 
 
 def language_weight(station):
-    """1 for US English (or unknown), 0.85 for other English feeds (UK, Australia, Canada), 0.6 otherwise."""
+    """1 for US English (or unknown), 0.85 for other English feeds (UK, Australia, Canada), 0.6 otherwise.
+
+    Only a tiebreak between equally good name matches, after stations in your own lineups: it never lowers a
+    match's confidence or drops a station, so an exact-name Telemundo or a UK user's own feeds stay exact."""
     langs = station.get("langs") or []
     if not langs or all(l in US_LANGS for l in langs):
         return 1.0
@@ -613,7 +616,7 @@ def global_candidates(cdvr_url, name, matcher, limit=8, search_fn=None):
             if not sid or result["type"] == "VODProvider" or JUNK.search(result["name"]):
                 continue
             st = matcher.by_id.get(sid) or result
-            score = name_score(name, st["name"], bare_call(st)) * language_weight(st)
+            score = name_score(name, st["name"], bare_call(st))
             shares = bool(set(distinct) & tokens(st["name"]))
             # "CNN" -> Cable News Network (call sign CNN): the call sign is the name's acronym.
             acronym = len(want) == 1 and bare_call(st) in want \
@@ -622,19 +625,19 @@ def global_candidates(cdvr_url, name, matcher, limit=8, search_fn=None):
                 previous = found.get(sid)
                 if not previous or score > previous[0]:
                     found[sid] = (score, st)
-    ranked = sorted(found.values(), key=lambda x: (-x[0], x[1]["name"]))
+    ranked = sorted(found.values(), key=lambda x: (-round(x[0], 2), -language_weight(x[1]), x[1]["name"]))
     return [st for _, st in ranked[:limit]]
 
 
 def merge_candidates(name, *lists, limit=15):
-    """One ranked list: best similarity first, stations in your lineups before outside ones."""
+    """One ranked list: best similarity first, stations in your lineups before outside ones, then US English."""
     seen = {}
     for stations in lists:
         for st in stations or []:
             seen.setdefault(st["station_id"], st)
     ranked = sorted(seen.values(), key=lambda st: (
-        -round(name_score(name, st["name"], bare_call(st)) * language_weight(st), 2),
-        bool(st.get("outside")), -len(st.get("lineups", [])), st["name"]))
+        -round(name_score(name, st["name"], bare_call(st)), 2),
+        bool(st.get("outside")), -language_weight(st), -len(st.get("lineups", [])), st["name"]))
     return ranked[:limit]
 
 
@@ -654,7 +657,6 @@ def _candidate(channel_name, st, call, best_id):
         score = max(score, 0.9 if Matcher._call_sign_is_name(st, tokens(channel_name)) else 0.6)
     else:
         reason = "similar name"
-    score *= language_weight(st)
     if st["station_id"] == best_id:
         score = 1.0
     if foreign_label(st):
@@ -839,10 +841,10 @@ def deep_search(cdvr_url, text, limit=40, search_fn=None, workers=6):
                     found.setdefault(st["station_id"], st)
     scored = []
     for st in found.values():
-        score = name_score(text, st["name"], bare_call(st)) * language_weight(st)
+        score = name_score(text, st["name"], bare_call(st))
         if score >= 0.3:
             scored.append((score, st))
-    scored.sort(key=lambda x: (-x[0], x[1]["name"]))
+    scored.sort(key=lambda x: (-round(x[0], 2), -language_weight(x[1]), x[1]["name"]))
     out = []
     for score, st in scored[:limit]:
         reason = "deep search"

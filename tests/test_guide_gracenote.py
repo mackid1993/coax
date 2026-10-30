@@ -260,6 +260,18 @@ class LookupFixTests(unittest.TestCase):
         cand = gracenote._candidate("US: Love Nature", uk, None, None)
         self.assertIn("UK feed", cand["reason"])
 
+    def test_language_never_lowers_a_match(self):
+        # Exact-name Spanish stations keep full confidence; language only breaks ties.
+        tele = self.st("1", "Telemundo", "TELEMUN", ["es"])
+        self.assertGreaterEqual(gracenote._candidate("US: Telemundo", tele, None, None)["confidence"], 0.95)
+        espn = self.st("2", "ESPN", "ESPN", ["en"])
+        dep = self.st("3", "ESPN Deportes", "ESPNDEP", ["es"])
+        ranked = gracenote.merge_candidates("US: ESPN Deportes", [espn, dep])
+        self.assertEqual([s["station_id"] for s in ranked], ["3", "2"])
+        uk_own = self.st("4", "Love Nature", "LONAVM", ["en-GB"], outside=False)
+        us = self.st("5", "Love Nature", "NATUR", ["en"])
+        self.assertEqual([s["station_id"] for s in gracenote.merge_candidates("Love Nature", [us, uk_own])], ["4", "5"])
+
     def test_missing_brand_is_penalized(self):
         good = gracenote.name_score("Spectrum News 1 Hudson Valley NY", "Spectrum News 1 - Hudson Valley HD")
         wrong = gracenote.name_score("Spectrum News 1 Hudson Valley NY", "News 12 Hudson Valley")
