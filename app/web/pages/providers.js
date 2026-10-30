@@ -320,19 +320,21 @@ async function vodModal(p) {
   const m = openModal({
     title: `On demand · ${p.name}`,
     wide: true,
-    body: `<p class="muted small" style="margin-bottom:10px">Pick the movie and series groups to bring into Channels DVR. They show up in Movies and TV Shows, with a collection for each group and a <b>${esc(p.name)}</b> section that holds them all. New titles the provider adds to a picked group follow on the provider's refresh schedule. Videos play exactly as the provider sends them, through coax, never transcoded.</p>
+    body: `<p class="muted small" style="margin-bottom:10px">Pick the movie and series groups to bring into Channels DVR. Each group becomes a collection, and a <b>${esc(p.name)}</b> section holds them all. Turn on <b>In library</b> for a group to also list its titles in Movies and TV Shows with your own library; otherwise they stay out of the way, in their collection and the section. New titles the provider adds to a picked group follow on the provider's refresh schedule. Videos play exactly as the provider sends them, through coax, never transcoded.</p>
       <div id="vLib" style="margin-bottom:12px"></div>
       <div class="tabs" role="tablist" id="vTabs"><button role="tab" data-kind="movies" aria-selected="true">Movies <span class="badge num" data-n="movies"></span></button><button role="tab" data-kind="series" aria-selected="false">Series <span class="badge num" data-n="series"></span></button></div>
       <div class="row row-wrap" style="margin-bottom:12px">
         <label class="search" style="flex:1;min-width:220px"><span class="sr-only">Search groups</span>${icon("search")}<input class="input" id="vQ" placeholder="Search groups"></label>
         <button class="btn btn-sm" data-all>Select all</button><button class="btn btn-sm" data-none>Select none</button>
         <span class="badge badge-accent num" id="vCount"></span></div>
+      <div class="row row-wrap small" style="margin-bottom:12px"><span class="faint">In library, for the picked groups shown:</span><button class="btn btn-sm" data-lib-all>All</button><button class="btn btn-sm" data-lib-none>None</button></div>
       <div class="group-list" id="vList">${Array.from({ length: 8 }, () => `<div class="group-item"><span class="skel" style="width:18px;height:18px"></span><span class="skel" style="flex:1"></span></div>`).join("")}</div>`,
     foot: `<button class="btn" data-sync style="margin-right:auto">${icon("refresh")}Sync now</button><button class="btn" data-close>Cancel</button><button class="btn btn-primary" data-save>Save</button>`,
   });
   const el = m.el;
   let data = null, kind = "movies";
   const sel = { movies: new Set(), series: new Set() };
+  const lib = { movies: new Set(), series: new Set() };   // picked groups also listed in Movies / TV Shows
   const libHtml = (lib) => {
     if (!lib) return "";
     if (!lib.imports_ok) return `<div class="callout small">${icon("alert")}<div>${esc(lib.imports_message)}</div></div>`;
@@ -357,12 +359,15 @@ async function vodModal(p) {
   const draw = () => {
     const list = filtered();
     counts();
-    $("#vList", el).innerHTML = list.length ? list.map((g) => `<label class="group-item">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span><span class="gcount">${fmtInt(g.count)}</span></label>`).join("")
+    $("#vList", el).innerHTML = list.length ? list.map((g) => `<div class="group-item"><label class="vod-pick">${checkHtml(sel[kind].has(g.name), `data-g="${esc(g.name)}"`)}<span class="gname">${esc(g.name)}</span></label><span class="gcount">${fmtInt(g.count)}</span>${sel[kind].has(g.name) ? switchHtml("", lib[kind].has(g.name), "In library", `data-lib="${esc(g.name)}"`) : ""}</div>`).join("")
       : `<div class="empty" style="padding:28px"><p>${rows().length ? "No groups match." : `This provider has no ${kind === "movies" ? "movie" : "series"} groups.`}</p></div>`;
   };
   const fill = (d) => {
     data = d;
-    for (const k of ["movies", "series"]) sel[k] = new Set((d[k] || []).filter((g) => g.selected).map((g) => g.name));
+    for (const k of ["movies", "series"]) {
+      sel[k] = new Set((d[k] || []).filter((g) => g.selected).map((g) => g.name));
+      lib[k] = new Set((d[k] || []).filter((g) => g.selected && g.library).map((g) => g.name));
+    }
     $("#vLib", el).innerHTML = libHtml(d.library);
     draw();
   };
@@ -380,9 +385,17 @@ async function vodModal(p) {
     draw();
   };
   $("#vQ", el).addEventListener("input", debounce(draw, 80));
-  $("#vList", el).addEventListener("change", (e) => { const g = e.target.dataset.g; if (g == null) return; e.target.checked ? sel[kind].add(g) : sel[kind].delete(g); counts(); });
+  $("#vList", el).addEventListener("change", (e) => {
+    const { g, lib: l } = e.target.dataset;
+    if (l != null) { e.target.checked ? lib[kind].add(l) : lib[kind].delete(l); return; }
+    if (g == null) return;
+    e.target.checked ? sel[kind].add(g) : (sel[kind].delete(g), lib[kind].delete(g));
+    draw();
+  });
+  $("[data-lib-all]", el).onclick = () => { filtered().forEach((g) => sel[kind].has(g.name) && lib[kind].add(g.name)); draw(); };
+  $("[data-lib-none]", el).onclick = () => { filtered().forEach((g) => lib[kind].delete(g.name)); draw(); };
   $("[data-all]", el).onclick = () => { filtered().forEach((g) => sel[kind].add(g.name)); draw(); };
-  $("[data-none]", el).onclick = () => { filtered().forEach((g) => sel[kind].delete(g.name)); draw(); };
+  $("[data-none]", el).onclick = () => { filtered().forEach((g) => { sel[kind].delete(g.name); lib[kind].delete(g.name); }); draw(); };
   $("[data-sync]", el).onclick = (e) => busy(e.currentTarget, async () => {
     try {
       await api.syncVod(p.id);
@@ -392,7 +405,11 @@ async function vodModal(p) {
   $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
     try {
       const picks = {};
-      for (const k of ["movies", "series"]) picks[k] = (data[k] || []).map((g) => g.name).filter((n) => sel[k].has(n));
+      picks.library = {};
+      for (const k of ["movies", "series"]) {
+        picks[k] = (data[k] || []).map((g) => g.name).filter((n) => sel[k].has(n));
+        picks.library[k] = picks[k].filter((n) => lib[k].has(n));
+      }
       await api.setVod(p.id, picks);
       toast("On demand saved", `${picks.movies.length} movie and ${picks.series.length} series group${picks.series.length === 1 ? "" : "s"}. Channels DVR fills in as coax writes them.`, "ok");
       m.close();

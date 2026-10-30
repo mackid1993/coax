@@ -1238,10 +1238,13 @@ class Handler(BaseHTTPRequestHandler):
         counts = counts or {}
         picks = provider.get("vod") or {}
         out = {"provider": provider_id, "fetched_at": counts.get("fetched_at")}
+        shown = picks.get("library") if isinstance(picks.get("library"), dict) else {}
         for kind in ("movies", "series"):
             chosen = set(picks.get(kind) or [])
-            rows = [dict(row, selected=row["name"] in chosen) for row in counts.get(kind) or []]
-            rows += [{"name": g, "count": 0, "selected": True} for g in picks.get(kind) or []
+            lib = set(shown.get(kind) or [])
+            rows = [dict(row, selected=row["name"] in chosen, library=row["name"] in lib)
+                    for row in counts.get(kind) or []]
+            rows += [{"name": g, "count": 0, "selected": True, "library": g in lib} for g in picks.get(kind) or []
                      if g not in {r["name"] for r in rows}]
             out[kind] = rows
         out["library"] = self.app.vod.status(provider_id) if self.app.vod is not None else None
@@ -1255,9 +1258,21 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(value, list) or not all(isinstance(g, str) for g in value):
                 raise bad_request("%s must be a list of group names" % kind)
             picks[kind] = list(dict.fromkeys(value))
+        # Groups whose titles also show in Movies and TV Shows (the rest live in their collections and section).
+        lib = body.get("library", None)
+        if lib is not None:
+            if not isinstance(lib, dict) or not all(isinstance(lib.get(k, []), list)
+                                                    and all(isinstance(g, str) for g in lib.get(k, []))
+                                                    for k in ("movies", "series")):
+                raise bad_request("library must hold lists of movie and series group names")
+            lib = {k: [g for g in dict.fromkeys(lib.get(k, [])) if g in picks[k]] for k in ("movies", "series")}
 
         def mutate(cfg):
-            find_provider(cfg, provider_id)["vod"] = picks
+            provider = find_provider(cfg, provider_id)
+            old = provider.get("vod") if isinstance(provider.get("vod"), dict) else {}
+            kept = lib if lib is not None else {k: [g for g in (old.get("library") or {}).get(k, []) if g in picks[k]]
+                                                for k in ("movies", "series")}
+            provider["vod"] = dict(picks, library=kept)
         self.app.store.update(mutate)
         log.info("provider %s: %d movie and %d series groups picked for Channels DVR", provider_id,
                  len(picks["movies"]), len(picks["series"]))

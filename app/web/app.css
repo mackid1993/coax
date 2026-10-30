@@ -392,6 +392,8 @@ tr.drop-after td { box-shadow: inset 0 -2px 0 var(--accent); }
 .group-item:hover { background: var(--surface-3); }
 .group-item .gname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-item .gcount { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+.group-item .vod-pick { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
+.group-item .switch span { font-size: 12px; }
 
 /* ---------- Multi-select (searchable) ---------- */
 .ms { position: relative; }

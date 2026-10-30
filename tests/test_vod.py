@@ -359,7 +359,8 @@ class LibraryTests(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_plan(self):
-        files, members, _titles = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
+        files, members, _titles, visible = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
+        self.assertEqual(visible, set())   # by default nothing shows in the main listings
         self.assertEqual(files, {
             "Movies/coax/p2/Up (2009).strm": "http://coax:7780/vod/p2/m/1.mkv\n",
             "Movies/coax/p2/Heat - Redux (1995).strm": "http://coax:7780/vod/p2/m/3.mp4\n",
@@ -410,7 +411,7 @@ class LibraryTests(unittest.TestCase):
         vodcat.load = lambda pid: dict(self.vod, fetched_at=vodcat.catalog.now_iso())
         vodcat.episodes_for = lambda provider, series, **kw: self.episodes
         try:
-            files, _m, _t = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
+            files, _m, _t, _v = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
             dvr_files.update(files)
             lib.sync("p2")
             self.assertEqual(lib.state["p2"].get("error"), "")
@@ -425,7 +426,19 @@ class LibraryTests(unittest.TestCase):
                                       "/dvr/groups/g1/visibility/hidden"])
             calls.clear()
             lib.sync("p2")   # already hidden: nothing asked again
-            self.assertFalse([p for m, p, b in calls if p.endswith("/visibility/hidden")])
+            self.assertFalse([p for m, p, b in calls if "/visibility/" in p])
+            # "Action" and the series group set to show with the library: their titles come back, Up stays shown
+            # through Action although its 4K copy's group stays hidden
+            self.provider["vod"]["library"] = {"movies": ["Action"], "series": ["Drama"]}
+            lib.sync("p2")
+            shown = sorted(p for m, p, b in calls if p.endswith("/visibility/main"))
+            self.assertEqual(shown, ["/dvr/files/e2/visibility/main", "/dvr/files/e3/visibility/main",
+                                     "/dvr/files/f0/visibility/main", "/dvr/files/f1/visibility/main",
+                                     "/dvr/groups/g1/visibility/main"])
+            calls.clear()
+            self.provider["vod"]["library"] = {"movies": [], "series": []}
+            lib.sync("p2")   # and hidden again on command
+            self.assertEqual(len([p for m, p, b in calls if p.endswith("/visibility/hidden")]), 5)
             # picks cleared: files, collections and section go; the user's own file stays
             self.provider["vod"] = {"movies": [], "series": []}
             lib.sync("p2")

@@ -84,8 +84,8 @@ Channel names, providers and logos below are made up for the demo.
   **XMLTV** from your provider.
 - **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
   (VAAPI), NVIDIA (NVENC), or the CPU.
-- **Video on demand**: your providers' movies and series in Channels DVR's own library (Movies and TV Shows),
-  searchable, with a collection for each group you pick. They play exactly as the provider sends them, through
+- **Video on demand**: your providers' movies and series in Channels DVR's own library, with a collection for
+  each group you pick and a section per provider, kept apart from your own media or listed with it, per group. They play exactly as the provider sends them, through
   coax and its VPN. See [Video on demand](#video-on-demand).
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
@@ -971,9 +971,9 @@ about 45 seconds behind the broadcast, add a little end padding for those channe
 ## Video on demand
 
 Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
-DVR's own library, next to your recordings and your own media: they show up under **Movies** and **TV Shows**,
-are found by search, get Channels DVR's artwork and descriptions, and remember where you stopped. They never
-appear in the guide.
+DVR's own library: in collections and a section of their own, and if you like under **Movies** and **TV Shows**
+next to your recordings and your own media. They get Channels DVR's artwork and descriptions and remember where
+you stopped. They never appear in the guide.
 
 **Setting it up**
 
@@ -989,7 +989,16 @@ first time: Channels DVR looks up each title, and for series coax asks the provi
 
 **How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
 provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with
-a row for each of its collections, so the provider's titles are easy to find apart from your own library.
+a row for each of its collections. You choose per group where its titles show:
+
+- **Out of the way (the default).** The titles are set to *Hidden* in Channels DVR, so they stay out of Movies
+  and TV Shows and your own library, and live in their collection and the provider's section.
+- **In library.** Turn on *In library* for the group (or *All* for every picked group at once) and its titles
+  are also listed in Movies and TV Shows next to your own media.
+
+Switching a group either way changes its titles in Channels DVR right after you press *Save*. A title in several
+picked groups is listed in the library when any of them is set to *In library*. A provider's episodes that land
+inside one of your own shows only hide themselves, never your show.
 When the provider adds titles to a picked group, they appear on the provider's refresh schedule (every
 24 hours unless you changed it); titles the provider removes are removed. Untick a group and its titles,
 collection and row go away. Nothing else in Channels DVR is touched: coax only writes inside

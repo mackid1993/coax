@@ -12,8 +12,9 @@ stays out of the DVR, and every play goes through coax, which holds a line slot 
 scanner reads the files only; it never opens the address.
 
 After writing, coax asks the DVR to scan (and to prune what it deleted), then keeps one DVR collection per picked
-group and one Personal Section per provider showing them. The titles themselves are set to Hidden, so they stay out
-of the main Movies and TV Shows listings and the user's own library: the provider's titles live in their section. The sync runs when the picks change and on the provider's refresh schedule (default daily).
+group and one Personal Section per provider showing them. By default the titles are set to Hidden, so they stay out
+of the main Movies and TV Shows listings and live in their section; a group can be set to show its titles with the
+user's own library instead (vod.library), and switching it either way changes them on the next sync. The sync runs when the picks change and on the provider's refresh schedule (default daily).
 Nothing outside Movies/coax and TV/coax is ever written or removed.
 """
 
@@ -65,19 +66,30 @@ def selected(provider):
     return list(vod.get("movies") or []), list(vod.get("series") or [])
 
 
+def in_library(provider):
+    """Picked groups whose titles also show in the main Movies and TV Shows listings (the rest are Hidden there and
+    live in their collections and section): (movie groups, series groups)."""
+    vod = provider.get("vod") if isinstance(provider.get("vod"), dict) else {}
+    show = vod.get("library") if isinstance(vod.get("library"), dict) else {}
+    return set(show.get("movies") or []), set(show.get("series") or [])
+
+
 def group_label(provider, group):
     from app.names import clean_name
     return "%s · %s" % (provider.get("name") or provider.get("id"), clean_name(group))
 
 
 def plan(provider, vod, episodes, base):
-    """Every file the provider's picks should have: {relative path: content}, plus per group the paths in it."""
+    """Every file the provider's picks should have: {relative path: content}, per group the paths in it, the titles
+    for the log, and the paths shown in the main listings (a title in any group set to show there)."""
     from app.providers import vod as vodcat
     pid = provider["id"]
     movie_groups, series_groups = selected(provider)
     files, members = {}, {("movies", g): [] for g in movie_groups}
     members.update({("series", g): [] for g in series_groups})
     titles = {}
+    visible = set()
+    lib_movies, lib_series = in_library(provider)
     wanted = set(movie_groups)
     taken = {}   # lower-case path -> the path of the copy that stands for the title
     for movie in vod.get("movies") or []:
@@ -91,11 +103,13 @@ def plan(provider, vod, episodes, base):
             rel = taken[key]   # the same title twice (another quality or group): the first copy stands for both
         else:
             taken[key] = rel
-            files[rel] ="%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
+            files[rel] = "%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
             titles[("movie", str(movie["id"]))] = vodcat.display_name(movie.get("name"), movie.get("year"))
         for group in groups:
             if rel not in members[("movies", group)]:
                 members[("movies", group)].append(rel)
+        if lib_movies.intersection(groups):
+            visible.add(rel)
     wanted = set(series_groups)
     show_dirs = {}
     for show in vod.get("series") or []:
@@ -118,10 +132,12 @@ def plan(provider, vod, episodes, base):
             files[rel] = "%s/vod/%s/e/%s.%s\n" % (base, pid, ep["id"], ep.get("ext") or "mp4")
             titles[("episode", str(ep["id"]))] = "%s S%02dE%02d" % (show_name, season, number)
             first = first or rel
+            if lib_series.intersection(groups):
+                visible.add(rel)
         if first:
             for group in groups:
                 members[("series", group)].append(first)   # a show collection holds the show: any episode finds it
-    return files, members, titles
+    return files, members, titles, visible
 
 
 class Library:
@@ -211,33 +227,47 @@ class Library:
                     episodes[rel] = (str(item.get("id") or ""), str(item.get("show_id") or ""))
         return movies, episodes
 
-    def _hide(self, cfg, pid, movie_ids, episodes):
-        """Keep the provider's titles out of the main Movies and TV Shows listings: they live in their collections
-        and section. Each movie and episode is set to Hidden once (Channels keeps it). A show is hidden as a whole
-        only when every one of its files is coax's; a show of the user's own with coax episodes in it stays."""
+    def _hide(self, cfg, pid, movie_ids, episodes, visible):
+        """Set each title's visibility in the main Movies and TV Shows listings from its groups' choice: Hidden (it
+        lives in its collections and section) or shown with the user's own library. Only changes are sent; coax
+        remembers what it hid, so switching a group back shows its titles again. A show is hidden as a whole only
+        when every one of its files is coax's and hidden; a show of the user's own with coax episodes in it stays."""
         st = self._pstate(pid)
         done = set(st.get("hidden") or [])
-        files = set(movie_ids.values()) | {fid for fid, _show in episodes.values()}
-        for fid in sorted(files - done):
+        files = {fid: rel for rel, fid in movie_ids.items()}
+        files.update({fid: rel for rel, (fid, _show) in episodes.items()})
+        want = {fid for fid, rel in files.items() if rel not in visible}
+        for fid in sorted(want - done):
             self._call(cfg, "PUT", "/dvr/files/%s/visibility/hidden" % fid)
-            done.add(fid)
+        for fid in sorted((done - want) & set(files)):
+            self._call(cfg, "PUT", "/dvr/files/%s/visibility/main" % fid)
         shows_done = set(st.get("hidden_shows") or [])
-        mine = {fid for fid, _show in episodes.values()}
-        for show in sorted({show for _fid, show in episodes.values() if show} - shows_done):
-            group = self._call(cfg, "GET", "/dvr/groups/%s" % show) or {}
-            if set(str(f) for f in group.get("FileID") or []) <= mine:
-                self._call(cfg, "PUT", "/dvr/groups/%s/visibility/hidden" % show)
-            shows_done.add(show)
-        st["hidden"] = sorted(done & files)
-        st["hidden_shows"] = sorted(shows_done & {show for _fid, show in episodes.values()})
+        by_show = {}
+        for rel, (fid, show) in episodes.items():
+            if show:
+                by_show.setdefault(show, set()).add(fid)
+        hide_shows = set()
+        for show, fids in sorted(by_show.items()):
+            if fids <= want:
+                if show in shows_done:
+                    hide_shows.add(show)
+                    continue
+                group = self._call(cfg, "GET", "/dvr/groups/%s" % show) or {}
+                if set(str(f) for f in group.get("FileID") or []) <= set(fids):
+                    self._call(cfg, "PUT", "/dvr/groups/%s/visibility/hidden" % show)
+                    hide_shows.add(show)
+            elif show in shows_done:
+                self._call(cfg, "PUT", "/dvr/groups/%s/visibility/main" % show)
+        st["hidden"] = sorted(want)
+        st["hidden_shows"] = sorted(hide_shows)
 
-    def _collections(self, cfg, provider, members):
+    def _collections(self, cfg, provider, members, visible):
         """One DVR collection per picked group, one Personal Section with a row for each."""
         pid = provider["id"]
         st = self._pstate(pid)
         movie_ids, episodes = self._dvr_ids(cfg, pid)
         show_ids = {rel: show for rel, (_fid, show) in episodes.items()}
-        self._hide(cfg, pid, movie_ids, episodes)
+        self._hide(cfg, pid, movie_ids, episodes, visible)
         existing = {str(c.get("ID")): c for c in self._call(cfg, "GET", "/dvr/collections/content") or []}
         kept = {}
         rows = []
@@ -393,7 +423,7 @@ class Library:
             self.running[pid] = "reading episodes (%d of %d series)" % (done, total)
         episodes = vodcat.episodes_for(provider, shows, deadline=time.monotonic() + EPISODE_BUDGET,
                                        progress=progress) if shows else {}
-        files, members, titles = plan(provider, vod, episodes, base)
+        files, members, titles, visible = plan(provider, vod, episodes, base)
         self._titles.update(titles)
         self.running[pid] = "writing Stream Files"
         written, deleted = self._write(pid, files)
@@ -412,7 +442,7 @@ class Library:
             if not self._scan(cfg, prune=bool(deleted)):
                 log.warning("VOD provider %s: Channels DVR is still scanning; collections updated anyway", pid)
         self.running[pid] = "updating the collections"
-        self._collections(cfg, provider, members)
+        self._collections(cfg, provider, members, visible)
 
     def remove(self, pid, cfg=None):
         """Take a provider's VOD out of the DVR: its files, collections and section."""
