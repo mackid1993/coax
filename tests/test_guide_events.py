@@ -359,6 +359,12 @@ class GuideTests(unittest.TestCase):
         self.assertEqual(self.guide.team_ids(p), ["34", "52"])
         self.assertEqual(self.guide.team_ids(parse("NFL 08: Bills vs. Titans @ 8 Nov 01:00 PM ET")), [])  # unknown side
 
+    def test_teams_are_remembered_after_their_games_leave_the_guide(self):
+        p = parse("NFL 07: Bills vs. Jets @ 8 Nov 01:00 PM ET")
+        self.assertEqual(self.guide.team_ids(p), ["34", "52"])
+        empty = events.Guide(guide_config(), get_json=lambda url: {"airings": []}, now=NOW)
+        self.assertEqual(empty.team_ids(p), ["34", "52"])        # from cache/gracenote-teams.json
+
     def test_dvr_down_or_unset_means_names_only(self):
         get_json, calls = fake_dvr(fail=True)
         guide = events.Guide(guide_config(), get_json=get_json, now=NOW)

@@ -344,6 +344,7 @@ class Guide:
         self.now = now or datetime.datetime.now(datetime.timezone.utc)
         self.espn = espn or Espn()
         self._games = None
+        self._known = None
 
     def games(self):
         if self._games is None:
@@ -414,7 +415,7 @@ class Guide:
         series = SERIES.get(p["league"])
         if not series or len(p.get("sides") or []) != 2:
             return []
-        teams = {t for g in self.games() if g["series"] == series for t in g["teams"] if t[1]}
+        teams = self.teams(series)
         ids = []
         for side in p["sides"]:
             hits = {tid for name, tid in teams if _same_team(side, name)}
@@ -422,6 +423,41 @@ class Guide:
                 return []
             ids.append(hits.pop())
         return ids if ids[0] != ids[1] else []
+
+
+    def teams(self, series):
+        """(name, Gracenote team id) for a league: every team Gracenote has named in this guide's games, remembered on
+        disk (cache/gracenote-teams.json) so a team stays known after its last game here has left the guide."""
+        if self._known is None:
+            self._known = self._remember()
+        return {(name, tid) for name, tid in self._known.get(series, {}).items()}
+
+    def _remember(self):
+        import json
+        import os
+        from app import guide
+        path = os.path.join(guide.cache_dir(), "gracenote-teams.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                known = json.load(f)
+            known = {k: dict(v) for k, v in known.items() if isinstance(v, dict)}
+        except (OSError, ValueError, TypeError, AttributeError):
+            known = {}
+        changed = False
+        for game in self.games():
+            for name, tid in game["teams"]:
+                if name and tid and known.setdefault(game["series"], {}).get(name) != tid:
+                    known[game["series"]][name] = tid
+                    changed = True
+        if changed:
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(known, f, ensure_ascii=False, sort_keys=True)
+                os.replace(path + ".tmp", path)
+            except OSError as exc:
+                log.warning("could not keep the Gracenote team list: %s", exc)
+        return known
 
 
 class Espn:

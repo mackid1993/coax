@@ -996,8 +996,10 @@ event channel.
 alone, when it has a date, a time and a time zone. A league channel shows as *NHL Hockey* with the matchup as
 the episode, like Gracenote shows it; any other event is titled with its own name. The airing runs for the
 league's usual game length (from 2 hours for MLS to 3 hours 45 minutes for college football; 3 hours for any
-other event). When both teams are ones Gracenote names in your guide's other games, the airing carries their
-Gracenote team ids, so a team pass in Channels DVR records it. Its picture is the home team's logo from ESPN's
+other event). When both teams are ones Gracenote has named in your guide's games, the airing carries their
+Gracenote team ids, so a team pass in Channels DVR records it. coax remembers every team it has seen in
+`data/cache/gracenote-teams.json`, so the list fills in over a season and a team stays known after its last
+game in your guide has passed. Its picture is the home team's logo from ESPN's
 public team list (the league's logo when the team is not found); coax keeps each league's list for a week in
 `data/cache/espn-teams-<league>.json`.
 
@@ -1315,6 +1317,7 @@ data/
     xmltv-<lineup>.xml        generated guide for each lineup
     xmltv-ids-<provider>.json XMLTV channel ids offered in the Guide picker
     espn-teams-<league>.json  ESPN's team names and logos, for event channels; read again after a week
+    gracenote-teams.json      Gracenote team ids seen in Channels DVR's guide, for event channels
     history/<channel>.jsonl   each channel's 10-minute stream summaries
     hlsloop-jobs-<channel>.json, tsloop-jobs-<channel>.json
                               original length of recordings coax extended; dropped after 24 hours

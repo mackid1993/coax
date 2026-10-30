@@ -325,7 +325,8 @@ two live programs: no match); a language note never matches. A match takes Grace
 image and times, keeps coax's own `episode/` id and gets no team ids (the game is already on a real channel; a team
 pass could record it twice if Channels DVR does not merge the two). A dated game with no match keeps the name's
 airing and gets `<team-id system="tms">` for both sides when each resolves to exactly one team among the guide's
-games of that league (`team_ids`). An undated name with no match gets nothing. The DVR down or no URL: names only,
+games of that league (`team_ids`; `Guide.teams` remembers every name and id seen in
+`cache/gracenote-teams.json`, so a team stays known after its games leave the guide). An undated name with no match gets nothing. The DVR down or no URL: names only,
 one warning per rebuild. `Espn` gives the picture of an airing Gracenote did not supply: the home team's logo
 (after "at"/"@", else the first side; the other side when that one is ambiguous) from ESPN's public team list
 (`ESPN_TEAMS`, read only when such a game needs one, kept 7 days in `cache/espn-teams-<path>.json`, the old copy
