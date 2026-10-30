@@ -49,7 +49,8 @@ def languages():
                       encoding="utf-8") as f:
                 data = json.load(f)
             _LANGS.append({"top": data.get("top", 0),
-                           "languages": [{"code": x["code"], "name": x["name"]} for x in data.get("languages", [])]})
+                           "languages": [{"code": x["code"], "name": x["name"], "aliases": x.get("aliases", [])}
+                                         for x in data.get("languages", [])]})
         except (OSError, ValueError) as exc:
             log.warning("language list unreadable: %s", exc)
             return {"top": 0, "languages": []}

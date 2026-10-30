@@ -100,8 +100,11 @@ function xsHtml() {
     <button class="btn btn-ghost btn-sm btn-icon btn-danger" data-rmsrc="${i}" aria-label="Remove source">${icon("trash")}</button></div>`).join("");
 }
 function langOptions(sel) {
-  const opt = (l) => `<option value="${esc(l.code)}" ${l.code === sel ? "selected" : ""}>${esc(l.name)}</option>`;
   const all = langs.languages || [];
+  // A code saved through the API can be another form of the same language ("es", "SPA", "ger"): show its entry.
+  const s = String(sel || "").toLowerCase();
+  sel = all.find((l) => l.code === s || (l.aliases || []).includes(s))?.code || sel;
+  const opt = (l) => `<option value="${esc(l.code)}" ${l.code === sel ? "selected" : ""}>${esc(l.name)}</option>`;
   return `<option value="" ${sel ? "" : "selected"}>Main track (the provider's default)</option>
     <optgroup label="Most spoken">${all.slice(0, langs.top).map(opt).join("")}</optgroup>
     <optgroup label="All languages, A to Z">${all.slice(langs.top).map(opt).join("")}</optgroup>`;
