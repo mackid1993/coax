@@ -267,23 +267,30 @@ def group_counts(vod):
     return out
 
 
-def episodes_for(provider, series, deadline=None, progress=None):
+def episodes_for(provider, series, deadline=None, progress=None, fetch=True, max_fetch=None, info=None):
     """Episodes of these series ({series id: [episodes]}), from the cache where the panel's last_modified has not
-    moved, else asked for one series at a time (Xtream). An M3U provider's come with its catalog."""
+    moved, else asked for one series at a time (Xtream), in the order given. An M3U provider's come with its catalog.
+
+    fetch=False answers from the cache only; max_fetch stops after that many calls. `info`, when given, is filled
+    with {"fetched", "left" (series still to ask for), "throttled" (stopped after EPISODE_FAILURES in a row)}."""
     pid = provider.get("id")
+    if info is not None:
+        info.update(fetched=0, left=0, throttled=False)
     if (provider.get("type") or "xtream").lower() != "xtream":
         stored = (load(pid) or {}).get("episodes") or {}
         return {s["id"]: stored.get(s["id"]) or [] for s in series}
     path = cache_path(pid, "-episodes")
     cache = dict(_load_json(path) or {})
-    out, fetched, failed, in_row = {}, 0, 0, 0
+    out, fetched, failed, in_row, left = {}, 0, 0, 0, 0
     for index, show in enumerate(series):
         hit = cache.get(show["id"])
         if isinstance(hit, dict) and hit.get("modified") == show.get("modified") and show.get("modified"):
             out[show["id"]] = hit.get("episodes") or []
             continue
-        if (deadline is not None and time.monotonic() > deadline) or in_row >= EPISODE_FAILURES:
+        if not fetch or (deadline is not None and time.monotonic() > deadline) or in_row >= EPISODE_FAILURES \
+                or (max_fetch is not None and fetched + failed >= max_fetch):
             out[show["id"]] = (hit or {}).get("episodes") or []   # the next run carries on
+            left += 1
             continue
         if fetched or failed:
             time.sleep(EPISODE_PAUSE)   # one account, possibly thousands of calls: never a burst
@@ -297,6 +304,7 @@ def episodes_for(provider, series, deadline=None, progress=None):
                 log.warning("provider %s: %d episode lists failed in a row; the rest wait for the next sync",
                             pid, in_row)
             out[show["id"]] = (hit or {}).get("episodes") or []
+            left += 1
             continue
         in_row = 0
         cache[show["id"]] = {"modified": show.get("modified") or 0, "episodes": eps}
@@ -310,7 +318,9 @@ def episodes_for(provider, series, deadline=None, progress=None):
         keep = {s["id"] for s in series}
         catalog.atomic_write_json(path, {k: v for k, v in cache.items() if k in keep})
     if fetched or failed:
-        log.info("provider %s: episodes read for %d series (%d failed)", pid, fetched, failed)
+        log.info("provider %s: episodes read for %d series (%d failed, %d still to read)", pid, fetched, failed, left)
+    if info is not None:
+        info.update(fetched=fetched, left=left, throttled=in_row >= EPISODE_FAILURES)
     return out
 
 

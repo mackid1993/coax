@@ -327,7 +327,13 @@ class EpisodeTests(unittest.TestCase):
         self.assertEqual(len(out["a"]), 1)
         self.assertEqual(calls, list("abcdef"))          # five failures in a row end the run
         self.assertEqual(out["j"], [])
+        info = {}
+        vodcat.episodes_for(provider, shows, info=info)
+        self.assertEqual((info["throttled"], info["left"]), (True, 9))
         vodcat.xtream.get_series_episodes = lambda p, sid: [{"id": sid, "season": 1, "episode": 1, "ext": "mp4"}]
+        info = {}
+        vodcat.episodes_for(provider, shows, max_fetch=3, info=info)   # a batch stops after three calls
+        self.assertEqual((info["fetched"], info["left"], info["throttled"]), (3, 6, False))
         out = vodcat.episodes_for(provider, shows)       # the next run asks again for every failed one
         self.assertEqual(out["j"][0]["id"], "j")
 
@@ -448,6 +454,55 @@ class LibraryTests(unittest.TestCase):
             self.assertNotIn("p2", lib.state)
         finally:
             vodcat.load, vodcat.episodes_for = orig_load, orig_eps
+
+    def test_movies_go_to_channels_before_episodes_are_read_then_batches_and_a_quick_continue(self):
+        published = []
+        cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": ""}, "providers": [self.provider]}
+
+        class Store:
+            def get(self):
+                return cfg
+        lib = vodlib.Library(Store(), self.tmp, imports_dir=self.imports, dvr_call=lambda *a: {})
+        real_publish = lib._publish
+
+        def publish(cfg_, provider, vod, episodes, base):
+            published.append(sorted(k for k, v in episodes.items() if v))
+            real_publish(cfg_, provider, vod, episodes, base)
+        lib._publish = publish
+        shows = [{"id": "s%d" % i, "name": "Show %d (2020)" % i, "groups": ["Drama"], "modified": i} for i in range(5)]
+        vod = dict(self.vod, series=shows, fetched_at=vodcat.catalog.now_iso())
+        fetched = []
+
+        def episodes(provider, series, fetch=True, max_fetch=None, info=None, **kw):
+            order = [s["id"] for s in series]
+            todo = [sid for sid in order if sid not in fetched]
+            if fetch:
+                time.sleep(0.01)   # each batch takes a moment, like the panel
+                todo, rest = todo[:max_fetch], todo[max_fetch:]
+                fetched.extend(todo)
+                if info is not None:
+                    info.update(fetched=len(todo), left=len(rest), throttled=False)
+            return {sid: ([{"id": sid + "e", "season": 1, "episode": 1}] if sid in fetched else []) for sid in order}
+        orig = (vodcat.load, vodcat.episodes_for, vodlib.BATCH_SERIES, vodlib.EPISODE_BUDGET)
+        vodcat.load, vodcat.episodes_for, vodlib.BATCH_SERIES = (lambda pid: vod), episodes, 2
+        try:
+            lib.sync("p2")
+            self.assertEqual(published[0], [])                 # movies first, before any episode list
+            self.assertEqual(published[1], ["s3", "s4"])       # newest shows first, two per batch
+            self.assertEqual(published[-1], ["s0", "s1", "s2", "s3", "s4"])
+            self.assertNotIn("continue_at", lib.state["p2"])
+            # out of time with series left: the next batch is due in minutes, not at the next refresh
+            fetched.clear()
+            vodlib.EPISODE_BUDGET = 0.005
+            lib.sync("p2")
+            st = lib.state["p2"]
+            self.assertTrue(st["series_left"] > 0)
+            self.assertLess(st["continue_at"] - time.time(), vodlib.CONTINUE_AFTER + 5)
+            self.assertFalse(lib._due(self.provider))
+            st["continue_at"] = time.time() - 1
+            self.assertTrue(lib._due(self.provider))
+        finally:
+            vodcat.load, vodcat.episodes_for, vodlib.BATCH_SERIES, vodlib.EPISODE_BUDGET = orig
 
     def test_switched_off_provider_keeps_its_library(self):
         cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": ""},

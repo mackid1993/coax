@@ -984,8 +984,11 @@ you stopped. They never appear in the guide.
 2. Set the *Base URL* and the *Channels DVR URL* in coax Settings (they are needed for live TV anyway).
 3. On the **Providers** page, press **On demand** on a provider and tick the movie and series groups you want.
 
-coax then writes the titles into Channels DVR and asks it to import them. A large group takes a while the
-first time: Channels DVR looks up each title, and for series coax asks the provider for each show's episodes.
+coax then writes the titles into Channels DVR and asks it to import them. Movies arrive first, within minutes.
+Series follow in batches, newest shows first: coax asks the provider for each show's episodes one at a time (a
+large panel throttles quick bursts), and every few hundred shows go to Channels DVR as soon as they are read. A
+very large series group keeps filling in over the following hours: a sync reads for half an hour, then carries on
+15 minutes later (an hour later if the provider starts refusing), until every show is in.
 
 **How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
 provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with

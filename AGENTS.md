@@ -313,6 +313,10 @@ are not in the M3U and do not count as members. Sources must never need a manual
   in `library` are set Hidden (`/dvr/files/<id>/visibility/hidden`; a show group only when all its files are
   coax's); coax remembers what it hid (`cache/vod-state.json`) and shows them again when a group is switched.
   The scanner never opens the addresses. Runs on Save and every `refresh_hours`; a provider switched off pauses.
+  Order within a sync: movies and shows with cached episodes are published first (write, scan, collections),
+  then episode lists newest `last_modified` first in batches (`BATCH_SERIES` 300 or `BATCH_SECONDS` 600, each
+  published at once) within `EPISODE_BUDGET` (30 min); series left over set `continue_at` (15 min, or 1 h after
+  throttling) so the next sync comes before the daily refresh.
 - **Playback.** `Plays` keys a play by (client IP, provider), takes a hub slot (`Hub.vod_hold`, a `VodHold` in
   `_slots`), and passes bytes through untouched. One provider connection per play: a request needing the
   provider closes the older one first; requests within 1 s debounce 0.35 s; the last 4 MB of the file is fetched

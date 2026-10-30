@@ -32,6 +32,10 @@ IMPORTS_DIR = "/imports"
 SUBDIR = "coax"
 TICK_SECONDS = 60
 EPISODE_BUDGET = 1800        # seconds of get_series_info calls per sync; the next sync carries on
+BATCH_SERIES = 300           # episode lists read before the batch goes to Channels DVR...
+BATCH_SECONDS = 600          # ...or after this long, whichever comes first (each batch is one DVR scan)
+CONTINUE_AFTER = 900         # a sync that ran out of time carries on this soon, not at the next refresh
+THROTTLE_WAIT = 3600         # after EPISODE_FAILURES failed calls in a row, the panel rests this long
 SCAN_WAIT = 6 * 3600         # how long to wait for the DVR's scanner before updating collections anyway
 SCAN_POLL = 5
 SECTION_ICON = "film"
@@ -417,12 +421,41 @@ class Library:
             vod = vodcat.refresh(provider)
         vod = vod or {}
         wanted = set(series_groups)
-        shows = [s for s in vod.get("series") or [] if wanted.intersection(s.get("groups") or [])]
+        # Newest first (the panel's last_modified): recently added and airing shows land in the first batch.
+        shows = sorted((s for s in vod.get("series") or [] if wanted.intersection(s.get("groups") or [])),
+                       key=lambda s: -(s.get("modified") or 0))
+        st = self._pstate(pid)
+        # Movies first: the movies and every show whose episodes are already known go to Channels DVR now, before
+        # any episode list is asked for (that can take half an hour on a big catalog).
+        known = vodcat.episodes_for(provider, shows, fetch=False) if shows else {}
+        self._publish(cfg, provider, vod, known, base)
+        # Then the episode lists, in batches: each batch goes to Channels DVR as soon as it is read.
+        st.pop("continue_at", None)
+        st.pop("series_left", None)
+        spent, info = 0.0, {}
+        while shows and spent < EPISODE_BUDGET and not self._stop.is_set():
+            started = time.monotonic()
 
-        def progress(done, total):
-            self.running[pid] = "reading episodes (%d of %d series)" % (done, total)
-        episodes = vodcat.episodes_for(provider, shows, deadline=time.monotonic() + EPISODE_BUDGET,
-                                       progress=progress) if shows else {}
+            def progress(done, total):
+                self.running[pid] = "reading episodes (%d of %d series)" % (done, total)
+            info = {}
+            episodes = vodcat.episodes_for(provider, shows, progress=progress, max_fetch=BATCH_SERIES, info=info,
+                                           deadline=started + min(BATCH_SECONDS, EPISODE_BUDGET - spent))
+            spent += time.monotonic() - started
+            if info.get("fetched"):
+                self._publish(cfg, provider, vod, episodes, base)
+            if not info.get("left") or info.get("throttled") or not info.get("fetched"):
+                break
+        if info.get("left"):
+            # Not done: carry on soon rather than at the next daily refresh; a throttling panel gets an hour's rest.
+            wait = THROTTLE_WAIT if info.get("throttled") else CONTINUE_AFTER
+            st.update(continue_at=time.time() + wait, series_left=info["left"])
+            log.info("VOD provider %s: %d series still to read; the next batch in %d minutes", pid, info["left"],
+                     wait // 60)
+
+    def _publish(self, cfg, provider, vod, episodes, base):
+        """Write the Stream Files for what is known now, have Channels DVR import them, update the collections."""
+        pid = provider["id"]
         files, members, titles, visible = plan(provider, vod, episodes, base)
         self._titles.update(titles)
         self.running[pid] = "writing Stream Files"
@@ -443,6 +476,7 @@ class Library:
                 log.warning("VOD provider %s: Channels DVR is still scanning; collections updated anyway", pid)
         self.running[pid] = "updating the collections"
         self._collections(cfg, provider, members, visible)
+        self._save_state()
 
     def remove(self, pid, cfg=None):
         """Take a provider's VOD out of the DVR: its files, collections and section."""
@@ -483,6 +517,8 @@ class Library:
         st = self.state.get(provider["id"]) or {}
         if not (movie_groups or series_groups):
             return bool(st)   # picks cleared: clean up once
+        if st.get("continue_at") and time.time() >= st["continue_at"]:
+            return True   # episode lists still to read
         hours = provider.get("refresh_hours") or 24
         last = max(st.get("last_sync") or 0, st.get("last_try") or 0)
         return time.time() - last >= hours * 3600

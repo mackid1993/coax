@@ -342,6 +342,7 @@ async function vodModal(p) {
     const running = lib.running ? `<div style="margin-bottom:6px"><span class="badge badge-info" style="white-space:normal"><span class="dot"></span>${esc(lib.running)}</span></div>` : "";
     if (lib.movies != null) bits.push(`Stream Files: ${fmtInt(lib.movies)} movies, ${fmtInt(lib.shows || 0)} shows (${fmtInt(lib.episodes || 0)} episodes)`);
     if (lib.last_sync) bits.push(`synced ${fmtAgo(new Date(lib.last_sync * 1000).toISOString())}`);
+    if (lib.series_left) bits.push(`${fmtInt(lib.series_left)} series still to read, next batch soon`);
     const err = lib.error ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(lib.error)}</div>` : "";
     const note = lib.dvr_note ? `<div class="small" style="color:var(--warn);margin-top:6px">${esc(lib.dvr_note)}</div>` : "";
     const sync = `<button class="btn btn-sm" data-sync>${icon("refresh")}Sync now</button>`;
