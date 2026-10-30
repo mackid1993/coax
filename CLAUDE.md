@@ -510,6 +510,8 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   ffmpeg's AC-3/E-AC-3 decoder applies the stream's dynamic range compression by default; on real Dolby audio it moved
   the level between +2 and -5 dB over 75 s, heard by the owner as shows going quiet and coming back (ads, already
   compressed, barely moved). A receiver decoding the provider's Dolby directly does not do that.
+- **1.0.7-12** (Oct 30) Public IP shows the city and state or province (from ipinfo) under the address, and on the
+  Status card.
 
 ---
 
