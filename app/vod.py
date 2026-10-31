@@ -1275,7 +1275,7 @@ class Library:
         """The set of "m:<id>" / "s:<id>" keys of a provider's titles that are in Channels DVR."""
         return set((self.state.get(str(pid)) or {}).get("present") or [])
 
-    def _same_dvr(self, cfg, st, picks):
+    def _same_dvr(self, cfg, st, picks, provider=None):
         """True when Channels DVR still holds an item coax made that is not a hand-pick (an Add all title, checked by
         its own path, not just its id: another DVR has items with the same ids): then picks it has never heard of were
         really deleted (and the trash emptied)."""
@@ -1293,6 +1293,15 @@ class Library:
             except Exception:  # noqa: BLE001 - not known (or not reachable): try the next one
                 continue
             if isinstance(item, dict) and not item.get("Deleted") and item.get("Path") == rel.split("/", 1)[-1]:
+                return True
+        # Only hand-picks: one of coax's collections, known by its id and its exact name.
+        for key, cid in list((st.get("collections") or {}).items())[:3]:
+            try:
+                item = self._call(cfg, "GET", "/dvr/collections/content/%s" % cid)
+            except Exception:  # noqa: BLE001
+                continue
+            group = key.split(":", 1)[-1]
+            if isinstance(item, dict) and provider is not None and item.get("Name") == group_label(provider, group):
                 return True
         return False
 
@@ -1344,7 +1353,7 @@ class Library:
         self._pool(CREATE_WORKERS, check, keys)
         if not gone:
             return False
-        if len(unknown) >= 3 and len(unknown) * 2 > len(keys) and not self._same_dvr(cfg, st, set(present)):
+        if len(unknown) >= 3 and len(unknown) * 2 > len(keys) and not self._same_dvr(cfg, st, set(present), provider):
             # Most picks gone at once is not the user deleting titles: the DVR server URL points at another (or a
             # rebuilt) Channels DVR, or something in front of it answers 404. Keep every pick.
             log.warning("VOD provider %s: Channels DVR does not know %d of %d hand-picked titles checked; keeping "

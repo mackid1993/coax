@@ -514,6 +514,23 @@ class LibraryPickTests(unittest.TestCase):
         self.lib.sync("p2")
         self.assertEqual(p["vod"]["picks"]["movies"], [])
 
+    def test_picks_only_and_an_emptied_trash_are_respected_by_the_collection(self):
+        p = self.cfg["providers"][0]
+        p["vod"]["all"] = {"movies": [], "series": []}
+        p["vod"]["picks"] = {"movies": ["1", "2", "3"], "series": []}
+        self.lib.sync("p2")
+        self.lib.state["p2"]["collections"] = {"movies:Action": "77"}
+        real = self.dvr
+
+        def known(cfg, method, path, body=None):
+            if path == "/dvr/collections/content/77":
+                return {"ID": "77", "Name": vodlib.group_label(p, "Action")}
+            return real(cfg, method, path, body)
+        self.lib._dvr_call = known
+        self.unknown = True
+        self.lib.sync("p2")
+        self.assertEqual(p["vod"]["picks"]["movies"], [])
+
     def test_another_dvr_with_items_of_the_same_ids_does_not_drop_picks(self):
         p = self.cfg["providers"][0]
         p["vod"]["all"] = {"movies": ["Comedy"], "series": []}
