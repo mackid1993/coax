@@ -812,6 +812,13 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
   .od-row .od-tags { max-width: none; justify-content: flex-start; padding-left: 28px; flex-basis: 100%; }
   .od-row.od-all { flex-wrap: nowrap; }
 }
+@container (max-width: 380px) {
+  .od-row.od-all { flex-wrap: wrap; }
+  .od-row.od-all .spacer { display: none; }
+  .od-foot .pager { flex-wrap: wrap; row-gap: 6px; }
+  .od-foot [data-page="first"], .od-foot [data-page="last"] { display: none; }
+  .od-head .od-sub { display: none; }
+}
 .od-groups { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: hidden; }
 .od-pane { max-height: calc(100vh - 32px); position: sticky; top: 16px; overflow: hidden; }
 .od-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }

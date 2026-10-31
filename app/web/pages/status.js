@@ -179,14 +179,14 @@ function vodCardInner(x, key) {
   const h = history.get(key) || [];
   return `<div class="head"><span class="vod-icon" aria-hidden="true">${icon("film")}</span><div style="min-width:0;flex:1"><div class="title ellip" data-pop="${esc(x.name)}" data-pop-sub="${x.kind === "movie" ? "Movie" : "Episode"} on demand">${esc(x.name)}</div>
       <div class="faint small ellip">${x.kind === "movie" ? "Movie" : "Episode"} · ${esc(x.provider_name || x.provider_id || "")}${x.line_name ? ` · ${esc(x.line_name)}` : ""}</div></div>
-      <span class="badge badge-copper" title="Played from the provider's on demand library">On demand</span></div>
+</div>
     ${spark(h, key)}
     <div class="session-stats">
       <div><div class="stat-label">Viewer</div><div class="stat-value num" style="font-size:15px">${esc(x.client_ip)}</div></div>
       <div><div class="stat-label">Bitrate</div><div class="stat-value">${fmtRate(h[h.length - 1] || 0)}</div></div>
       <div><div class="stat-label">Playing for</div><div class="stat-value">${fmtDuration(x.seconds)}</div></div>
     </div>
-    <div class="row row-wrap" style="gap:6px"><span class="badge" title="On demand titles are sent as the provider has them, never transcoded"><span class="dot" style="opacity:.5"></span>Original format</span><span class="badge badge-info" title="Each play uses one of the provider's connections while it plays, seeking included">Uses 1 connection${x.line_name ? ` on ${esc(x.line_name)}` : ""}</span>${x.streaming ? "" : `<span class="badge" title="Paused or between seeks: the connection is kept for a few seconds">Idle</span>`}</div>
+    <div class="row row-wrap" style="gap:6px"><span class="badge badge-copper" title="Played from the provider's on demand library">On demand</span><span class="badge" title="On demand titles are sent as the provider has them, never transcoded"><span class="dot" style="opacity:.5"></span>Original format</span><span class="badge badge-info" title="Each play uses one of the provider's connections while it plays, seeking included">Uses 1 connection${x.line_name ? ` on ${esc(x.line_name)}` : ""}</span>${x.streaming ? "" : `<span class="badge" title="Paused or between seeks: the connection is kept for a few seconds">Idle</span>`}</div>
     <div class="faint small">${fmtBytes(x.sent)} sent</div>`;
 }
 function cardInner(x, key) {

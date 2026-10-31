@@ -180,7 +180,7 @@ function body() {
       <div class="od-foot" id="catFoot"></div>
     </section>
     <section class="card od-pane" aria-label="Content">
-      <div class="od-head"><h2>Content</h2><span class="faint small" style="margin-left:6px">in Channels DVR</span><span class="spacer"></span><span class="faint small num" id="conTotal"></span></div>
+      <div class="od-head"><h2>Content</h2><span class="faint small od-sub" style="margin-left:6px">in Channels DVR</span><span class="spacer"></span><span class="faint small num" id="conTotal"></span></div>
       <div class="od-filters"><div class="seg" role="group" aria-label="Show">${[["all", "All"], ["picked", "Hand-picked"], ["add_all", "Add all"], ["pending", "Pending"], ["duplicates", "Duplicates"], ["draft", "Unsaved"]].map(([k, l]) => `<button type="button" data-cfilter="${k}" aria-pressed="${S.con.filter === k}">${l}</button>`).join("")}</div></div>
       <div class="od-list" id="conList"></div>
       <div class="od-foot" id="conFoot"></div>
