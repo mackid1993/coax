@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
 
   coax:
-    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a release number to freeze one
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version (an image tag) to freeze one
     container_name: ${CONTAINER_NAME:-coax}
     network_mode: service:gluetun # All of coax's traffic goes through Gluetun. No ports here; they are on the gluetun service
     depends_on:

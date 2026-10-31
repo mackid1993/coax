@@ -1,7 +1,7 @@
 services:
   # GitHub home for this project with setup instructions: https://github.com/mackid1993/coax
   coax: # This compose file needs no editing. Put your values in .env (or the Environment variables section of Portainer).
-    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a release number to freeze one
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version (an image tag) to freeze one
     container_name: ${CONTAINER_NAME:-coax}
     runtime: ${DOCKER_RUNTIME:-runc} # GPU transcoding on NVIDIA only. Set DOCKER_RUNTIME=nvidia. Requires the NVIDIA driver and NVIDIA Container Toolkit on the host
     devices:
