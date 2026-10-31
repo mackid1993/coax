@@ -174,7 +174,7 @@ function refocus(card, f) {
   row?.querySelector(`[${f.role}]`)?.focus({ preventScroll: true });   // never pull a scrolled page back to the card
 }
 function skey(x) { return `${x.uuid || x.channel_id}~${x.instance || 0}`; }
-function vkey(x) { return `vod~${x.client_ip}~${x.provider_id}~${x.kind}~${x.name}`; }
+function vkey(x) { return `vod~${x.client_ip}~${x.provider_id}~${x.kind}~${x.item_id}`; }
 function vodCardInner(x, key) {
   const h = history.get(key) || [];
   return `<div class="head"><span class="vod-icon" aria-hidden="true">${icon("film")}</span><div style="min-width:0;flex:1"><div class="title ellip" data-pop="${esc(x.name)}" data-pop-sub="${x.kind === "movie" ? "Movie" : "Episode"} on demand">${esc(x.name)}</div>

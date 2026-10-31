@@ -819,8 +819,9 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
   .od-foot [data-page="first"], .od-foot [data-page="last"] { display: none; }
   .od-head .od-sub { display: none; }
 }
-.od-groups { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: hidden; }
-.od-pane { max-height: calc(100vh - 32px); position: sticky; top: 16px; overflow: hidden; }
+/* The sticky panes sit below the sticky unsaved-changes bar (--od-bar is its height, set by the page). */
+.od-groups { position: sticky; top: calc(16px + var(--od-bar, 0px)); max-height: calc(100vh - 32px - var(--od-bar, 0px)); overflow: hidden; }
+.od-pane { max-height: calc(100vh - 32px - var(--od-bar, 0px)); position: sticky; top: calc(16px + var(--od-bar, 0px)); overflow: hidden; }
 .od-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .od-head h2 { font-size: 15px; font-weight: 620; }
 .od-filters { padding: 8px 10px; border-bottom: 1px solid var(--border); }

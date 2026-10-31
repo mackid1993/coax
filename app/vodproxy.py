@@ -155,7 +155,7 @@ class Plays:
             hold = p.hold
             out.append({"provider_id": p.provider_id, "provider_name": getattr(hold, "provider_name", "") or "",
                         "line_id": getattr(hold, "line_id", None), "line_name": getattr(hold, "line_name", "") or "",
-                        "client_ip": p.client_ip, "name": p.name, "kind": "episode" if p.item[0] == "episode" else "movie",
+                        "client_ip": p.client_ip, "name": p.name, "item_id": p.item[1], "kind": "episode" if p.item[0] == "episode" else "movie",
                         "started": p.started, "sent": p.sent, "streaming": p.active > 0})
         out.sort(key=lambda x: x["started"])
         return out

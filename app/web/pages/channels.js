@@ -1436,19 +1436,24 @@ function renderCatalogList() {
 // Every stream the catalog's filters match, on every page (the server pages by 1,000 at most).
 async function selectAllCatalog() {
   const st = S, c = S.cat;
+  const stamp = JSON.stringify([c.provider, c.group, c.q.trim()]);
+  const found = new Map();
   try {
     for (let offset = 0; offset < c.total; offset += 1000) {
       const r = normalizePage(await api.streams({ provider: c.provider, group: c.group, q: c.q.trim(), offset, limit: 1000 }));
-      if (S !== st) return;
-      r.items.forEach((s) => c.selected.set(refKey(s), s));
+      if (S !== st || JSON.stringify([c.provider, c.group, c.q.trim()]) !== stamp) return;   // filters changed meanwhile
+      r.items.forEach((s) => found.set(refKey(s), s));
       if (!r.items.length) break;
     }
-  } catch (e) { toastError("Could not select every stream", e); }
-  if (S === st) renderCatalogList();
+  } catch (e) { toastError("Could not select every stream", e); return; }
+  if (S !== st) return;
+  found.forEach((s, k) => c.selected.set(k, s));
+  renderCatalogList();
 }
 async function addFromCatalog() {
   const streams = [...S.cat.selected.values()].map((s) => ({ provider: s.provider, stream_id: String(s.stream_id) }));
   if (!streams.length) return;
+  if (streams.length > 500 && !(await confirmDialog({ title: `Add ${fmtInt(streams.length)} channels?`, message: `Each selected stream becomes a channel. ${fmtInt(streams.length)} is a lot to review afterwards.`, confirm: "Add them" }))) return;
   try {
     const body = { streams };
     if (S.lineup) body.lineups = [S.lineup];
