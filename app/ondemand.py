@@ -11,6 +11,7 @@ Auto-match suggestions: kept on the server until Save or Dismiss, versioned so a
 import json
 import os
 import re
+import sys
 import threading
 import time
 import unicodedata
@@ -38,21 +39,24 @@ def query_words(text):
 
 
 class Title:
-    """One copy of a title in a provider's catalog."""
-    __slots__ = ("key", "kind", "id", "name", "year", "groups", "quality", "hay", "added", "dup")
+    """One copy of a title in a provider's catalog. Kept small: a big provider lists well over 100,000 of them."""
+    __slots__ = ("kind", "id", "name", "year", "groups", "quality", "hay", "added", "dup")
 
     def __init__(self, kind, item, name, year, added):
         self.kind = kind                       # "m" movie, "s" series
         self.id = str(item.get("id"))
-        self.key = "%s:%s" % (kind, self.id)
         self.name = name
-        self.year = year
-        self.groups = tuple(item.get("groups") or ())
+        self.year = sys.intern(year or "")
+        self.groups = tuple(sys.intern(g) for g in item.get("groups") or ())   # a few names shared by all titles
         self.quality = vodlib.quality(item.get("name"), self.groups)
-        self.hay = ("%s %s" % (norm(name), year)).strip()
+        self.hay = ("%s %s" % (norm(name), self.year)).strip()
         self.added = added
-        # The plan's own name for the title: two copies with one name are one title in Channels DVR.
-        self.dup = vodlib.safe_name("%s (%s)" % (name, year) if year else name).lower()
+        # The plan's own name for the title (two copies with one name are one title in Channels DVR), as a hash.
+        self.dup = hash(vodlib.safe_name("%s (%s)" % (name, year) if year else name).lower())
+
+    @property
+    def key(self):
+        return "%s:%s" % (self.kind, self.id)
 
 
 class Catalogs:
@@ -60,20 +64,27 @@ class Catalogs:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._by_pid = {}   # pid -> (mtime, size, [Title], {key: Title})
+        self._building = {}   # pid -> lock: one read of a provider's list at a time (it is tens of megabytes)
+        self._by_pid = {}     # pid -> ((mtime, size), [Title], {key: Title})
 
     def get(self, pid):
         from app.providers import vod as vodcat
         path = vodcat.cache_path(pid)
-        try:
-            st = os.stat(path)
-            stamp = (st.st_mtime, st.st_size)
-        except OSError:
-            stamp = None
         with self._lock:
-            hit = self._by_pid.get(pid)
+            building = self._building.setdefault(pid, threading.Lock())
+        with building:
+            try:
+                st = os.stat(path)
+                stamp = (st.st_mtime, st.st_size)
+            except OSError:
+                stamp = None
+            with self._lock:
+                hit = self._by_pid.get(pid)
             if hit and hit[0] == stamp:
                 return hit[1], hit[2]
+            return self._build(pid, stamp, vodcat)
+
+    def _build(self, pid, stamp, vodcat):
         vod = vodcat.load(pid) if stamp else None
         titles = []
         for movie in (vod or {}).get("movies") or []:

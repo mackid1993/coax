@@ -1172,6 +1172,7 @@ class Handler(BaseHTTPRequestHandler):
             return len(users), stuck
         detached, stuck = self.app.store.update(mutate)
         self.app.catalogs.invalidate(provider_id)
+        self.app.ondemand_titles.forget(provider_id)
 
         def drop_provider(pending):
             changed = False
