@@ -507,6 +507,7 @@ function wireFrame() {
 
 async function onClick(e) {
   const t = e.target;
+  if (t.matches("[data-sel]")) { selectRange(t, e.shiftKey); return; }
   const f = t.closest("[data-filter]");
   if (f && !f.disabled) { S.filter = S.filter === f.dataset.filter && f.classList.contains("counter") ? "all" : f.dataset.filter; renderFrame(); return; }
   const a = t.closest("[data-act]");
@@ -546,6 +547,7 @@ async function onClick(e) {
     case "cat-prev": S.cat.offset = Math.max(0, S.cat.offset - PER_PAGE); loadCatalog(); break;
     case "cat-next": S.cat.offset += PER_PAGE; loadCatalog(); break;
     case "cat-clear": S.cat.selected.clear(); renderCatalogList(); break;
+    case "cat-select-all": busy(a, selectAllCatalog); break;
   }
 }
 
@@ -557,11 +559,6 @@ async function onChange(e) {
     const ids = visibleChannels().map((c) => c.id);
     ids.forEach((x) => (t.checked ? S.selected.add(x) : S.selected.delete(x)));
     renderFrame();
-  } else if (t.matches("[data-sel]")) {
-    t.checked ? S.selected.add(id) : S.selected.delete(id);
-    const hadBar = !!$(".selection-bar:not(.pending-bar)", root);
-    if (hadBar !== S.selected.size > 0) renderFrame();
-    else { tr.classList.toggle("selected", t.checked); const bar = $(".selection-bar:not(.pending-bar)", root); if (bar) bar.firstChild.textContent = `${S.selected.size} selected`; }
   } else if (t.matches("[data-enabled]")) {
     const c = chById(id);
     try {
@@ -587,6 +584,22 @@ async function onChange(e) {
     for (const s of S.cat.items) { const k = refKey(s); t.checked ? S.cat.selected.set(k, s) : S.cat.selected.delete(k); }
     renderCatalogList();
   }
+}
+// A row's checkbox; with Shift held, every visible row from the last one clicked to this one takes its state.
+let selAnchor = null;
+function selectRange(t, shift) {
+  const tr = t.closest("tr[data-id]");
+  const id = Number(tr.dataset.id);
+  const ids = visibleChannels().map((c) => c.id);
+  const from = ids.indexOf(selAnchor), to = ids.indexOf(id);
+  const range = shift && from >= 0 && to >= 0 ? ids.slice(Math.min(from, to), Math.max(from, to) + 1) : [id];
+  for (const x of range) t.checked ? S.selected.add(x) : S.selected.delete(x);
+  selAnchor = id;
+  const hadBar = !!$(".selection-bar:not(.pending-bar)", root);
+  if (range.length > 1 || hadBar !== S.selected.size > 0) { renderFrame(); return; }
+  tr.classList.toggle("selected", t.checked);
+  const bar = $(".selection-bar:not(.pending-bar)", root);
+  if (bar) bar.firstChild.textContent = `${S.selected.size} selected`;
 }
 function refreshPendingBar() {
   const bar = $(".pending-bar", root);
@@ -1406,7 +1419,7 @@ function renderCatalogList() {
       : `<div class="empty" style="padding:36px 16px"><h3>No providers</h3><p class="small">Add an Xtream or M3U provider to browse its streams.</p><a class="btn btn-sm btn-primary" href="#/providers">Add provider</a></div>`;
   } else {
     list.classList.toggle("busy", c.loading);
-    list.innerHTML = `<label class="cat-row cat-all">${checkHtml(c.items.every((s) => c.selected.has(refKey(s))), 'data-cat-all aria-label="Select page"')}<span class="faint small">Select this page</span></label>` +
+    list.innerHTML = `<div class="cat-row cat-all"><label class="row" style="gap:10px">${checkHtml(c.items.every((s) => c.selected.has(refKey(s))), 'data-cat-all aria-label="Select page"')}<span class="faint small">Select this page</span></label>${c.total > c.items.length ? `<span class="spacer"></span><button class="btn btn-sm btn-ghost" data-act="cat-select-all">Select all ${fmtInt(c.total)}</button>` : ""}</div>` +
       c.items.map((s, i) => {
         const k = refKey(s);
         const used = (s.channels || []).length;
@@ -1425,6 +1438,19 @@ function renderCatalogList() {
         <button class="btn btn-sm btn-icon" data-act="cat-next" ${to >= c.total ? "disabled" : ""} aria-label="Next page">${icon("chevron", 'style="transform:rotate(-90deg)"')}</button></div>
       <div class="row">${n ? `<button class="btn btn-sm btn-ghost" data-act="cat-clear">Clear</button>` : ""}<button class="btn btn-primary" style="flex:1" data-act="cat-add" ${n ? "" : "disabled"}>${icon("plus")}Add ${n ? fmtInt(n) + " " : ""}selected</button></div>`;
   }
+}
+// Every stream the catalog's filters match, on every page (the server pages by 1,000 at most).
+async function selectAllCatalog() {
+  const st = S, c = S.cat;
+  try {
+    for (let offset = 0; offset < c.total; offset += 1000) {
+      const r = normalizePage(await api.streams({ provider: c.provider, group: c.group, q: c.q.trim(), offset, limit: 1000 }));
+      if (S !== st) return;
+      r.items.forEach((s) => c.selected.set(refKey(s), s));
+      if (!r.items.length) break;
+    }
+  } catch (e) { toastError("Could not select every stream", e); }
+  if (S === st) renderCatalogList();
 }
 async function addFromCatalog() {
   const streams = [...S.cat.selected.values()].map((s) => ({ provider: s.provider, stream_id: String(s.stream_id) }));
