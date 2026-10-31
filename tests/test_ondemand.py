@@ -514,6 +514,33 @@ class LibraryPickTests(unittest.TestCase):
         self.lib.sync("p2")
         self.assertEqual(p["vod"]["picks"]["movies"], [])
 
+    def test_another_dvr_with_items_of_the_same_ids_does_not_drop_picks(self):
+        p = self.cfg["providers"][0]
+        p["vod"]["all"] = {"movies": ["Comedy"], "series": []}
+        p["vod"]["picks"] = {"movies": ["1", "2", "3"], "series": []}
+        self.lib.sync("p2")
+        amelie = next(f for f, b in self.files.items() if "Am" in b["Path"])
+        self.files[amelie] = dict(self.files[amelie], Path="Recordings/Someone else's show.mpg")   # same id, not ours
+        self.unknown = {f for f in self.files if f != amelie}
+        self.lib.sync("p2")
+        self.assertEqual(p["vod"]["picks"]["movies"], ["1", "2", "3"])
+
+    def test_a_changed_path_whose_old_item_is_already_gone_moves_on(self):
+        self.lib.sync("p2")
+        rel = "Movies/.coax/p2/Up (2009)/Up (2009).strm"
+        old = self.lib.state["p2"]["files"][rel]
+        self.lib.state["p2"]["src"][rel] = "m/999.mkv"
+        real = self.dvr
+
+        def gone(cfg, method, path, body=None):
+            if path.startswith("/dvr/files/%s" % old) and method in ("DELETE", "PUT"):
+                from app import channels_dvr
+                raise channels_dvr.DvrError("Channels DVR answered 404 for %s %s: not found" % (method, path))
+            return real(cfg, method, path, body)
+        self.lib._dvr_call = gone
+        self.lib.sync("p2")
+        self.assertNotEqual(self.lib.state["p2"]["files"][rel], old)
+
     def test_an_urgent_mark_of_a_deleted_provider_is_forgotten(self):
         self.lib._urgent.add("gone")
         self.lib.run_once()

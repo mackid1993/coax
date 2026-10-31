@@ -663,6 +663,8 @@ class Library:
             self._call(cfg, "PUT", "/dvr/files/%s/permanently_delete" % fid)
             return True
         except Exception as exc:  # noqa: BLE001 - one item that will not go never stops the rest
+            if "answered 404 " in str(exc):
+                return True   # already gone (deleted in Channels DVR): nothing left to delete
             log.warning("VOD: could not delete DVR item %s: %s", fid, exc)
             return False
 
@@ -846,8 +848,8 @@ class Library:
         done = self._pool(CREATE_WORKERS, lambda item: self._delete_file(cfg, item[1]), gone)
         with self._state_lock:
             for (rel, fid), ok in zip(gone, done):
-                if rel in changed and ok is not True:
-                    changed.discard(rel)   # the old item is still there: try again next sync, never two items
+                if ok is not True:   # the old item is still there: try again next sync (never two items, no orphan)
+                    changed.discard(rel)
                     continue
                 st["files"].pop(rel, None)
                 st["todo"].pop("f:" + fid, None)
@@ -1274,19 +1276,23 @@ class Library:
         return set((self.state.get(str(pid)) or {}).get("present") or [])
 
     def _same_dvr(self, cfg, st, picks):
-        """True when Channels DVR still knows something coax made that is not a hand-pick (an Add all title, else a
-        collection): then picks it has never heard of were really deleted (and the trash emptied)."""
+        """True when Channels DVR still holds an item coax made that is not a hand-pick (an Add all title, checked by
+        its own path, not just its id: another DVR has items with the same ids): then picks it has never heard of were
+        really deleted (and the trash emptied)."""
         where = st.get("where") or {}
-        mine = {where.get(k) for k in picks}
-        probes = [("/dvr/files/%s" % fid) for rel, fid in list((st.get("files") or {}).items())[:200]
-                  if rel not in mine and not any(rel.startswith(w or "\0") for w in mine if (w or "").endswith("/"))][:3]
-        probes += ["/dvr/collections/content/%s" % cid for cid in list((st.get("collections") or {}).values())[:2]]
-        for path in probes:
+        spots = [w for w in (where.get(k) for k in picks) if w]
+        tried = 0
+        for rel, fid in (st.get("files") or {}).items():
+            if tried >= 5:
+                break
+            if any(rel == w or (w.endswith("/") and rel.startswith(w)) for w in spots):
+                continue   # a hand-pick: that is what is being judged
+            tried += 1
             try:
-                item = self._call(cfg, "GET", path)
+                item = self._call(cfg, "GET", "/dvr/files/%s" % fid)
             except Exception:  # noqa: BLE001 - not known (or not reachable): try the next one
                 continue
-            if isinstance(item, dict) and item and not item.get("Deleted"):
+            if isinstance(item, dict) and not item.get("Deleted") and item.get("Path") == rel.split("/", 1)[-1]:
                 return True
         return False
 
@@ -1454,7 +1460,7 @@ class Library:
         known = set()
         self._preempted = False
         configured = {p.get("id") for p in cfg.get("providers") or []}
-        for pid in [x for x in self._urgent if x not in configured]:
+        for pid in self._urgent - configured:   # the difference is taken at once; request() may add meanwhile
             self._urgent.discard(pid)
         providers = sorted(cfg.get("providers") or [], key=lambda p: p["id"] not in self._urgent)
         for index, provider in enumerate(providers):
