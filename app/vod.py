@@ -661,8 +661,10 @@ class Library:
         try:
             self._call(cfg, "DELETE", "/dvr/files/%s" % fid)
             self._call(cfg, "PUT", "/dvr/files/%s/permanently_delete" % fid)
+            return True
         except Exception as exc:  # noqa: BLE001 - one item that will not go never stops the rest
             log.warning("VOD: could not delete DVR item %s: %s", fid, exc)
+            return False
 
     def _pool(self, workers, func, items):
         """Run func over items on a few threads; stops early when coax is stopping. Returns the results in order."""
@@ -839,14 +841,21 @@ class Library:
         src = st.setdefault("src", {})   # path -> the provider title it plays ("m/123.mkv")
         # A path that now plays another title (a copy moved in) is a new item: the old one, with the old title's
         # match and group, goes.
-        changed = [rel for rel in pl.files if rel in st["files"] and src.get(rel) not in (None, _source(pl.files[rel]))]
-        gone = [(rel, fid) for rel, fid in st["files"].items() if rel not in pl.files or rel in set(changed)]
-        self._pool(CREATE_WORKERS, lambda item: self._delete_file(cfg, item[1]), gone)
+        changed = {rel for rel in pl.files if rel in st["files"] and src.get(rel) not in (None, _source(pl.files[rel]))}
+        gone = [(rel, fid) for rel, fid in st["files"].items() if rel not in pl.files or rel in changed]
+        done = self._pool(CREATE_WORKERS, lambda item: self._delete_file(cfg, item[1]), gone)
         with self._state_lock:
-            for rel, fid in gone:
+            for (rel, fid), ok in zip(gone, done):
+                if rel in changed and ok is not True:
+                    changed.discard(rel)   # the old item is still there: try again next sync, never two items
+                    continue
                 st["files"].pop(rel, None)
                 st["todo"].pop("f:" + fid, None)
                 src.pop(rel, None)
+            for rel in changed:
+                gid = (pl.meta.get(rel) or {}).get("gid")
+                if gid:   # Channels DVR may drop a show with its last episode: create and name it again
+                    st["groups"].pop(gid, None)
         for rel in changed:   # deleting the item took its file too; the new one needs it
             self._write_one(rel, pl.files[rel])
         for gid in [g for g in st["groups"] if g not in pl.shows]:
@@ -1236,10 +1245,11 @@ class Library:
         finally:
             self._note_present(pid, pl)
             src = st.setdefault("src", {})
+            made = set(new)
             with self._state_lock:
                 for rel in pl.files:
-                    if rel in st["files"]:
-                        src.setdefault(rel, _source(pl.files[rel]))
+                    if rel in st["files"] and (rel in made or rel not in src):
+                        src[rel] = _source(pl.files[rel])
         self._visibility(cfg, pid, pl)
         log.info("VOD provider %s: %d movies, %d episodes of %d shows; %d added to Channels DVR in %.0fs, %d removed",
                  pid, st["movies"], st["episodes"], st["shows"], sum(1 for r in new if st["files"].get(r)),
@@ -1262,6 +1272,23 @@ class Library:
     def present(self, pid):
         """The set of "m:<id>" / "s:<id>" keys of a provider's titles that are in Channels DVR."""
         return set((self.state.get(str(pid)) or {}).get("present") or [])
+
+    def _same_dvr(self, cfg, st, picks):
+        """True when Channels DVR still knows something coax made that is not a hand-pick (an Add all title, else a
+        collection): then picks it has never heard of were really deleted (and the trash emptied)."""
+        where = st.get("where") or {}
+        mine = {where.get(k) for k in picks}
+        probes = [("/dvr/files/%s" % fid) for rel, fid in list((st.get("files") or {}).items())[:200]
+                  if rel not in mine and not any(rel.startswith(w or "\0") for w in mine if (w or "").endswith("/"))][:3]
+        probes += ["/dvr/collections/content/%s" % cid for cid in list((st.get("collections") or {}).values())[:2]]
+        for path in probes:
+            try:
+                item = self._call(cfg, "GET", path)
+            except Exception:  # noqa: BLE001 - not known (or not reachable): try the next one
+                continue
+            if isinstance(item, dict) and item and not item.get("Deleted"):
+                return True
+        return False
 
     def _respect_deletions(self, cfg, provider):
         """A hand-picked title the user deleted inside Channels DVR is no longer picked (it is never added back).
@@ -1311,7 +1338,7 @@ class Library:
         self._pool(CREATE_WORKERS, check, keys)
         if not gone:
             return False
-        if len(unknown) >= 3 and len(unknown) * 2 > len(keys):
+        if len(unknown) >= 3 and len(unknown) * 2 > len(keys) and not self._same_dvr(cfg, st, set(present)):
             # Most picks gone at once is not the user deleting titles: the DVR server URL points at another (or a
             # rebuilt) Channels DVR, or something in front of it answers 404. Keep every pick.
             log.warning("VOD provider %s: Channels DVR does not know %d of %d hand-picked titles checked; keeping "
@@ -1335,6 +1362,7 @@ class Library:
                 spot = where.pop(key, "") or ""
                 if key.startswith("m:"):
                     fid = st["files"].pop(spot, None)
+                    (st.get("src") or {}).pop(spot, None)
                     if fid:
                         st["todo"].pop("f:" + str(fid), None)
                 else:
@@ -1343,6 +1371,7 @@ class Library:
                     st["todo"].pop("g:" + gid, None)
                     for rel in [r for r in st["files"] if spot and r.startswith(spot)]:
                         st["todo"].pop("f:" + str(st["files"].pop(rel)), None)
+                        (st.get("src") or {}).pop(rel, None)
             st["where"] = where
             st["present"] = [k for k in st.get("present") or [] if k not in set(gone)]
         log.info("VOD provider %s: %d hand-picked titles were deleted in Channels DVR; they are no longer picked",
@@ -1424,7 +1453,9 @@ class Library:
         wanted, self._wanted = self._wanted, set()
         known = set()
         self._preempted = False
-        self._urgent.intersection_update(p.get("id") for p in cfg.get("providers") or [])
+        configured = {p.get("id") for p in cfg.get("providers") or []}
+        for pid in [x for x in self._urgent if x not in configured]:
+            self._urgent.discard(pid)
         providers = sorted(cfg.get("providers") or [], key=lambda p: p["id"] not in self._urgent)
         for index, provider in enumerate(providers):
             known.add(provider["id"])

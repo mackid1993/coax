@@ -387,7 +387,9 @@ pass record every one of them).
   and an `Airing` that must have `Source`, `Title`, `Time`, `Duration` and `Channel` (else 400 `invalid file`).
   No lookup runs in the call. A new show's first episode goes alone, then `PUT /dvr/groups/<id>` names it (Name,
   Summary, Image, FanArt, Genres, ReleaseYear, ReleaseDate, Categories). `cache/vod-state.json` keeps
-  `files` (path -> DVR id), `groups`, `hidden`, `hidden_shows`, `todo`, `retry`, `present` and `where`. The files must stay: the
+  `files` (path -> DVR id), `groups`, `hidden`, `hidden_shows`, `todo`, `retry`, `present`, `where` and `src`
+  (path -> the provider title it plays, `m/<id>.<ext>`: a path that comes to play another title gets a new item;
+  a 1.0.8 state without it is never recreated). The files must stay: the
   DVR's import prune deletes an item whose file is missing, and `DELETE /dvr/files/<id>` removes the file too.
   Removed titles: `DELETE` then `PUT .../permanently_delete` per item, `DELETE /dvr/groups/<id>` per show, never
   a DVR-wide prune. Collections: `/dvr/collections/content`, Items = file ids (movies) or group ids (shows); one

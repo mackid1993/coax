@@ -323,7 +323,8 @@ class LibraryPickTests(unittest.TestCase):
             if self.on_post:
                 self.on_post(body)
             return dict(body, ID=fid)
-        if method == "GET" and path.startswith("/dvr/files/") and self.unknown:
+        if method == "GET" and path.startswith("/dvr/files/") and (self.unknown is True or
+                                                                   path.rsplit("/", 1)[1] in (self.unknown or ())):
             from app import channels_dvr
             raise channels_dvr.DvrError("Channels DVR answered 404 for GET %s: not found" % path)
         if method == "GET" and path.startswith("/dvr/files/"):
@@ -469,6 +470,49 @@ class LibraryPickTests(unittest.TestCase):
         self.assertIn(("DELETE", "/dvr/files/%s" % old), self.calls)
         self.assertTrue(os.path.isfile(os.path.join(self.imports, rel)))   # the new item's file is there
         self.assertEqual(self.lib.state["p2"]["src"][rel], "m/1.mkv")
+
+    def test_a_changed_path_whose_old_item_will_not_go_waits(self):
+        self.lib.sync("p2")
+        rel = "Movies/.coax/p2/Up (2009)/Up (2009).strm"
+        old = self.lib.state["p2"]["files"][rel]
+        self.lib.state["p2"]["src"][rel] = "m/999.mkv"
+        real = self.dvr
+
+        def failing(cfg, method, path, body=None):
+            if method == "DELETE" and path == "/dvr/files/%s" % old:
+                from app import channels_dvr
+                raise channels_dvr.DvrError("Channels DVR answered 500 for DELETE")
+            return real(cfg, method, path, body)
+        self.lib._dvr_call = failing
+        self.lib.sync("p2")
+        self.assertEqual(self.lib.state["p2"]["files"][rel], old)   # never two items for one path
+        self.lib._dvr_call = real
+        self.lib.sync("p2")
+        self.assertNotEqual(self.lib.state["p2"]["files"][rel], old)
+
+    def test_a_pick_deleted_then_another_copy_picked_settles_at_once(self):
+        p = self.cfg["providers"][0]
+        p["vod"]["all"] = {"movies": [], "series": []}
+        p["vod"]["picks"] = {"movies": ["2"], "series": []}
+        self.lib.sync("p2")
+        self.deleted.update(self.files)
+        self.lib.sync("p2")
+        p["vod"]["picks"] = {"movies": ["1"], "series": []}   # the other copy of Up, same path
+        self.lib.sync("p2")
+        made = len(self.files)
+        deletes = len([c for c in self.calls if c[0] == "DELETE"])
+        self.lib.sync("p2")
+        self.assertEqual((len(self.files), len([c for c in self.calls if c[0] == "DELETE"])), (made, deletes))
+
+    def test_picks_gone_from_an_emptied_trash_are_still_respected(self):
+        p = self.cfg["providers"][0]
+        p["vod"]["all"] = {"movies": ["Comedy"], "series": []}
+        p["vod"]["picks"] = {"movies": ["1", "2", "3"], "series": []}
+        self.lib.sync("p2")
+        amelie = next(f for f, b in self.files.items() if "Am" in b["Path"])
+        self.unknown = {f for f in self.files if f != amelie}   # the picks are gone for good, the Add all title is not
+        self.lib.sync("p2")
+        self.assertEqual(p["vod"]["picks"]["movies"], [])
 
     def test_an_urgent_mark_of_a_deleted_provider_is_forgotten(self):
         self.lib._urgent.add("gone")
