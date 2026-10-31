@@ -13,7 +13,7 @@ and keeps each channel's streams in their most stable order (Smart Standby). It 
 against its picture; feeds that are out of sync are disabled by hand.
 
 Stack: Python 3.13, stdlib HTTP server, `requests`, `cryptography` (AES HLS), Jellyfin ffmpeg 8.1.3, vanilla JS
-web UI with no build step. All state is one folder, `/data`. Runs as uid 1000. amd64 only.
+web UI with no build step. All state is one folder, `/data`. Runs as uid 1000. Images for amd64 and arm64.
 
 ## Layout
 
@@ -48,7 +48,7 @@ app/
 tests/               unittest suite (fake engine in tests/fixtures/hub/fake_engine.py)
 reference/           the original matcher and backup scripts from channels-dvr-iptv-tools (ported, not used)
 scripts/make_logo.py brand asset generator
-.github/workflows/   tests.yml (on push), image.yml (manual dispatch only: version + tag, amd64)
+.github/workflows/   tests.yml (on push), image.yml (manual dispatch only: version + tag, amd64 + arm64)
 ```
 
 ## Data
@@ -439,7 +439,7 @@ No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`
 - Image: `Dockerfile` (python:3.13-slim-trixie by digest, Debian snapshot, Jellyfin ffmpeg pinned by SHA-256; the
   build fails without `h264_vaapi`, `h264_nvenc` and the VAAPI/CUDA filters).
 - Release: `gh workflow run image.yml -f version=X -f tag=latest`; it tests, smoke-runs the image, then pushes
-  `ghcr.io/mackid1993/coax:X` and `:latest` (amd64). The smoke run includes `scripts/check-ffmpeg-errors.py`
+  `ghcr.io/mackid1993/coax:X` and `:latest` (amd64 and arm64, each smoke-tested on its own runner). The smoke run includes `scripts/check-ffmpeg-errors.py`
   against the image's ffmpeg: the GPU decoding fallback (`gpufail`) reads ffmpeg's messages, so an ffmpeg
   upgrade that rewords an audio failure fails the build (update `AUDERR`/`GPUERR` and `GpuFallbackTest`).
 - Compose: `docker-compose.yml` and `docker-compose.vpn.yml` need no editing; every setting is a

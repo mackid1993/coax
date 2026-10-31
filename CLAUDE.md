@@ -121,7 +121,7 @@ usually after a mistake.
 - Screenshots use made-up channels (Raccoon Network HD, Cat Courtroom...). No Unraid labels in repo compose files.
 - Issues and pull requests are not accepted; provided as is; forks welcome (MIT). Rare updates are deliberate.
 - **Images:** published only by manual dispatch (`gh workflow run image.yml -f version=X -f tag=latest`),
-  amd64 only. The owner names versions: a significant change gets a new number, follow-ups are `-1`, `-2`.
+  amd64 and arm64. The owner names versions: a significant change gets a new number, follow-ups are `-1`, `-2`.
   Every build is stamped: `scripts/stamp-version.sh <version>` writes `app/VERSION` (gitignored; CI runs it
   with the version input, else `<tag>-<commit>`), the UI shows it at the bottom of the sidebar, `/api/version`
   returns it and the startup log line includes it. Local builds: `scripts/build-image.sh <version>`.

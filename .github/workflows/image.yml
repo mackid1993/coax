@@ -42,8 +42,77 @@ jobs:
       - name: Unit tests
         run: python -m unittest discover tests -v
 
-  publish:
+  # Each architecture is built on its own runner and started once, so a broken image is never published.
+  smoke:
     needs: test
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The version shown in the web UI (and logged at start): the version input, else <tag>-<commit>.
+      - name: Stamp the version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          v="${VERSION#v}"
+          [ -n "$v" ] || v="${TAG:-dev}-$(git rev-parse --short HEAD)"
+          scripts/stamp-version.sh "$v"
+          echo "Stamped version: $v" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build for smoke test (${{ matrix.arch }})
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: coax:smoke
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -eu
+          # Docker creates ./data as root, the way a first-time user's would be.
+          docker run -d --name coax -p 7780:7780 -v "$PWD/data:/data" coax:smoke
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7780/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:7780/healthz
+          curl -fsS http://127.0.0.1:7780/ | grep -qi "coax"
+          curl -fsS http://127.0.0.1:7780/api/config >/dev/null
+          curl -fsS http://127.0.0.1:7780/api/version | grep -qF "\"$(cat app/VERSION)\""
+          docker exec coax ffmpeg -hide_banner -encoders | grep -E "h264_(vaapi|nvenc)"
+          # The engines tell a GPU decoding failure from an audio failure by ffmpeg's messages: fail on a reworded one.
+          python3 scripts/check-ffmpeg-errors.py docker exec -i coax ffmpeg
+          docker exec coax python -c "import cryptography, requests; print('python deps ok')"
+          test -f data/config.json
+
+      - name: Container log
+        if: always()
+        run: docker logs coax 2>&1 | tail -n 100 || true
+
+  publish:
+    needs: [test, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,42 +161,6 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Build amd64 locally first and start it once, so a broken image is never published.
-      - name: Build for smoke test (amd64)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: coax:smoke
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke test
-        shell: bash
-        run: |
-          set -eu
-          # Docker creates ./data as root, the way a first-time user's would be.
-          docker run -d --name coax -p 7780:7780 -v "$PWD/data:/data" coax:smoke
-          for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:7780/healthz >/dev/null 2>&1; then break; fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:7780/healthz
-          curl -fsS http://127.0.0.1:7780/ | grep -qi "coax"
-          curl -fsS http://127.0.0.1:7780/api/config >/dev/null
-          curl -fsS http://127.0.0.1:7780/api/version | grep -qF "\"$(cat app/VERSION)\""
-          docker exec coax ffmpeg -hide_banner -encoders | grep -E "h264_(vaapi|nvenc)"
-          # The engines tell a GPU decoding failure from an audio failure by ffmpeg's messages: fail on a reworded one.
-          python3 scripts/check-ffmpeg-errors.py docker exec -i coax ffmpeg
-          docker exec coax python -c "import cryptography, requests; print('python deps ok')"
-          test -f data/config.json
-
-      - name: Container log
-        if: always()
-        run: docker logs coax 2>&1 | tail -n 100 || true
-
       - name: Log in to GHCR
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
@@ -135,11 +168,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push (amd64)
+      # arm64 is built through QEMU here; both images were smoke-tested natively in the smoke job.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.list }}
           labels: |
@@ -147,5 +184,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ inputs.version }}
             org.opencontainers.image.licenses=MIT
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=amd64
+            type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=publish
