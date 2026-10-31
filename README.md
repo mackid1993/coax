@@ -1405,9 +1405,9 @@ coax is built to need as few updates as possible: it is meant to be set up once 
 releases are rare on purpose. A long gap since the last release does not mean the project is abandoned. It
 never updates itself; updating is a deliberate step:
 
-1. Read the release notes on the [releases page](https://github.com/mackid1993/coax/releases).
+1. Read the release notes in the first post of the [coax thread](https://community.getchannels.com/t/47483) on the Channels DVR forum.
 2. Back up `./data` (it is small), or press *Back up now* in Settings.
-3. On `TAG=latest`, just pull. If you froze a release, change `TAG` in `.env` to the new one.
+3. On `TAG=latest`, just pull. If you froze a version, change `TAG` in `.env` to the new one.
 4. `docker compose pull && docker compose up -d` (add `-f docker-compose.vpn.yml` for the VPN setup).
 5. Check the version at the bottom of the sidebar in the web UI (above the page on a phone, or the first lines
    of `docker logs coax`).
