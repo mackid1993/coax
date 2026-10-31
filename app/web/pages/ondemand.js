@@ -38,6 +38,7 @@ export async function mount(el) {
   try { const k = localStorage.getItem("coax.ondemand.kind"); if (k === "movies" || k === "series") S.kind = k; } catch {}
   const st = S;
   render();
+  watchBar();
   await loadFrame();
   if (S !== st) return;
   await loadDraft();
@@ -46,7 +47,16 @@ export async function mount(el) {
   loadBoth();
   poll = setInterval(refreshFrame, 15000);
 }
-export function unmount() { clearInterval(poll); S = null; }
+export function unmount() { clearInterval(poll); barWatch?.disconnect(); barWatch = null; S = null; }
+// The sticky panes sit below the save bar: follow its height when it wraps (a resize, a longer note).
+let barWatch = null;
+function watchBar() {
+  barWatch?.disconnect();
+  if (typeof ResizeObserver !== "function") return;
+  barWatch = new ResizeObserver(() => { const el = $("#odDraft", root); if (el && S) barHeight(el); });
+  const el = $("#odDraft", root);
+  if (el) barWatch.observe(el);
+}
 
 // ---------- Server data ----------
 async function loadFrame() {
@@ -183,6 +193,7 @@ function render() {
   <div id="odDraft"></div>
   ${body()}`;
   wire();
+  if (barWatch) watchBar();   // #odDraft was rebuilt
   drawStatus();
   drawDraft();
   drawGroups();
@@ -301,8 +312,10 @@ function drawGroups() {
   const list = $(".od-group-list", el);
   const top = list ? list.scrollTop : 0;
   const a = document.activeElement;
-  const focus = a && el.contains(a) ? (a.matches("[data-addall]") ? `[data-addall][data-provider="${CSS.escape(a.dataset.provider)}"][data-kind="${a.dataset.kind}"][data-name="${CSS.escape(a.dataset.name)}"]`
-    : a.matches("[data-group]") ? `[data-group="${CSS.escape(a.dataset.group)}"][data-gkind="${a.dataset.gkind || ""}"]` : null) : null;
+  const sel = (attrs) => attrs.filter(([, v]) => v != null).map(([k, v]) => `[${k}="${CSS.escape(v)}"]`).join("");
+  const focus = a && el.contains(a) ? (a.matches("[data-addall]")
+    ? "[data-addall]" + sel([["data-provider", a.dataset.provider], ["data-kind", a.dataset.kind], ["data-name", a.dataset.name]])
+    : a.matches("[data-group]") ? sel([["data-group", a.dataset.group], ["data-gkind", a.dataset.gkind], ["data-gprovider", a.dataset.gprovider]]) : null) : null;
   el.innerHTML = groupsHtml();
   const list2 = $(".od-group-list", el);
   if (list2) list2.scrollTop = top;
@@ -337,8 +350,12 @@ async function toggleAddAll(input) {
   drawGroups(); drawDraft();
   try {
     // Unsent changes go first: the server drops the ones inside this group, and the page then takes its copy.
-    await flushDraft();
-    if (S !== st) return;
+    if (!(await flushDraft())) {
+      if (S !== st) return;
+      S.busy = ""; drawGroups(); drawDraft();
+      toast("Add all not changed", "The unsaved changes were still on their way to coax (or changed in another window). Try again.", "warn");
+      return;
+    }
     const r = await api.ondemandAddAll({ provider, kind, group: name, on });
     if (S !== st) return;
     if (r.dropped) await loadDraft();

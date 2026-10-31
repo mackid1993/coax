@@ -136,6 +136,42 @@ class PlanCopyTests(unittest.TestCase):
         self.assertEqual(again.present["m:1"], "Movies/.coax/p2/Up (2009) - Action/Up (2009) - Action.strm")
 
 
+class KeptPickTests(unittest.TestCase):
+    """A hand-pick that is already in Channels DVR, then Add all for a group with another copy of the same title."""
+    VOD = {"movies": [{"id": "1", "name": "Heat (1995)", "groups": ["A"]},
+                      {"id": "2", "name": "Heat (1995)", "groups": ["B"]},
+                      {"id": "3", "name": "Heat (1995)", "groups": ["C"]}],
+           "series": [{"id": "10", "name": "Foo (2020)", "groups": ["A"]},
+                      {"id": "20", "name": "Foo (2020)", "groups": ["B"]},
+                      {"id": "30", "name": "Foo (2020)", "groups": ["C"]}]}
+    EPS = {"10": [{"id": "101", "season": 1, "episode": 1}], "20": [{"id": "201", "season": 1, "episode": 1}],
+           "30": [{"id": "301", "season": 1, "episode": 1}]}
+
+    def provider(self, all_groups):
+        return {"id": "p1", "name": "P", "vod": {"movies": ["A", "B", "C"], "series": ["A", "B", "C"],
+                                                "all": {"movies": all_groups, "series": all_groups},
+                                                "picks": {"movies": ["1"], "series": ["10"]}}}
+
+    def test_add_all_copies_get_their_own_place_beside_the_pick_and_still_dedupe(self):
+        first = vodlib.plan(self.provider([]), self.VOD, self.EPS, "http://coax")
+        keep = {"m:1": first.present["m:1"], "s:10": first.folders["coax-p1-10"]}
+        pl = vodlib.plan(self.provider(["B", "C"]), self.VOD, self.EPS, "http://coax", keep=keep)
+        self.assertEqual(pl.present["m:1"], "Movies/.coax/p1/Heat (1995)/Heat (1995).strm")
+        self.assertEqual(pl.present["m:2"], "Movies/.coax/p1/Heat (1995) - B/Heat (1995) - B.strm")
+        self.assertEqual(pl.present["m:3"], pl.present["m:2"])   # two Add all groups: one copy, as before
+        self.assertEqual(pl.members[("movies", "C")], [pl.present["m:2"]])
+        self.assertEqual(pl.present["s:20"], "coax-p1-20")
+        self.assertEqual(pl.present["s:30"], "coax-p1-20")
+        self.assertEqual(pl.members[("series", "B")], ["coax-p1-20"])
+        self.assertIn("TV/.coax/p1/Foo (2020) - B/Season 01/Foo (2020) - B - S01E01.strm", pl.files)
+
+    def test_a_renamed_title_does_not_keep_the_old_place(self):
+        vod = {"movies": [{"id": "1", "name": "Heat (1996)", "groups": ["A"]}], "series": []}
+        pl = vodlib.plan(self.provider([]), vod, {}, "http://coax",
+                         keep={"m:1": "Movies/.coax/p1/Heat (1995)/Heat (1995).strm"})
+        self.assertEqual(pl.present["m:1"], "Movies/.coax/p1/Heat (1996)/Heat (1996).strm")
+
+
 class SearchTests(unittest.TestCase):
     def setUp(self):
         self.titles, self.by_key = FakeCatalogs(VOD).get("p2")
@@ -287,6 +323,9 @@ class LibraryPickTests(unittest.TestCase):
             if self.on_post:
                 self.on_post(body)
             return dict(body, ID=fid)
+        if method == "GET" and path.startswith("/dvr/files/") and self.unknown:
+            from app import channels_dvr
+            raise channels_dvr.DvrError("Channels DVR answered 404 for GET %s: not found" % path)
         if method == "GET" and path.startswith("/dvr/files/"):
             fid = path.rsplit("/", 1)[1]
             return dict(self.files.get(fid) or {}, Deleted=fid in self.deleted)
@@ -307,6 +346,7 @@ class LibraryPickTests(unittest.TestCase):
         return {}
 
     on_post = None
+    unknown = False
 
     def paths(self):
         return [b["Path"] for b in self.files.values()]
@@ -396,7 +436,7 @@ class LibraryPickTests(unittest.TestCase):
         p["vod"]["all"] = {"movies": [], "series": []}
         p["vod"]["picks"] = {"movies": ["1", "3", "4"], "series": ["s2"]}
         self.lib.sync("p2")
-        self.deleted.update(self.files)
+        self.unknown = True   # another Channels DVR: it has never heard of any of them
         self.deleted_shows.add("coax-p2-s2")
         self.lib.sync("p2")
         self.assertEqual(p["vod"]["picks"], {"movies": ["1", "3", "4"], "series": ["s2"]})
@@ -417,6 +457,40 @@ class LibraryPickTests(unittest.TestCase):
         finally:
             vodlib.CREATE_WORKERS = create
         self.assertEqual(len(seen), 1)
+
+    def test_a_path_that_now_plays_another_title_is_a_new_item(self):
+        self.lib.sync("p2")
+        rel = "Movies/.coax/p2/Up (2009)/Up (2009).strm"
+        old = self.lib.state["p2"]["files"][rel]
+        self.lib.state["p2"]["src"][rel] = "m/999.mkv"   # as if another copy had lived there
+        self.lib.sync("p2")
+        new = self.lib.state["p2"]["files"][rel]
+        self.assertNotEqual(new, old)
+        self.assertIn(("DELETE", "/dvr/files/%s" % old), self.calls)
+        self.assertTrue(os.path.isfile(os.path.join(self.imports, rel)))   # the new item's file is there
+        self.assertEqual(self.lib.state["p2"]["src"][rel], "m/1.mkv")
+
+    def test_an_urgent_mark_of_a_deleted_provider_is_forgotten(self):
+        self.lib._urgent.add("gone")
+        self.lib.run_once()
+        self.assertEqual(self.lib._urgent, set())
+
+    def test_a_failing_sync_with_a_backlog_waits_ten_minutes(self):
+        p = self.cfg["providers"][0]
+        import time as _t
+        self.lib.state["p2"] = {"continue_at": _t.time() - 5, "last_try": _t.time(), "files": {"x": "1"}, "present": []}
+        self.assertFalse(self.lib._due(p))
+        self.lib.state["p2"]["last_try"] = _t.time() - 601
+        self.assertTrue(self.lib._due(p))
+
+    def test_titles_the_user_deleted_are_not_mistaken_for_another_dvr(self):
+        p = self.cfg["providers"][0]
+        p["vod"]["all"] = {"movies": [], "series": []}
+        p["vod"]["picks"] = {"movies": ["1", "3", "4"], "series": ["s2"]}
+        self.lib.sync("p2")
+        self.deleted.update(f for f, b in self.files.items() if b.get("GroupID") == "movies")   # in the trash
+        self.lib.sync("p2")
+        self.assertEqual(p["vod"]["picks"], {"movies": [], "series": ["s2"]})
 
     def test_nothing_chosen_clears_the_library_but_keeps_the_catalog(self):
         self.lib.sync("p2")

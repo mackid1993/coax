@@ -194,6 +194,18 @@ def quality(name, groups=()):
     return "HD"
 
 
+def _source(content):
+    """The provider title a Stream File plays: "m/123.mkv" from "<base>/vod/<pid>/m/123.mkv"."""
+    return "/".join(content.strip().split("/")[-2:])
+
+
+def _same_title(folder, name):
+    """A kept folder still belongs to this title (the provider did not rename it): it is the name, or a copy of it."""
+    short = safe_name(name, COPY_NAME_LIMIT).lower()
+    folder = folder.lower()
+    return folder == name.lower() or folder.startswith(short + " - ")
+
+
 COPY_NAME_LIMIT = 120   # bytes of the title kept in a copy's name, leaving room for the group and a number
 
 
@@ -271,21 +283,27 @@ def plan(provider, vod, episodes, base, keep=None):
     out.members = {("movies", g): [] for g in all_m}
     out.members.update({("series", g): [] for g in all_s})
     taken = {}   # lower-case path -> the path of the copy that stands for the title
+    all_place = {}   # lower-case plain path -> the Add all copy of that title (beside a hand-pick, a copy name)
 
     def add_movie(movie, groups, picked, want=None):
         title, year = vodcat.title_year(movie.get("name"), movie.get("year"))
         name = safe_name("%s (%s)" % (title, year) if year else title)
         rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, name, name)   # a folder each: the DVR reads a file's folder
-        if want and want.lower() not in taken:
+        if want and want.lower() not in taken and _same_title(want.split("/")[-2], name):
             rel = want   # a hand-pick already in Channels DVR stays where it is
+        elif not picked and rel.lower() in all_place:
+            rel = all_place[rel.lower()]   # Add all: the same title twice, the first copy stands for both
         elif rel.lower() in taken:
-            if not picked:
+            if not picked and taken[rel.lower()] not in out.picked:
                 rel = taken[rel.lower()]   # Add all: the same title twice, the first copy stands for both
             else:
                 for copy in _copy_names(name, groups):
                     rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, copy, copy)
                     if rel.lower() not in taken:
                         break
+        if not picked:
+            plain = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, name, name)
+            all_place.setdefault(plain.lower(), rel)   # where this title's Add all copy is
         if rel.lower() not in taken:
             taken[rel.lower()] = rel
             out.files[rel] = "%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
@@ -330,15 +348,21 @@ def plan(provider, vod, episodes, base, keep=None):
                 add_movie(movie, groups, True)
 
     show_dirs = {}
+    picked_dirs = set()   # folders of hand-picked shows: an Add all show of the same name gets its own
+    all_dirs = {}         # plain folder -> (series id, folder) of the first Add all show with that name
 
     def add_show(show, groups, picked, want=None):
         title, year = vodcat.title_year(show.get("name"), show.get("year") or str(_year(show.get("release")) or ""))
         show_name = "%s (%s)" % (title, year) if year else title
         folder = safe_name(show_name)
-        if want and want.lower() not in show_dirs:
+        if want and want.lower() not in show_dirs and _same_title(want, folder):
             folder = want   # a hand-picked show already in Channels DVR stays where it is
+        elif not picked and folder.lower() in all_dirs and all_dirs[folder.lower()][0] != show["id"]:
+            # Add all: two series with one name, keep the first (the DVR would merge them anyway)
+            out.present["s:%s" % show["id"]] = group_id(pid, all_dirs[folder.lower()][0])
+            return
         elif folder.lower() in show_dirs and show_dirs[folder.lower()] != show["id"]:
-            if not picked:
+            if not picked and folder.lower() not in picked_dirs:
                 # Add all: two series with one name, keep the first (the DVR would merge them anyway)
                 out.present["s:%s" % show["id"]] = group_id(pid, show_dirs[folder.lower()])
                 return
@@ -346,6 +370,10 @@ def plan(provider, vod, episodes, base, keep=None):
                 if folder.lower() not in show_dirs:
                     break
         show_dirs[folder.lower()] = show["id"]
+        if picked:
+            picked_dirs.add(folder.lower())
+        else:
+            all_dirs.setdefault(safe_name(show_name).lower(), (show["id"], folder))
         gid = group_id(pid, show["id"])
         out.folders[gid] = "TV/%s/%s/%s/" % (SUBDIR, pid, folder)
         if picked:
@@ -597,7 +625,7 @@ class Library:
         ok, why = imports_ready(self.imports_dir)
         st = dict(self.state.get(str(provider_id)) or {})
         for key in ("collections", "files", "groups", "todo", "hidden", "hidden_shows", "present", "where", "retry",
-                    "check_from"):
+                    "check_from", "src"):
             st.pop(key, None)
         todo = (self.state.get(str(provider_id)) or {}).get("todo") or {}
         st.update(imports_ok=ok, imports_message=why, running=self.running.get(str(provider_id)),
@@ -808,12 +836,19 @@ class Library:
     def _drop_missing(self, cfg, pid, pl):
         """Delete from the DVR the items and shows the picks no longer have."""
         st = self._pstate(pid)
-        gone = [(rel, fid) for rel, fid in st["files"].items() if rel not in pl.files]
+        src = st.setdefault("src", {})   # path -> the provider title it plays ("m/123.mkv")
+        # A path that now plays another title (a copy moved in) is a new item: the old one, with the old title's
+        # match and group, goes.
+        changed = [rel for rel in pl.files if rel in st["files"] and src.get(rel) not in (None, _source(pl.files[rel]))]
+        gone = [(rel, fid) for rel, fid in st["files"].items() if rel not in pl.files or rel in set(changed)]
         self._pool(CREATE_WORKERS, lambda item: self._delete_file(cfg, item[1]), gone)
         with self._state_lock:
             for rel, fid in gone:
                 st["files"].pop(rel, None)
                 st["todo"].pop("f:" + fid, None)
+                src.pop(rel, None)
+        for rel in changed:   # deleting the item took its file too; the new one needs it
+            self._write_one(rel, pl.files[rel])
         for gid in [g for g in st["groups"] if g not in pl.shows]:
             try:
                 self._call(cfg, "DELETE", "/dvr/groups/%s" % gid)
@@ -980,6 +1015,18 @@ class Library:
                         out[os.path.relpath(full, self.imports_dir).replace(os.sep, "/")] = full
         return out
 
+    def _write_one(self, rel, content):
+        full = os.path.join(self.imports_dir, *rel.split("/"))
+        _makedirs(os.path.dirname(full))
+        tmp = full + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        try:
+            os.chmod(tmp, 0o666)
+        except OSError:
+            pass
+        os.replace(tmp, full)
+
     def _write(self, pid, files):
         """Make the provider's folders hold exactly these files. Returns (count written, paths deleted)."""
         existing = self._existing(pid)
@@ -993,15 +1040,7 @@ class Library:
                             continue
                 except OSError:
                     pass
-            _makedirs(os.path.dirname(full))
-            tmp = full + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as handle:
-                handle.write(content)
-            try:
-                os.chmod(tmp, 0o666)
-            except OSError:
-                pass
-            os.replace(tmp, full)
+            self._write_one(rel, content)
             written += 1
         for rel, full in existing.items():
             if rel not in files:
@@ -1196,6 +1235,11 @@ class Library:
                              preemptible=True)
         finally:
             self._note_present(pid, pl)
+            src = st.setdefault("src", {})
+            with self._state_lock:
+                for rel in pl.files:
+                    if rel in st["files"]:
+                        src.setdefault(rel, _source(pl.files[rel]))
         self._visibility(cfg, pid, pl)
         log.info("VOD provider %s: %d movies, %d episodes of %d shows; %d added to Channels DVR in %.0fs, %d removed",
                  pid, st["movies"], st["episodes"], st["shows"], sum(1 for r in new if st["files"].get(r)),
@@ -1241,7 +1285,7 @@ class Library:
         start = int(st.get("check_from") or 0) % len(keys)
         keys = (keys[start:] + keys[:start])[:DELETION_CHECKS]
         st["check_from"] = start + len(keys)
-        gone = []
+        gone, unknown = [], []   # unknown: the DVR has never heard of it (404), unlike a title in its trash
 
         def check(key):
             kind, ident = key.split(":", 1)
@@ -1258,6 +1302,7 @@ class Library:
             except channels_dvr.DvrError as exc:
                 if "answered 404 " in str(exc):
                     gone.append(key)
+                    unknown.append(key)
                 return
             except Exception:  # noqa: BLE001 - unknown: keep the pick
                 return
@@ -1266,11 +1311,11 @@ class Library:
         self._pool(CREATE_WORKERS, check, keys)
         if not gone:
             return False
-        if len(gone) >= 3 and len(gone) * 2 > len(keys):
+        if len(unknown) >= 3 and len(unknown) * 2 > len(keys):
             # Most picks gone at once is not the user deleting titles: the DVR server URL points at another (or a
             # rebuilt) Channels DVR, or something in front of it answers 404. Keep every pick.
             log.warning("VOD provider %s: Channels DVR does not know %d of %d hand-picked titles checked; keeping "
-                        "them (is the DVR server URL right?)", pid, len(gone), len(keys))
+                        "them (is the DVR server URL right?)", pid, len(unknown), len(keys))
             return False
         gone_m = {k[2:] for k in gone if k.startswith("m:")}
         gone_s = {k[2:] for k in gone if k.startswith("s:")}
@@ -1308,6 +1353,7 @@ class Library:
         """Take a provider's VOD out of the DVR: its items, shows, files, collections and section."""
         cfg = cfg or self.store.get()
         pid = str(pid)
+        self._urgent.discard(pid)
         st = self.state.get(pid)
         has_dvr = bool(((cfg.get("channels_dvr") or {}).get("url") or "").strip())
         if st and has_dvr:
@@ -1354,7 +1400,8 @@ class Library:
         st = self.state.get(provider["id"]) or {}
         if not (movie_groups or series_groups):
             return bool(st)   # every group made unavailable: clean up once
-        if st.get("continue_at") and time.time() >= st["continue_at"]:
+        if st.get("continue_at") and time.time() >= st["continue_at"] and \
+                time.time() - (st.get("last_try") or 0) >= 600:
             return True   # episode lists still to read
         if st.get("files") and "present" not in st and time.time() - (st.get("last_try") or 0) >= 600:
             return True   # an older build's library: learn which titles are in Channels DVR for the On demand page
@@ -1377,6 +1424,7 @@ class Library:
         wanted, self._wanted = self._wanted, set()
         known = set()
         self._preempted = False
+        self._urgent.intersection_update(p.get("id") for p in cfg.get("providers") or [])
         providers = sorted(cfg.get("providers") or [], key=lambda p: p["id"] not in self._urgent)
         for index, provider in enumerate(providers):
             known.add(provider["id"])
