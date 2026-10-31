@@ -89,8 +89,9 @@ Channel names, providers and logos below are made up for the demo.
 - **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
   (VAAPI), NVIDIA (NVENC), or the CPU.
 - **Video on demand**: your providers' movies and series in Channels DVR's own library, with a collection for
-  each group you pick and a section per provider, kept apart from your own media or listed with it, per group. They play exactly as the provider sends them, through
-  coax and its VPN. See [Video on demand](#video-on-demand).
+  each group you pick and a section per provider, kept apart from your own media or listed with it, per group.
+  No transcoding, no remuxing, no ffmpeg: coax only relays the provider's file, byte for byte, so it goes through
+  coax's VPN and counts against your provider's lines. See [Video on demand](#video-on-demand).
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
   channel lists all its streams, with **Switch** to move to another one now, **Disable** to stop using one, and
@@ -1046,8 +1047,15 @@ The approach, and what Channels DVR needs to treat these airings as real sports 
 
 Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
 DVR's own library: in collections and a section of their own, and if you like under **Movies** and **TV Shows**
-next to your recordings and your own media. They get Channels DVR's artwork and descriptions and remember where
-you stopped. They never appear in the guide.
+next to your recordings and your own media. They get artwork and descriptions and remember where you stopped.
+They never appear in the guide.
+
+**Passthrough only.** Video on demand is never transcoded or remuxed, and ffmpeg is not involved at all. coax is
+only a relay: the Channels app asks coax for the movie, coax fetches the provider's file over its own connection
+(through the VPN, if you use one) and hands the bytes on exactly as the provider sends them. coax sits in the
+middle for two reasons: your provider's address and login stay out of Channels DVR and go through the VPN, and
+coax can count the movie against your provider's lines like a channel (live TV and recordings come first). The
+Transcode setting applies to live TV only.
 
 **Setting it up**
 
@@ -1071,11 +1079,22 @@ are read. A very large series group keeps filling in over the following hours: a
 then carries on 15 minutes later (an hour later if the provider starts refusing), until every show is in.
 
 **Filling in the details.** Providers' metadata is often thin: a name and a poster, sometimes not even a year.
-Right after a title is added, coax has Channels DVR match it on TMDB, by the provider's TMDB id when it has one,
-else by searching for the title and year (picking the result with the same name and year). Channels DVR then
-fetches the full details: poster, description, cast, runtime and rating, and for a show every episode's title,
-description and runtime. Several titles are matched at once, shows first; the dialog shows how many are still
-waiting. A title with no match keeps the provider's details.
+coax fills the gaps in two steps:
+
+1. **Before a title goes to Channels DVR**, coax looks it up on TMDB itself (through Channels DVR's built-in TMDB
+   search, so no API key is needed) and picks the result with the same name and year; the provider's own TMDB id
+   wins when it has one. What the provider lacks (poster, description, year, genres, TMDB id) is taken from TMDB,
+   so a title has its poster and description the moment it appears.
+2. **After everything is added**, coax has Channels DVR match each movie and show on TMDB, a few at a time, shows
+   first. Channels DVR then fetches the rest: runtime, cast, content rating and background art, and for a show
+   every episode's title, description and runtime. This waits until the adding is done, because Channels DVR
+   saves one thing at a time and the adding comes first. It runs at about one title a second, so on a large
+   library it takes about a day; until a movie's turn comes its runtime shows as 1 second. The dialog shows how
+   many titles are still waiting. A title with no match keeps the details from step 1.
+
+On a large provider (about 90,000 movies and 40,000 episodes) the titles go in at about 2.5 a second, movies
+first: the movies are in the library overnight, the episodes follow, and new series keep arriving as coax reads
+their episode lists. Channels DVR's own folder scanner would take about two seconds a title, one at a time.
 
 **How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
 provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with
