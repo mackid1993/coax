@@ -340,6 +340,21 @@ class LibraryPickTests(unittest.TestCase):
         self.assertEqual(len(self.files), posted)
         self.assertEqual(vodlib.add_all(self.cfg["providers"][0])[0], ["Action", "Comedy"])
 
+    def test_a_provider_whose_list_was_never_read_is_due(self):
+        p = self.cfg["providers"][0]
+        orig = vodcat.cache_path
+        vodcat.cache_path = lambda pid, suffix="": os.path.join(self.tmp, "missing.json")
+        try:
+            p["refresh_hours"] = 0   # refreshed by hand only: still read once, the page needs the titles
+            self.assertTrue(self.lib._due(p))
+            self.lib.state["p2"] = {"last_try": __import__("time").time()}
+            self.assertFalse(self.lib._due(p))   # a failed try waits ten minutes
+            self.lib.state.pop("p2")
+            p["enabled"] = False
+            self.assertFalse(self.lib._due(p))
+        finally:
+            vodcat.cache_path = orig
+
     def test_nothing_chosen_clears_the_library_but_keeps_the_catalog(self):
         self.lib.sync("p2")
         self.cfg["providers"][0]["vod"].update(all={"movies": [], "series": []}, picks={"movies": [], "series": []})
@@ -402,7 +417,7 @@ class OnDemandApiTests(ApiTestCase):
         status, body, _ = self.request("GET", "/api/ondemand/titles?view=catalog&q=heat+1995")
         self.assertEqual([i["key"] for i in body["items"]], ["m:3"])
         status, body, _ = self.request("GET", "/api/ondemand/titles?view=content&keys=1")
-        self.assertEqual(body["keys"], [{"provider": "p1", "key": "m:4"}])   # Add all titles are never selectable
+        self.assertEqual(body["keys"], [{"provider": "p1", "key": "m:4", "via": "pick", "draft": ""}])   # Add all titles are never selectable
         for bad in ("view=x", "kind=x", "filter=x", "limit=0"):
             self.assertEqual(self.request("GET", "/api/ondemand/titles?" + bad)[0], 400, bad)
 

@@ -1311,6 +1311,11 @@ class Library:
             return True   # episode lists still to read
         if st.get("files") and "present" not in st:
             return True   # an older build's library: learn which titles are in Channels DVR for the On demand page
+        from app.providers import vod as vodcat
+        if (provider.get("type") or "xtream") == "xtream" and provider.get("enabled", True) is not False and \
+                not st.get("last_sync") and not os.path.exists(vodcat.cache_path(provider["id"])) and \
+                time.time() - (st.get("last_try") or 0) >= 600:
+            return True   # the provider's list was never read: the On demand page has nothing to show without it
         if os.path.isdir(os.path.join(self.imports_dir, "Movies", OLD_SUBDIR, provider["id"])) or \
                 os.path.isdir(os.path.join(self.imports_dir, "TV", OLD_SUBDIR, provider["id"])):
             return True   # the earlier layout is still there: move over now

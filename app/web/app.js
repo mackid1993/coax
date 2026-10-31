@@ -5,6 +5,7 @@ import { $, icon, esc, flag, openModal, toast, toastError } from "./ui.js";
 
 const PAGES = [
   { id: "channels", label: "Channels", icon: "channels", load: () => import("./pages/channels.js") },
+  { id: "ondemand", label: "On demand", icon: "film", load: () => import("./pages/ondemand.js") },
   { id: "providers", label: "Providers", icon: "providers", load: () => import("./pages/providers.js") },
   { id: "lineups", label: "Lineups", icon: "lineups", load: () => import("./pages/lineups.js") },
   { id: "settings", label: "Settings", icon: "settings", load: () => import("./pages/settings.js") },

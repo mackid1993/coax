@@ -1251,11 +1251,21 @@ class Handler(BaseHTTPRequestHandler):
         all_m, all_s = ondemand.vodlib.add_all(provider)
         adding = {"movies": set(all_m), "series": set(all_s)}
         out = {"provider": provider_id, "fetched_at": counts.get("fetched_at")}
+        pick_m, pick_s = ondemand.vodlib.picks(provider)
+        picked = {"movies": {}, "series": {}}   # group -> hand-picked titles in it
+        if pick_m or pick_s:
+            titles, _by_key = self.app.ondemand_titles.get(provider_id)
+            for t in titles:
+                if t.id in (pick_m if t.kind == "m" else pick_s):
+                    for g in t.groups:
+                        bucket = picked["movies" if t.kind == "m" else "series"]
+                        bucket[g] = bucket.get(g, 0) + 1
         for kind in ("movies", "series"):
             chosen = set(vod.get(kind) or [])
-            rows = [dict(row, selected=row["name"] in chosen, add_all=row["name"] in adding[kind])
-                    for row in counts.get(kind) or []]
-            rows += [{"name": g, "count": 0, "selected": True, "add_all": g in adding[kind]}
+            rows = [dict(row, selected=row["name"] in chosen, add_all=row["name"] in adding[kind],
+                         picked=picked[kind].get(row["name"], 0)) for row in counts.get(kind) or []]
+            rows += [{"name": g, "count": 0, "selected": True, "add_all": g in adding[kind],
+                      "picked": picked[kind].get(g, 0)}
                      for g in vod.get(kind) or [] if g not in {r["name"] for r in rows}]
             out[kind] = rows
         out["library"] = self.app.vod.status(provider_id) if self.app.vod is not None else None
@@ -1399,8 +1409,8 @@ class Handler(BaseHTTPRequestHandler):
             pending = dict(self.app.ondemand_draft.data.get("pending") or {})
         rows = self._ondemand_rows(cfg, pending)
         if self.query.get("keys") in ("1", "true"):
-            keys = [{"provider": pid, "key": t.key} for pid, t, choices, _p, _c, _d in rows
-                    if choices.via(t) != "all"]
+            keys = [{"provider": pid, "key": t.key, "via": choices.via(t), "draft": changes.get(t.key, "")}
+                    for pid, t, choices, _p, _c, changes in rows if choices.via(t) != "all"]
             return {"total": len(keys), "keys": keys}
         offset = parse_int(self.query.get("offset"), "offset", 0, 0)
         limit = parse_int(self.query.get("limit"), "limit", 100, 1, ondemand.MAX_LIMIT)
@@ -1419,8 +1429,23 @@ class Handler(BaseHTTPRequestHandler):
                     d.write(kept, now_iso())
                 except OSError as exc:
                     log.warning("could not save the On demand page's unsaved changes: %s", exc)
-            return {"rev": d.data.get("rev", 0), "pending": d.data.get("pending") or {},
-                    "saved_at": d.data.get("saved_at"), "notes": notes}
+            pending = d.data.get("pending") or {}
+            return {"rev": d.data.get("rev", 0), "pending": pending, "saved_at": d.data.get("saved_at"),
+                    "notes": notes, "duplicates": self._draft_duplicates(cfg, pending)}
+
+    def _draft_duplicates(self, cfg, pending):
+        """How many of the draft's adds are another copy of a title already chosen (or added twice)."""
+        n = 0
+        for p in cfg.get("providers") or []:
+            changes = pending.get(p.get("id")) or {}
+            adds = [k for k, c in changes.items() if c == "add"]
+            if not adds:
+                continue
+            titles, by_key = self.app.ondemand_titles.get(p["id"])
+            extra = [by_key[k] for k in adds if k in by_key]
+            counts = ondemand.wanted_counts(titles, ondemand.Choices(p), extra)
+            n += sum(1 for t in extra if counts.get(t.dup, 0) >= 2)
+        return n
 
     def h_ondemand_draft_put(self):
         """Keep the unsaved changes as they are (never applies them: Save does). `rev` must match the stored one,
@@ -1437,7 +1462,8 @@ class Handler(BaseHTTPRequestHandler):
             if rev != d.data.get("rev", 0):
                 raise ApiError(409, "the unsaved changes changed in another window")
             data = d.write(pending, now_iso())
-        return {"rev": data["rev"], "saved_at": data["saved_at"]}
+        return {"rev": data["rev"], "saved_at": data["saved_at"],
+                "duplicates": self._draft_duplicates(self.app.store.get(), pending)}
 
     def h_ondemand_save(self):
         """Apply the unsaved changes: adds become hand-picks (they go to Channels DVR ahead of any Add all import),

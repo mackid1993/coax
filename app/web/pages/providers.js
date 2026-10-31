@@ -73,7 +73,7 @@ function cardHtml(p) {
         <button class="btn btn-sm" data-act="test">${icon("plug")}Test</button>
         <button class="btn btn-sm" data-act="refresh">${icon("refresh")}Refresh</button>
         <button class="btn btn-sm" data-act="groups">${icon("filter")}Groups</button>
-        <button class="btn btn-sm" data-act="vod">${icon("film")}On demand</button>
+        <button class="btn btn-sm" data-act="vod">${icon("film")}On demand groups</button>
         <button class="btn btn-sm btn-ghost btn-icon" data-act="edit" aria-label="Edit ${esc(p.name)}">${icon("edit")}</button>
         <button class="btn btn-sm btn-ghost btn-icon btn-danger" data-act="delete" aria-label="Delete ${esc(p.name)}">${icon("trash")}</button>
       </div>
@@ -318,10 +318,9 @@ async function groupsModal(p) {
 // with a collection per group and a section for the provider; played straight from the provider through coax.
 async function vodModal(p) {
   const m = openModal({
-    title: `On demand · ${p.name}`,
+    title: `On demand groups · ${p.name}`,
     wide: true,
-    body: `<p class="muted small" style="margin-bottom:10px">Each group you pick becomes a collection in Channels DVR, all in a <b>${esc(p.name)}</b> section, and stays up to date with the provider. The titles are also listed in Movies and TV Shows, so Channels DVR's search finds them. Played as the provider sends them, never transcoded.</p>
-      <div id="vLib" style="margin-bottom:12px"></div>
+    body: `<p class="muted small" style="margin-bottom:10px">Choose which movie and series groups are available on the <b>On demand</b> page. Making a group available adds nothing to Channels DVR by itself: on the On demand page you pick single titles from it, or switch on Add all to add the whole group. Groups the provider adds later start unavailable. Titles play as the provider sends them, never transcoded.</p>
       <div class="tabs" role="tablist" id="vTabs"><button role="tab" data-kind="movies" aria-selected="true">Movies <span class="badge num" data-n="movies" style="display:none"></span></button><button role="tab" data-kind="series" aria-selected="false">Series <span class="badge num" data-n="series" style="display:none"></span></button></div>
       <div class="row row-wrap" style="margin-bottom:12px">
         <label class="search" style="flex:1;min-width:220px"><span class="sr-only">Search groups</span>${icon("search")}<input class="input" id="vQ" placeholder="Search groups"></label>
@@ -333,20 +332,6 @@ async function vodModal(p) {
   const el = m.el;
   let data = null, kind = "movies";
   const sel = { movies: new Set(), series: new Set() };
-  const libHtml = (lib) => {
-    if (!lib) return "";
-    if (!lib.imports_ok) return `<div class="callout small">${icon("alert")}<div>${esc(lib.imports_message)}</div></div>`;
-    const bits = [];
-    const running = lib.running ? `<div style="margin-bottom:6px"><span class="badge badge-info" style="white-space:normal"><span class="dot"></span>${esc(lib.running)}</span></div>` : "";
-    if (lib.movies != null) bits.push(`In Channels DVR: ${fmtInt(lib.movies)} movies, ${fmtInt(lib.shows || 0)} shows (${fmtInt(lib.episodes || 0)} episodes)`);
-    if (lib.matching) bits.push(`${fmtInt(lib.matching)} still getting TMDB details`);
-    if (lib.last_sync) bits.push(`synced ${fmtAgo(new Date(lib.last_sync * 1000).toISOString())}`);
-    if (lib.series_left) bits.push(`${fmtInt(lib.series_left)} series still to read, next batch soon`);
-    const err = lib.error ? `<div class="small" style="color:var(--bad);margin-top:6px">${esc(lib.error)}</div>` : "";
-    const note = lib.dvr_note ? `<div class="small" style="color:var(--warn);margin-top:6px">${esc(lib.dvr_note)}</div>` : "";
-    const sync = `<button class="btn btn-sm" data-sync>${icon("refresh")}Sync now</button>`;
-    return `${running}<div class="row row-wrap small" style="gap:8px"><span class="faint" style="flex:1;min-width:0">${bits.join(" · ") || "Nothing in Channels DVR yet."}</span>${sync}</div>${err}${note}`;
-  };
   const rows = () => (data && data[kind]) || [];
   const filtered = () => { const q = $("#vQ", el).value.trim().toLowerCase(); return q ? rows().filter((g) => g.name.toLowerCase().includes(q)) : rows(); };
   const counts = () => {
@@ -369,7 +354,6 @@ async function vodModal(p) {
     for (const k of ["movies", "series"]) {
       sel[k] = new Set((d[k] || []).filter((g) => g.selected).map((g) => g.name));
     }
-    $("#vLib", el).innerHTML = libHtml(d.library);
     draw();
   };
   try {
@@ -394,21 +378,28 @@ async function vodModal(p) {
   });
   $("[data-all]", el).onclick = () => { filtered().forEach((g) => sel[kind].add(g.name)); draw(); };
   $("[data-none]", el).onclick = () => { filtered().forEach((g) => sel[kind].delete(g.name)); draw(); };
-  $("#vLib", el).onclick = (e) => { const b = e.target.closest("[data-sync]"); if (b) syncNow(b); };
-  const syncNow = (b) => busy(b, async () => {
-    try {
-      await api.syncVod(p.id);
-      toast("Sync started", "Channels DVR picks the titles up as coax writes them.", "ok");
-    } catch (err) { toastError("Could not start the sync", err); }
-  });
   $("[data-save]", el).onclick = (e) => busy(e.currentTarget, async () => {
     try {
       const picks = {};
       for (const k of ["movies", "series"]) {
         picks[k] = (data[k] || []).map((g) => g.name).filter((n) => sel[k].has(n));
       }
+      // Groups made unavailable leave Channels DVR with everything chosen from them: say so first.
+      const leaving = [];
+      for (const k of ["movies", "series"]) {
+        for (const g of data[k] || []) if (g.selected && !sel[k].has(g.name) && (g.add_all || g.picked)) leaving.push(g);
+      }
+      if (leaving.length) {
+        const whole = leaving.filter((g) => g.add_all).length;
+        const hand = leaving.reduce((n, g) => n + (g.add_all ? 0 : g.picked || 0), 0);
+        const parts = [];
+        if (whole) parts.push(`${whole} group${whole === 1 ? "" : "s"} with Add all on`);
+        if (hand) parts.push(`${fmtInt(hand)} hand-picked title${hand === 1 ? "" : "s"}`);
+        const ok = await confirmDialog({ title: "Remove titles from Channels DVR?", message: `Making ${leaving.length === 1 ? `"${leaving[0].name}"` : `these ${leaving.length} groups`} unavailable removes ${parts.join(" and ")} from Channels DVR, along with their watch history.`, confirm: "Make unavailable", danger: true });
+        if (!ok) return;
+      }
       await api.setVod(p.id, picks);
-      toast("On demand saved", `${picks.movies.length} movie and ${picks.series.length} series group${picks.series.length === 1 ? "" : "s"}. Channels DVR fills in as coax writes them.`, "ok");
+      toast("Groups saved", `${picks.movies.length} movie and ${picks.series.length} series group${picks.series.length === 1 ? "" : "s"} available. Choose titles on the On demand page.`, "ok");
       m.close();
     } catch (err) { toastError("Could not save", err); }
   });

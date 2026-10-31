@@ -38,6 +38,11 @@ export const routes = {
   automatchStart: () => "/api/automatch/start",
   automatchJob: (result) => `/api/automatch/job${result ? "?result=1" : ""}`,
   suggestions: () => "/api/suggestions",
+  ondemand: () => "/api/ondemand",
+  ondemandTitles: (p) => `/api/ondemand/titles${qs(p)}`,
+  ondemandDraft: () => "/api/ondemand/draft",
+  ondemandSave: () => "/api/ondemand/save",
+  ondemandAddAll: () => "/api/ondemand/add-all",
   gracenoteSearch: (q, local, deep) => `/api/gracenote/search${qs(local ? { q, local: 1 } : deep ? { q, deep: 1 } : { q })}`,
   gracenoteSuggest: (p) => `/api/gracenote/suggest${qs(p)}`,
   gracenoteBulkSuggest: () => "/api/gracenote/bulk-suggest",
@@ -148,6 +153,13 @@ export const api = {
   automatchJob: (result = false) => get(routes.automatchJob(result), { timeout: 10000 }),
   suggestions: () => get(routes.suggestions()),
   saveSuggestions: (draft) => put(routes.suggestions(), draft),
+
+  ondemand: () => get(routes.ondemand(), { timeout: 60000 }),
+  ondemandTitles: (p) => get(routes.ondemandTitles(p), { timeout: 60000 }),
+  ondemandDraft: () => get(routes.ondemandDraft()),
+  saveOndemandDraft: (d) => put(routes.ondemandDraft(), d),
+  ondemandSave: (b) => post(routes.ondemandSave(), b, { timeout: 60000 }),
+  ondemandAddAll: (b) => post(routes.ondemandAddAll(), b, { timeout: 60000 }),
   // {channels: [{id, guide: {...}, streams: [...]}]}
   applyChannels: (channels) => post(routes.channelsApply(), { channels }, { timeout: 60000 }),
 
