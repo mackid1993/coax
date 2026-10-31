@@ -2,6 +2,7 @@
 // one-click Auto-match that fills pending suggestions, and "Save checked" to save them in one request. Unsaved
 // suggestions (checks included) are kept on the server until you Save or Discard them; nothing is applied for you.
 import { api, ApiError } from "../api.js";
+import { newDraft, keepOnServer } from "../autosave.js";
 import { $, $$, esc, icon, toast, toastError, openModal, confirmDialog, logo, emptyState, skeletonRows, debounce, busy, switchHtml, checkHtml, confidenceHtml, fmtInt } from "../ui.js";
 import { loadProviders, loadLineups, loadConfig, invalidate, normalizeGroups, normalizePage, providerName, pct, HIGH, LOW } from "../state.js";
 
@@ -32,7 +33,7 @@ export async function mount(el) {
   root = el;
   S = freshState();
   try { S.cat.open = localStorage.getItem("coax.catalog") !== "0"; } catch {}
-  draft = { loaded: false, rev: 0, job: null, sent: "", busy: false, again: false };
+  draft = newDraft({ job: null });
   renderFrame();
   if (await reload()) { await loadDraft(); renderFrame(); }
   offerUnsaved();
@@ -45,7 +46,7 @@ export function unmount() { clearTimeout(amTimer); S = null; }
 // S.pending is kept on the server as you work, checks included, so a reload, another device or a restart never
 // loses it. It is only a holding area: nothing reaches a channel until you press Save. `rev` stops a stale page
 // (another tab) from overwriting newer work; on a conflict the page takes the server's copy.
-let draft = { loaded: false, rev: 0, job: null, sent: "", busy: false, again: false };
+let draft = newDraft({ job: null });
 const jsonOf = (m) => JSON.stringify([...m].sort((a, b) => a[0] - b[0]));
 const pendingJson = () => jsonOf(S.pending);
 async function loadDraft() {
@@ -56,7 +57,7 @@ async function loadDraft() {
   const all = new Map(Object.entries(d.pending || {}).map(([k, v]) => [Number(k), v]));
   S.pending = new Map([...all].filter(([id]) => chById(id)).map(([id, p]) => [id, structuredClone(p)]));
   settleHeld(true);   // loadDraft always follows a reload()
-  draft = { loaded: true, rev: d.rev || 0, job: d.job_id || null, sent: jsonOf(all), sentJob: d.job_id || null, busy: false, again: false };
+  draft = newDraft({ loaded: true, rev: d.rev || 0, job: d.job_id || null, sent: draftKey(jsonOf(all), d.job_id) });
   saveDraft();   // drops suggestions for channels deleted since (a no-op when nothing changed)
 }
 // Held suggestions that no longer apply: a guide saved since (here or on another device) or "left as is", and
@@ -77,35 +78,28 @@ function settleHeld(afterReload = false) {
 }
 function saveDraft() {
   if (!S || !draft.loaded) return;
-  const json = pendingJson();
-  if (json === draft.sent && draft.job === draft.sentJob) return;
-  if (draft.busy) { draft.again = true; return; }
-  draft.busy = true;
-  const st = S, job = draft.job, d = draft;
-  api.saveSuggestions({ rev: draft.rev, job_id: job, pending: Object.fromEntries(S.pending) })
-    .then((r) => { if (S !== st || d !== draft) return; d.rev = r.rev; d.sent = json; d.sentJob = job; d.warned = false; })
-    .catch(async (e) => {
-      if (S !== st) return;
-      if (e?.status === 409) {
-        // Newer work exists elsewhere: refresh the channels first (new channels from another device must not be
-        // treated as deleted), then take the server copy.
-        if (await reload()) await loadDraft();
-        if (d === draft) {   // could not take the server copy: try again later instead of resending at once
-          d.again = false;
-          setTimeout(() => { if (S === st && d === draft) saveDraft(); }, 5000);
-          return;
-        }
-        if (S === st) { toast("Suggestions updated", "They were changed in another window; showing the latest.", "info"); renderFrame(); watchAutoMatch(); }
-      } else {
-        if (!draft.warned) { draft.warned = true; toastError("Could not keep the unsaved suggestions on the server; retrying", e); }
-        setTimeout(() => { if (S === st) saveDraft(); }, 5000);
+  const st = S, d = draft, job = draft.job;
+  keepOnServer(d, draftKey(pendingJson(), job), {
+    what: "unsaved suggestions",
+    send: (rev) => api.saveSuggestions({ rev, job_id: job, pending: Object.fromEntries(S.pending) }),
+    alive: () => S === st,
+    current: () => d === draft,
+    retry: saveDraft,
+    conflict: async () => {
+      // Newer work exists elsewhere: refresh the channels first (new channels from another device must not be
+      // treated as deleted), then take the server copy.
+      if (await reload()) await loadDraft();
+      if (d === draft) {   // could not take the server copy: try again later instead of resending at once
+        d.again = false;
+        setTimeout(() => { if (S === st && d === draft) saveDraft(); }, 5000);
+        return;
       }
-    })
-    .finally(() => {
-      d.busy = false;
-      if (d === draft && d.again && S === st) { d.again = false; saveDraft(); }
-    });
+      if (S === st) { toast("Suggestions updated", "They were changed in another window; showing the latest.", "info"); renderFrame(); watchAutoMatch(); }
+    },
+  });
 }
+// What the server holds: the suggestions and the Auto-match run they came from.
+const draftKey = (json, job) => JSON.stringify([json, job || null]);
 
 async function reload() {
   let ok = false;

@@ -1360,7 +1360,7 @@ class Handler(BaseHTTPRequestHandler):
         if kind is None:
             raise bad_request("kind must be movies or series")
         flt = q.get("filter") or ""
-        if flt not in ("", "duplicates", "pending", "picked", "add_all", "draft"):
+        if flt not in ("", "duplicates", "pending", "picked", "add_all", "draft", "chosen", "not_added"):
             raise bad_request("unknown filter")
         group = q.get("group") or ""
         words = ondemand.query_words(q.get("q") or "")
@@ -1394,6 +1394,10 @@ class Handler(BaseHTTPRequestHandler):
                     if flt == "add_all" and via != "all":
                         continue
                     if flt == "draft" and not change:
+                        continue
+                    if flt == "chosen" and not via:
+                        continue
+                    if flt == "not_added" and via:
                         continue
                 out.append((pid, t, choices, present, counts, changes))
         if len(providers) > 1:

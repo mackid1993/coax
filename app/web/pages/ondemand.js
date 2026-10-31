@@ -3,6 +3,7 @@
 // Channels DVR. Hand-picks and removals are kept on the server as you work (like the Channels page's unsaved
 // suggestions), so a reload, another device or a restart never loses them; nothing reaches Channels DVR until Save.
 import { api } from "../api.js";
+import { newDraft, keepOnServer } from "../autosave.js";
 import { $, esc, icon, toast, toastError, openModal, confirmDialog, emptyState, debounce, busy, switchHtml, checkHtml, fmtInt, fmtAgo } from "../ui.js";
 
 const PER_PAGE = 100;
@@ -10,14 +11,14 @@ const KINDS = { movies: "Movies", series: "TV Shows" };
 
 let S;      // page state
 let root;
-let draft;  // {loaded, rev, sent, busy, again, warned}
+let draft = newDraft();   // the server's copy of the unsaved changes (autosave.js)
 let poll;
 
 function freshState() {
   return {
     frame: null, loading: true, error: null,
     kind: "", provider: "", group: "", q: "",
-    cat: pane(), con: pane("all"),
+    cat: pane("all"), con: pane("all"),
     pending: {},        // provider id -> {key: "add" | "remove"}
     notes: [],
   };
@@ -29,7 +30,7 @@ function pane(filter = "") {
 export async function mount(el) {
   root = el;
   S = freshState();
-  draft = { loaded: false, rev: 0, sent: "{}", busy: false, again: false };
+  draft = newDraft();
   try { const k = localStorage.getItem("coax.ondemand.kind"); if (k === "movies" || k === "series") S.kind = k; } catch {}
   render();
   await loadFrame();
@@ -64,36 +65,27 @@ async function loadDraft() {
   if (!S) return;
   S.pending = d.pending || {};
   S.notes = d.notes || [];
-  draft = { loaded: true, rev: d.rev || 0, sent: JSON.stringify(S.pending), busy: false, again: false, duplicates: d.duplicates || 0 };
+  draft = newDraft({ loaded: true, rev: d.rev || 0, sent: JSON.stringify(S.pending), duplicates: d.duplicates || 0 });
   if (S.notes.length) toast("Unsaved changes updated", S.notes.join(" "), "info", 9000);
 }
 function saveDraft() {
   if (!S || !draft.loaded) return;
-  const json = JSON.stringify(S.pending);
-  if (json === draft.sent) return;
-  if (draft.busy) { draft.again = true; return; }
-  draft.busy = true;
-  const st = S, d = draft;
-  api.saveOndemandDraft({ rev: d.rev, pending: S.pending })
-    .then((r) => {
-      if (S !== st || d !== draft) return;
-      d.rev = r.rev; d.sent = json; d.warned = false;
-      if (d.duplicates !== r.duplicates) { d.duplicates = r.duplicates; drawDraft(); }
-    })
-    .catch(async (e) => {
+  const st = S, d = draft, pending = S.pending;
+  keepOnServer(d, JSON.stringify(pending), {
+    what: "unsaved changes",
+    send: (rev) => api.saveOndemandDraft({ rev, pending }),
+    alive: () => S === st,
+    current: () => d === draft,
+    retry: saveDraft,
+    saved: (r) => { if (d.duplicates !== r.duplicates) { d.duplicates = r.duplicates; drawDraft(); } },
+    conflict: async () => {   // newer work from another window: take the server's copy
+      await loadDraft();
       if (S !== st) return;
-      if (e?.status === 409) {   // newer work from another window: take the server's copy
-        await loadDraft();
-        if (S === st) { toast("Unsaved changes updated", "They were changed in another window; showing the latest.", "info"); render(); loadBoth(); }
-      } else {
-        if (!d.warned) { d.warned = true; toastError("Could not keep the unsaved changes on the server; retrying", e); }
-        setTimeout(() => { if (S === st) saveDraft(); }, 5000);
-      }
-    })
-    .finally(() => {
-      d.busy = false;
-      if (d === draft && d.again && S === st) { d.again = false; saveDraft(); }
-    });
+      if (d === draft) { d.again = false; setTimeout(() => { if (S === st && d === draft) saveDraft(); }, 5000); return; }
+      toast("Unsaved changes updated", "They were changed in another window; showing the latest.", "info");
+      render(); loadBoth();
+    },
+  });
 }
 
 function params(which) {
@@ -173,7 +165,7 @@ function body() {
   <div class="card od-bar">
     <div class="toolbar">
       <div class="seg" role="group" aria-label="Movies or TV shows">${kinds.map(([k, l]) => `<button type="button" data-kind="${k}" aria-pressed="${S.kind === k}">${l}</button>`).join("")}</div>
-      <label class="search" style="flex:1 1 220px"><span class="sr-only">Search titles</span>${icon("search")}<input class="input input-sm" id="odQ" placeholder="Search titles, like heat 1995" value="${esc(S.q)}"></label>
+      <label class="search" style="flex:1 1 220px"><span class="sr-only">Search titles</span>${icon("search")}<input class="input input-sm" id="odQ" data-search placeholder="Search titles, like heat 1995" value="${esc(S.q)}"><kbd>/</kbd></label>
       ${multi() ? `<label class="sr-only" for="odProv">Provider</label><select class="input input-sm" id="odProv" style="width:auto;min-width:140px"><option value="">All providers</option>${providers().map((p) => `<option value="${esc(p.id)}" ${S.provider === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>` : ""}
       <button class="btn btn-sm od-groups-btn" data-act="groups-sheet">${icon("filter")}${S.group ? esc(S.group) : "Groups"}</button>
       ${S.group || S.q || S.provider ? `<button class="btn btn-sm btn-ghost" data-act="clear-filters">Clear filters</button>` : ""}
@@ -183,6 +175,7 @@ function body() {
     <aside class="card od-groups" aria-label="Groups" id="odGroups"></aside>
     <section class="card od-pane" aria-label="Catalog">
       <div class="od-head"><h2>Catalog</h2><span class="spacer"></span><span class="faint small num" id="catTotal"></span></div>
+      <div class="od-filters"><div class="seg" role="group" aria-label="Show">${[["all", "All"], ["not_added", "Not added"], ["chosen", "Added"]].map(([k, l]) => `<button type="button" data-catfilter="${k}" aria-pressed="${(S.cat.filter || "all") === k}">${l}</button>`).join("")}</div></div>
       <div class="od-list" id="catList"></div>
       <div class="od-foot" id="catFoot"></div>
     </section>
@@ -359,7 +352,7 @@ function drawPane(which) {
   if (foot) foot.innerHTML = footHtml(which);
 }
 function emptyPane(which) {
-  const filtered = S.q || S.group || S.provider || S.kind || (which === "con" && S.con.filter !== "all");
+  const filtered = S.q || S.group || S.provider || S.kind || (S[which].filter && S[which].filter !== "all");
   if (filtered) return `<div class="empty" style="padding:36px 16px"><h3>Nothing matches</h3><p class="small">No title fits these filters.</p><button class="btn btn-sm" data-act="clear-filters">Clear filters</button></div>`;
   if (which === "cat") {
     const reading = providers().some((p) => !p.has_catalog);
@@ -466,6 +459,8 @@ async function onClick(e) {
     try { localStorage.setItem("coax.ondemand.kind", S.kind); } catch {}
     render(); loadBoth(); return;
   }
+  const kf = t.closest("[data-catfilter]");
+  if (kf) { S.cat.filter = kf.dataset.catfilter; S.cat.offset = 0; S.cat.selected.clear(); render(); loadPane("cat"); return; }
   const cf = t.closest("[data-cfilter]");
   if (cf) { S.con.filter = cf.dataset.cfilter; S.con.offset = 0; S.con.selected.clear(); render(); loadPane("con"); return; }
   const g = t.closest("[data-group]");
@@ -487,7 +482,7 @@ async function onClick(e) {
   switch (a.dataset.act) {
     case "retry": S.loading = true; render(); await loadFrame(); await loadDraft(); render(); loadBoth(); break;
     case "retry-pane": loadPane(which); break;
-    case "clear-filters": S.q = ""; S.group = ""; S.provider = ""; S.kind = ""; S.con.filter = "all"; S.cat.offset = S.con.offset = 0; render(); loadBoth(); break;
+    case "clear-filters": S.q = ""; S.group = ""; S.provider = ""; S.kind = ""; S.con.filter = "all"; S.cat.filter = "all"; S.cat.offset = S.con.offset = 0; render(); loadBoth(); break;
     case "groups-sheet": groupsSheet(); break;
     case "sync": busy(a, async () => { try { await api.syncVod(a.dataset.provider); toast("Sync started", "Channels DVR picks the titles up as coax adds them.", "ok"); } catch (err) { toastError("Could not start the sync", err); } }); break;
     case "add": { const n = applyToSelection("cat", "add"); if (n) toast(`${fmtInt(n)} to add`, "Press Save to send them to Channels DVR.", "info"); break; }
