@@ -870,3 +870,5 @@ tr:hover .edit-ch, .edit-ch:focus-visible { opacity: 1; }
   .od-draft-hint { display: none; }
   .od-dupnote { font-size: 12px; }
 }
+.vod-card .vod-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: 9px; background: var(--copper-soft); color: var(--copper); }
+.vod-card .vod-icon svg { width: 18px; height: 18px; }

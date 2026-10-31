@@ -77,33 +77,59 @@ async function poll() {
     while (h.length > SPARK_N) h.shift();
     history.set(key, h);
   }
-  const viewers = sessions.reduce((a, x) => a + (x.clients || []).length, 0);
-  const total = sessions.reduce((a, x) => a + (Number(x.bitrate_bps) || (history.get(skey(x)) || []).slice(-1)[0] || 0), 0);
+  // Video on demand plays hold a line like a tune: each one gets a card beside the channels.
+  const plays = s.vod_plays || [];
+  for (const x of plays) {
+    const key = vkey(x);
+    const prev = lastBytes.get(key);
+    const rate = prev && x.sent != null ? ((x.sent - prev.b) * 8) / Math.max(0.5, (now - prev.t) / 1000) : 0;
+    if (x.sent != null) lastBytes.set(key, { b: x.sent, t: now });
+    const h = history.get(key) || [];
+    h.push(Math.max(0, rate));
+    while (h.length > SPARK_N) h.shift();
+    history.set(key, h);
+  }
+  const viewers = sessions.reduce((a, x) => a + (x.clients || []).length, 0) + plays.length;
+  const total = sessions.reduce((a, x) => a + (Number(x.bitrate_bps) || (history.get(skey(x)) || []).slice(-1)[0] || 0), 0)
+    + plays.reduce((a, x) => a + ((history.get(vkey(x)) || []).slice(-1)[0] || 0), 0);
   const lines = s.lines || [];
   const used = lines.reduce((a, l) => a + (l.used || 0), 0);
   const cap = lines.some((l) => !l.max) ? "∞" : lines.reduce((a, l) => a + (l.max || 0), 0);
   $("#kpis", root).innerHTML = [
-    kpi("Live channels", fmtInt(sessions.length), "channels", `${fmtInt(s.channels?.enabled ?? 0)} of ${fmtInt(s.channels?.total ?? 0)} enabled`),
-    kpi("Viewers", fmtInt(viewers), "users", "across all channels"),
+    kpi("Live channels", fmtInt(sessions.length), "channels", `${fmtInt(s.channels?.enabled ?? 0)} of ${fmtInt(s.channels?.total ?? 0)} enabled${plays.length ? ` · ${fmtInt(plays.length)} on demand` : ""}`),
+    kpi("Viewers", fmtInt(viewers), "users", plays.length ? "channels and on demand" : "across all channels"),
     kpi("Line slots", `${used}<span class="faint" style="font-size:16px"> / ${cap}</span>`, "gauge", `${lines.length} line${lines.length === 1 ? "" : "s"}`),
     kpi("Throughput", fmtRate(total), "signal", `up ${fmtDuration(s.uptime)}${s.hub_running === false ? " · hub stopped" : ""}`),
   ].join("");
-  drawSessions(sessions);
+  drawSessions(sessions, plays);
   drawLines(lines);
   drawRefresh(s.refresh || {});
 }
 const kpi = (label, value, ic, sub) => `<div class="card kpi"><div class="kpi-icon">${icon(ic)}</div><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="faint small">${esc(sub)}</div></div>`;
 
-function drawSessions(sessions) {
+function drawSessions(sessions, plays = []) {
   const el = $("#sessions", root);
-  if (!sessions.length) {
+  if (!sessions.length && !plays.length) {
     el.style.gridTemplateColumns = "minmax(0, 1fr)";
-    el.innerHTML = `<div class="card">${emptyState({ art: "signal", title: "Nothing is playing", text: "When a client tunes a channel, it appears here with its viewers, line and throughput." })}</div>`;
+    el.innerHTML = `<div class="card">${emptyState({ art: "signal", title: "Nothing is playing", text: "When a client tunes a channel or plays a movie or episode on demand, it appears here with its viewer, line and throughput." })}</div>`;
     return;
   }
   el.style.gridTemplateColumns = "";
   if (!el.querySelector(".session-card")) el.innerHTML = "";
   const keep = new Set();
+  for (const x of plays) {
+    const key = vkey(x);
+    keep.add(key);
+    const inner = vodCardInner(x, key);
+    let card = el.querySelector(`.session-card[data-key="${CSS.escape(key)}"]`);
+    if (!card) {
+      card = document.createElement("article");
+      card.className = "card session-card vod-card";
+      card.dataset.key = key;
+      el.appendChild(card);
+    }
+    if (card._html !== inner) { card.innerHTML = inner; card._html = inner; }
+  }
   for (const x of sessions) {
     const key = skey(x);
     keep.add(key);
@@ -148,6 +174,21 @@ function refocus(card, f) {
   row?.querySelector(`[${f.role}]`)?.focus({ preventScroll: true });   // never pull a scrolled page back to the card
 }
 function skey(x) { return `${x.uuid || x.channel_id}~${x.instance || 0}`; }
+function vkey(x) { return `vod~${x.client_ip}~${x.provider_id}~${x.kind}~${x.name}`; }
+function vodCardInner(x, key) {
+  const h = history.get(key) || [];
+  return `<div class="head"><span class="vod-icon" aria-hidden="true">${icon("film")}</span><div style="min-width:0;flex:1"><div class="title ellip" data-pop="${esc(x.name)}" data-pop-sub="${x.kind === "movie" ? "Movie" : "Episode"} on demand">${esc(x.name)}</div>
+      <div class="faint small ellip">${x.kind === "movie" ? "Movie" : "Episode"} · ${esc(x.provider_name || x.provider_id || "")}${x.line_name ? ` · ${esc(x.line_name)}` : ""}</div></div>
+      <span class="badge badge-copper" title="Played from the provider's on demand library">On demand</span></div>
+    ${spark(h, key)}
+    <div class="session-stats">
+      <div><div class="stat-label">Viewer</div><div class="stat-value num" style="font-size:15px">${esc(x.client_ip)}</div></div>
+      <div><div class="stat-label">Bitrate</div><div class="stat-value">${fmtRate(h[h.length - 1] || 0)}</div></div>
+      <div><div class="stat-label">Playing for</div><div class="stat-value">${fmtDuration(x.seconds)}</div></div>
+    </div>
+    <div class="row row-wrap" style="gap:6px"><span class="badge" title="On demand titles are sent as the provider has them, never transcoded"><span class="dot" style="opacity:.5"></span>Original format</span><span class="badge badge-info" title="Each play uses one of the provider's connections while it plays, seeking included">Uses 1 connection${x.line_name ? ` on ${esc(x.line_name)}` : ""}</span>${x.streaming ? "" : `<span class="badge" title="Paused or between seeks: the connection is kept for a few seconds">Idle</span>`}</div>
+    <div class="faint small">${fmtBytes(x.sent)} sent</div>`;
+}
 function cardInner(x, key) {
   {
     const h = history.get(key) || [];
