@@ -345,13 +345,33 @@ pass record every one of them).
 ## Video on demand (app/vod.py, app/vodproxy.py, app/providers/vod.py)
 
 - **Catalog.** Xtream: get_vod_categories/get_vod_streams/get_series_categories/get_series into
-  `cache/vod-<pid>.json` plus a small `vod-<pid>-groups.json` summary the dialog reads (the full list is never
-  kept in memory: 137k movies parse to about 200 MB). Episodes come from one get_series_info per series in picked
+  `cache/vod-<pid>.json` plus a small `vod-<pid>-groups.json` summary the Providers dialog reads. The Library
+  never keeps the full list in memory (137k movies parse to about 200 MB); the On demand page keeps a slim index
+  (`app/ondemand.py`, below). Episodes come from one get_series_info per series in picked
   groups, cached by `last_modified` in `vod-<pid>-episodes.json`, paced, five failures in a row end the run, an
   empty answer is a failure (panels answer empty when they throttle). M3U: `m3u_split` moves video files and
   `/movie/` `/series/` addresses out of the channel catalog; `S01E02`/`1x02` names are episodes.
-- **Library.** Picks live in `provider.vod` (`movies`, `series`, `library` = groups also listed in Movies/TV
-  Shows). `Library.sync` writes one `.strm` per title under `/imports/Movies/.coax/<pid>/` and
+- **Choices.** `provider.vod`: `movies`/`series` = groups made AVAILABLE on the Providers page (catalog only,
+  nothing goes to Channels DVR for that); `all` = Add all groups (every title, now and later); `picks` = hand-picked
+  title ids (`movies` ids, `series` ids). `config.fill_defaults` turns a vod without `all` (written before the On
+  demand page) into Add all for every available group, so an upgrade changes nothing; `library` is ignored.
+  Helpers in `app/vod.py`: `selected`, `add_all`, `picks`, `materialize` (writes the implied `all` out before any
+  edit), `quality` (DV/4K/HD from the provider's labels, else HD).
+- **Plan.** `plan()` files Add all groups first exactly as before (one copy stands for a title two of them list,
+  filed in both collections), then hand-picks of available groups. A pick an Add all group already carries is the
+  group's. A pick of another copy of a title already planned is a second copy, folder `<Title (year)> - <group>`
+  (numbered if needed), in its own group's collection. `Plan.picked` (paths and show ids created first),
+  `present` (`m:<id>`/`s:<id>` -> path or group id), `picked_keys`, `folders` (show id -> episode path prefix).
+- **Order and preemption.** `_publish` creates hand-picks first, then the rest with `preemptible=True`:
+  `request(pid, urgent=True)` (the page's Save) puts the provider in `_urgent`, the running `_create` stops
+  between items and raises `_Preempted`, and `sync` requeues at once (not an error, no `last_sync`). Picked shows
+  sort first and their episode lists are read before the publish. `_note_present` records `present` (keys in
+  Channels DVR) and `where` (pick key -> path or show folder) in vod-state.
+- **Deletions.** `_respect_deletions` (each sync, before planning): a pick whose DVR file reads `Deleted` or 404,
+  or a picked show whose `GET /dvr/groups/<id>/files` are all `Deleted`, leaves `vod.picks` and the state (never
+  re-added; picking it again adds it afresh). Unknown answers keep the pick. Add all titles keep the old rule
+  (the state keeps their id, so coax never re-creates them).
+- **Library.** `Library.sync` writes one `.strm` per title under `/imports/Movies/.coax/<pid>/` and
   `/imports/TV/.coax/<pid>/<Show>/Season NN/` holding `<base_url>/vod/<pid>/<m|e>/<id>.<ext>` (never the
   provider's URL). The dot matters: Channels DVR's scanner skips any folder starting with `.` (`shouldSkipDir`),
   so it never imports them (it takes about 2 s a title, serially). coax creates each item itself with the
@@ -361,7 +381,7 @@ pass record every one of them).
   and an `Airing` that must have `Source`, `Title`, `Time`, `Duration` and `Channel` (else 400 `invalid file`).
   No lookup runs in the call. A new show's first episode goes alone, then `PUT /dvr/groups/<id>` names it (Name,
   Summary, Image, FanArt, Genres, ReleaseYear, ReleaseDate, Categories). `cache/vod-state.json` keeps
-  `files` (path -> DVR id), `groups`, `hidden`, `hidden_shows`, `todo` and `retry`. The files must stay: the
+  `files` (path -> DVR id), `groups`, `hidden`, `hidden_shows`, `todo`, `retry`, `present` and `where`. The files must stay: the
   DVR's import prune deletes an item whose file is missing, and `DELETE /dvr/files/<id>` removes the file too.
   Removed titles: `DELETE` then `PUT .../permanently_delete` per item, `DELETE /dvr/groups/<id>` per show, never
   a DVR-wide prune. Collections: `/dvr/collections/content`, Items = file ids (movies) or group ids (shows); one
@@ -384,12 +404,34 @@ pass record every one of them).
   provider closes the older one first; requests within 1 s debounce 0.35 s; the last 4 MB of the file is fetched
   once with an explicit range and serves the player's index reads; only explicit ranges go upstream (some CDNs
   answer 500 to `bytes=-N`); busy answers retried 10 s; the slot lingers 8 s after the last request. `Hub.open`
-  stops a VOD play (2.5 s at most) when every line is busy: tunes and recordings win.
+  stops a VOD play (2.5 s at most) when every line is busy: tunes and recordings win. `Plays.status()` feeds
+  `/api/status` `vod_plays` (one Status card per play).
+- **On demand page API (app/ondemand.py, server `h_ondemand*`).** `Catalogs`: per provider a list of slotted
+  `Title`s (kind, id, name, year, groups interned, quality, search text, added, hash of the plan's file name for
+  duplicates) newest first, rebuilt when `vod-<pid>.json` changes (mtime, size), one build at a time per provider
+  (172k titles: about 3 s, 81 MB). Search: NFKD without accents, lower case, no punctuation, no leading
+  The/A/An, every word must appear in "title year". `GET /api/ondemand` (groups with counts, Add all, picked, in
+  Channels; library status), `GET /api/ondemand/titles` (`view` catalog|content, `kind`, `provider`, `group`,
+  `q`, `filter` duplicates|pending|picked|add_all|draft|chosen|not_added, `offset`, `limit` <= 500, `keys=1` for
+  select all matching: Add all titles are never selectable), `GET/PUT /api/ondemand/draft` (`/data/ondemand-
+  draft.json`, `rev`, 409 on a stale rev, `tidy` drops changes the provider no longer allows, with notes; answers
+  carry `duplicates`), `POST /api/ondemand/save` (applies adds/removes to `vod.picks`, clears the draft, `request(
+  urgent=True)`), `POST /api/ondemand/add-all` (applies at once after the page's confirm; on absorbs the group's
+  picks; drops unsaved changes inside the group). The Providers save (`PUT /api/providers/<id>/vod`) sets
+  availability only and prunes `all` and `picks` of groups made unavailable.
 
 ## Web UI (app/web)
 
 No framework, no build. `app.js` routes `#/<page>` and lazy-imports `pages/*.js`; each page exports
 `mount(el)` and `unmount()`. `api.js` holds every route. Patterns to keep:
+- `autosave.js`: the one autosave for unsaved work kept on the server (`newDraft`, `keepOnServer`): skip when the
+  server has this copy, one request in flight with a queued resend, retry every 5 s with one warning, a 409 goes to
+  the page to take the server copy. The Channels page (suggestions) and the On demand page (adds and removes) both
+  use it; never copy it into a page.
+- On demand page (`pages/ondemand.js`): Groups sidebar (Add all switches with confirms), Catalog and Content
+  panes paged by the server (100 a page), selection Maps per pane keyed `provider|key` (Shift ranges skip locked
+  Add all rows), the sticky draft bar (`#odDraft`), status line polled every 15 s (lists reload when the In
+  Channels count moves). Panes are CSS containers: narrow panes wrap rows (470 px) and drop First/Last (380 px).
 - Channels page state `S`. Unsaved Auto-match suggestions (`S.pending`, checks included) are a holding area
   kept on the server: `GET/PUT /api/suggestions` (`/data/suggestions.json`, a `rev` counter, 409 on a stale
   rev, after which the page takes the server copy). `saveDraft()` runs from `renderFrame`/`refreshPendingBar`

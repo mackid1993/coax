@@ -110,9 +110,11 @@ Channel names, providers and logos below are made up for the demo.
   Digital 5.1 audio) on Intel or AMD graphics (VAAPI), NVIDIA (NVENC), or the CPU. It is also what makes
   automatic failover possible.
 - **Video on demand**: your providers' movies and series in Channels DVR's own library, listed in Movies and
-  TV Shows (so search finds them), with a collection for each group you pick and a section per provider. No
-  transcoding, no remuxing, no ffmpeg: coax only relays the provider's file, byte for byte, so it goes through
-  coax's VPN and counts against your provider's lines. See [Video on demand](#video-on-demand).
+  TV Shows (so search finds them), with a collection for each group and a section per provider. On the **On
+  demand** page you search the catalog and pick single movies and shows for tonight, or add a whole group with
+  **Add all** and let it keep up with the provider. No transcoding, no remuxing, no ffmpeg: coax only relays the
+  provider's file, byte for byte, so it goes through coax's VPN and counts against your provider's lines. See
+  [Video on demand](#video-on-demand).
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
   channel lists all its streams, with **Switch** to move to another one now, **Disable** to stop using one, and
@@ -1102,10 +1104,17 @@ with a Gracenote station, or an XMLTV id the provider has programs for, keeps th
 
 ## Video on demand
 
-Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
+Most providers also have a large library of movies and series. coax can put the ones you choose into Channels
 DVR's own library: under **Movies** and **TV Shows** next to your recordings and your own media, where Channels
-DVR's search finds them, and in collections and a section of their own. They get artwork and descriptions and remember where you stopped.
-They never appear in the guide.
+DVR's search finds them, and in collections and a section of their own. They get artwork and descriptions and
+remember where you stopped. They never appear in the guide.
+
+You choose in two ways, on the **On demand** page:
+
+- **Pick titles one by one.** Search the catalog, tick a movie or a show, press *Add* and *Save*. Good for a
+  movie night, or for a small server: only what you pick goes to Channels DVR, and it is there within a minute.
+- **Add all** for a whole group. Every title in the group goes to Channels DVR, and so does everything the
+  provider adds to it later. A large group takes hours to add and keeps Channels DVR busy meanwhile.
 
 **Passthrough only.** Video on demand is never transcoded or remuxed, and ffmpeg is not involved at all. coax is
 only a relay: the Channels app asks coax for the movie, coax fetches the provider's file over its own connection
@@ -1121,15 +1130,55 @@ Transcode setting applies to live TV only.
    DVR runs on another machine, share that folder over the network and mount it on the coax machine first.
    coax (uid 1000) needs to be able to write in `Imports/Movies` and `Imports/TV`. It never changes an owner:
    the folders and files it makes are open to every user (folders 777, files 666), so whatever user Channels
-   DVR or your other tools run as can still manage them. The *On demand* dialog says so when the folder is
+   DVR or your other tools run as can still manage them. The *On demand* page says so when the folder is
    missing or not writable.
 2. Set the *Base URL* and the *DVR server URL* in coax Settings (they are needed for live TV anyway).
-3. On the **Providers** page, press **On demand** on a provider and tick the movie and series groups you want.
+3. On the **Providers** page, press **On demand groups** on a provider and tick the movie and series groups to
+   make available. This adds nothing to Channels DVR by itself: it decides which groups the On demand page
+   shows, so the groups you never want (other languages, adult content) stay out of the catalog. Groups the
+   provider adds later start unavailable.
+4. Open the **On demand** page and pick titles, or switch on *Add all* for a group.
+
+If you had groups picked before the On demand page existed, each of them is an *Add all* group, so your
+library stays exactly as it was.
+
+**The On demand page.** It works like the Channels page:
+
+- **Groups** on the left, with the number of titles in each and its *Add all* switch (on a phone, the
+  *Groups* button). Click a group to show only its titles.
+- The **Catalog** lists every title in the available groups, newest first. Each row shows the year, the
+  group, the copy's quality (*DV*, *4K* or *HD*, from the provider's labels; a copy without one counts as HD) and
+  where it stands: *In Channels*, *Pending* (saved, on its way), *Hand-picked* or *Add all*. Search ignores case,
+  accents and a leading *The*, *A* or *An*, and matches the year too (`heat 1995`). Filters: Movies, TV Shows or
+  both, provider, group, and *Not added* or *Added*.
+- The **Content** list shows everything that is or will be in Channels DVR, including every title of an
+  *Add all* group. Those rows are greyed out without a checkbox: an *Add all* group is all or nothing, so to
+  remove its titles switch *Add all* off. Hand-picked titles can be ticked and removed. Filters: *Hand-picked*,
+  *Add all*, *Pending*, *Duplicates* and *Unsaved*.
+- Tick rows, Shift-click to tick a range, *Select this page*, or *Select all that match* for every page at
+  once. *Add* and *Remove* go into your unsaved changes: a bar shows *N to add, M to remove* with **Save** and
+  **Dismiss**. Nothing reaches Channels DVR until you press Save. The unsaved changes are kept in coax as you
+  work, so a reload, another device or a restart never loses them; another open window shows the newest copy
+  instead of saving over it. A change to a title the provider no longer offers is dropped, and the page says so.
+- **Hand-picks go first.** Saved picks are added before anything an *Add all* group is still importing, so a
+  movie never waits behind a long import.
+- **Duplicates.** The same movie is often offered more than once (HD in one group, 4K or Dolby Vision in
+  another). You can pick more than one copy, for example a smaller one for a slow connection. The page tags
+  them *Duplicate* and the save bar says how many of the titles to add are another copy. Channels DVR lists
+  copies as one title under Movies, and each copy stays in its own group's collection. Within *Add all* groups
+  the same title in two groups is added once and filed in both collections.
+- A hand-picked show brings all its episodes and keeps getting new ones; removing it removes them all.
+- Switching *Add all* on asks first, with the number of titles and about how long they take (about 150 a
+  minute). The group's hand-picked titles become part of it. Switching it off asks first too: every title of
+  the group leaves Channels DVR, including titles you had picked by hand before.
+- The page also shows the library's progress (titles being added, TMDB details still to fill in, the last
+  sync), **Sync now**, and a warning when the Imports folder is not connected or Channels DVR answers with an
+  error.
 
 **How titles get into Channels DVR.** coax creates each title through Channels DVR's own API, with the
 provider's name, year, artwork, plot and TMDB id, instead of waiting for Channels DVR's folder scanner (which
-looks every title up one after another, about two seconds a movie). Movies go first, newest first, then the
-shows and their episodes. Each title is visible and playable as soon as it is added, and the collections fill
+looks every title up one after another, about two seconds a movie). Hand-picked titles go first, then movies,
+newest first, then the shows and their episodes. Each title is visible and playable as soon as it is added, and the collections fill
 in as titles arrive.
 
 How fast depends on your Channels DVR server, which saves one title at a time. Measured on a real server:
@@ -1139,7 +1188,7 @@ estimated 11 to 14 hours to add in full.
 Series need one request to the provider per show for its episode list, so they come in batches, newest shows
 first: about every 300 shows (or every 10 minutes) the batch goes to Channels DVR. A sync reads episode lists
 for up to half an hour, then carries on 15 minutes later (an hour later if the provider starts refusing), until
-every show is in. The dialog shows how many series are still to read.
+every show is in. The On demand page shows how many series are still to read.
 
 **Filling in the details.** Providers' metadata is often thin: a name and a poster, sometimes not even a year.
 coax fills the gaps in two steps:
@@ -1152,20 +1201,23 @@ coax fills the gaps in two steps:
    shows first. Channels DVR then fetches the rest: runtime, cast, content rating and background art, and for a
    show every episode's title, description and runtime. This waits while titles are being added, so the two do
    not compete for Channels DVR, and on a large library it takes many hours. Until a movie's turn comes its
-   runtime shows as 1 second. The dialog shows how many titles are still waiting. A title with no match keeps
+   runtime shows as 1 second. The On demand page shows how many titles are still waiting. A title with no match keeps
    the details from step 1.
 
-**How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
-provider and the group (for example *My Provider · New Releases*), and each provider gets its own section with
-a row for each of its collections. The titles are also listed in Movies and TV Shows next to your own media:
+**How it looks in Channels DVR.** Every group with *Add all* or a hand-picked title becomes a Channels DVR
+collection named after the provider and the group (for example *My Provider · New Releases*), even when it holds
+one title, and each provider gets its own section with a row for each of its collections. The titles are also listed in Movies and TV Shows next to your own media:
 Channels DVR's search only finds titles listed there, and a provider with tens of thousands of titles is
 unusable without search.
 
-**Staying up to date.** coax syncs on *Save*, on *Sync now* in the dialog, and on the provider's refresh
-schedule (*Refresh every (hours)*, at least 12 hours apart; a provider set to 0 syncs only on *Save* and *Sync
-now*). Titles the provider adds to a picked group appear, and titles it removes are removed. A list that
-suddenly has less than half its titles is treated as a provider hiccup and ignored, unless the provider keeps
-answering that way for three days. Untick a group and its titles, collection and row go away. A provider
+**Staying up to date.** coax syncs on *Save*, on *Sync now*, and on the provider's refresh schedule
+(*Refresh every (hours)*, at least 12 hours apart; a provider set to 0 syncs only on *Save* and *Sync now*).
+Titles the provider adds to an *Add all* group appear, new episodes of a hand-picked show appear, and titles the
+provider removes are removed. A list that suddenly has less than half its titles is treated as a provider hiccup
+and ignored, unless the provider keeps answering that way for three days. Switch *Add all* off, or make a group
+unavailable on the Providers page, and its titles, collection and row go away. A hand-picked title you delete
+inside Channels DVR (for a show: all its episodes) is no longer picked, so coax does not add it back; titles of
+an *Add all* group you delete there are not added back either. A provider
 switched off keeps its library (watch state and resume included) but does not sync or play until it is back
 on. Nothing else in Channels DVR is touched: coax only writes inside `Imports/Movies/.coax` and
 `Imports/TV/.coax` (the dot keeps Channels DVR's scanner out of them), one folder per movie. The files stay
@@ -1190,8 +1242,9 @@ never more than one, however the player reads the file:
 - The line is kept for a few seconds after the last read, so a seek never loses it to someone else.
 - **Live TV and recordings come first.** If every line is busy and a channel is tuned or a recording starts,
   coax stops the movie to free its line.
-- When no line is free, the movie does not start (the line usage is on the Status page, where a movie shows as
-  *VOD: title*).
+- When no line is free, the movie does not start. On the Status page every movie or episode playing has its
+  own card next to the channels (title, viewer, provider and line, bitrate, time playing and data sent), and it
+  counts in the line usage like a channel.
 
 Movies and episodes play from coax's Base URL, so they play on your home network. Outside it they play only if
 the device can reach coax.
@@ -1426,6 +1479,7 @@ data/
   backups/               daily and manual backups (.tar.gz)
   notifications.json     the bell's list
   suggestions.json       Auto-match suggestions waiting for Save or Discard
+  ondemand-draft.json    On demand page changes waiting for Save or Dismiss
   automatch.json         the last finished Auto-match
   cache/
     catalog-<provider>.json   last good catalog for each provider
@@ -1486,8 +1540,10 @@ it.
   `FIREWALL_OUTBOUND_SUBNETS`).
 - **No automatic failover.** With transcoding off coax never switches to a backup on its own; turn on a
   *Transcode* preset. See [Offline placeholders and failover](#offline-placeholders-and-failover).
-- **Video on demand titles do not appear.** Open *On demand* on the provider: it says when the Imports folder
-  is not mounted or not writable, or when the *DVR server URL* or *Base URL* is missing, and shows progress.
+- **Video on demand titles do not appear.** Open the *On demand* page: it says when the Imports folder is not
+  mounted or not writable, or when the *DVR server URL* or *Base URL* is missing, and shows progress. A title
+  only goes to Channels DVR when it is hand-picked and saved, or its group has *Add all* on. The catalog is
+  empty until a group is made available under *On demand groups* on the Providers page.
 - **Every tune fails with `response is not an m3u8 playlist`.** The provider sends MPEG-TS; set its *Stream
   format* to MPEG-TS. See [HLS or MPEG-TS](#hls-or-mpeg-ts).
 - **Viewer head start or recording extension missing.** Both need the *DVR server URL*. The log explains

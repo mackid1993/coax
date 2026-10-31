@@ -220,6 +220,15 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   for the channels without one) is unaffected.
 - **Reordering streams never switches.** Dragging a stream on the Status card (or reordering in the stream
   editor) only saves the order (main stream at the next tune, tiebreak in the score-ranked failover list); switching is the deliberate **Switch** button.
+- **On demand: available, Add all, hand-picks.** The Providers page only makes groups available (owner: keep
+  adult and foreign groups out of the catalog); nothing goes to Channels DVR until a title is hand-picked and saved
+  or its group has Add all. Add all means every title, now and later: no hand-picking or single removal inside it,
+  turning it on absorbs the group's picks, turning it off removes the whole group (confirm first, with the count).
+  Add all groups keep the old dedupe (one copy, filed in both collections). Hand-picked copies may be duplicates on
+  purpose (a smaller copy for a slow connection): tag them, never block them. "Maximum quality" was proposed and
+  rejected. No database: JSON and memory. Hand-picks go ahead of any Add all backlog. A pick deleted in Channels DVR
+  is dropped, never re-added. Every title stays listed in Movies and TV Shows (Channels DVR search only finds
+  titles there).
 - **The UI works on a phone** (owner: "something you might need to fix really quick with on your phone").
   Check every page and dialog at phone width before shipping a UI change.
 - **Tuner sharing stays on.** A joining Channels device starts at the newest byte; coax gives each join a 5 s
@@ -526,6 +535,15 @@ Each was decided after real evidence. Reopen only with new evidence and the owne
   the old codec's last PES, 0.2 s lost). The 1.0.7-4/-10 "no gaps" chain results were wrong: check_out.py sees only
   timestamps; use silencedetect. Six-codec chain now silent-free on HLS and TS; dropout, late audio, sync and a TS
   17 s replay rechecked.
+
+- **1.0.9** (Oct 31) the On demand page: Groups with Add all switches, a Catalog of every title in the available
+  groups and the Content of everything in Channels DVR (Add all titles greyed and locked), quality tags, In
+  Channels / Pending / Duplicate tags, search that ignores case, accents and a leading article and matches the
+  year, Shift ranges and select all matching across pages, and unsaved adds and removes kept on the server with
+  the Channels page's autosave (now one shared module, `autosave.js`). Hand-picks reach Channels DVR first (a
+  running Add all import yields), a picked show brings its episodes, picks deleted in Channels DVR stay deleted,
+  making a group unavailable takes its titles away. 1.0.8 configs become Add all for every picked group. Status
+  shows a card per on demand play. Channels page: Shift-click ranges and "Select all N" in the catalog.
 
 ---
 
