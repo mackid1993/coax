@@ -7,11 +7,13 @@ style /movie/ and /series/ paths, or a video file (.mkv, .mp4, ...) where a live
 Cache files:
   {data_dir}/cache/vod-<provider_id>.json
     {"fetched_at", "movie_groups": [...], "series_groups": [...],
-     "movies": [{"id", "name", "ext", "groups", "year", "tmdb", "logo", "added", "url"?}],
-     "series": [{"id", "name", "groups", "year", "tmdb", "logo", "modified"}],
+     "movies": [{"id", "name", "ext", "groups", "year", "tmdb", "logo", "added", "plot"?, "genre"?, "url"?}],
+     "series": [{"id", "name", "groups", "year", "tmdb", "logo", "modified", "plot"?, "genre"?, "backdrop"?,
+                 "release"?}],
      "episodes": {series id: [...]}  (M3U only: its episodes come with the playlist)}
   {data_dir}/cache/vod-<provider_id>-episodes.json
-    {series id: {"modified": int, "episodes": [{"id", "season", "episode", "title", "ext"}]}}  (Xtream)
+    {series id: {"modified": int, "episodes": [{"id", "season", "episode", "title", "ext", "plot"?, "image"?, "air"?,
+                                                "secs"?}]}}  (Xtream)
 """
 
 import logging

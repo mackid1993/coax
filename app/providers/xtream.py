@@ -317,8 +317,14 @@ def _year(item):
     return ""
 
 
+def _tmdb(item):
+    """The panel's TMDB id, digits only ("" when missing, 0 or junk)."""
+    value = text(item.get("tmdb_id") or item.get("tmdb")).strip()
+    return value if value.isdigit() and value.strip("0") else ""
+
+
 def get_vod_streams(provider):
-    """Every movie: {"id", "name", "ext", "categories", "year", "tmdb", "logo", "added"}."""
+    """Every movie: {"id", "name", "ext", "categories", "year", "tmdb", "logo", "added", "plot", "genre"}."""
     out = []
     for item in _as_list(_api(provider, "get_vod_streams", VOD_DEADLINE), "Xtream get_vod_streams"):
         sid = id_text(item.get("stream_id"))
@@ -326,26 +332,33 @@ def get_vod_streams(provider):
             continue
         out.append({"id": sid, "name": text(item.get("name")), "ext": text(item.get("container_extension")) or "mp4",
                     "categories": _category_ids(item), "year": _year(item),
-                    "tmdb": text(item.get("tmdb_id") or item.get("tmdb")), "logo": text(item.get("stream_icon")),
-                    "added": to_int(item.get("added"))})
+                    "tmdb": _tmdb(item), "logo": text(item.get("stream_icon")),
+                    "added": to_int(item.get("added")), "plot": text(item.get("plot")),
+                    "genre": text(item.get("genre"))})
     return out
 
 
 def get_series(provider):
-    """Every series: {"id", "name", "categories", "year", "tmdb", "logo", "modified"}."""
+    """Every series: {"id", "name", "categories", "year", "tmdb", "logo", "modified", "plot", "genre", "backdrop",
+    "release"}."""
     out = []
     for item in _as_list(_api(provider, "get_series", VOD_DEADLINE), "Xtream get_series"):
         sid = id_text(item.get("series_id"))
         if not sid:
             continue
+        backdrop = item.get("backdrop_path")
+        if isinstance(backdrop, list):
+            backdrop = backdrop[0] if backdrop else ""
         out.append({"id": sid, "name": text(item.get("name")), "categories": _category_ids(item),
-                    "year": _year(item), "tmdb": text(item.get("tmdb_id") or item.get("tmdb")),
-                    "logo": text(item.get("cover")), "modified": to_int(item.get("last_modified"))})
+                    "year": _year(item), "tmdb": _tmdb(item),
+                    "logo": text(item.get("cover")), "modified": to_int(item.get("last_modified")),
+                    "plot": text(item.get("plot")), "genre": text(item.get("genre")), "backdrop": text(backdrop),
+                    "release": text(item.get("releaseDate") or item.get("release_date"))})
     return out
 
 
 def get_series_episodes(provider, series_id):
-    """One series' episodes: [{"id", "season", "episode", "title", "ext"}]. Panels answer the episodes as a dict
+    """One series' episodes: [{"id", "season", "episode", "title", "ext", "plot", "image", "air", "secs"}]. Panels answer the episodes as a dict
     keyed by season, a list of seasons, or not at all for a series without any."""
     data = _api(provider, "get_series_info", series_id=id_text(series_id))
     _check_auth(data, "Xtream get_series_info")
@@ -365,8 +378,12 @@ def get_series_episodes(provider, series_id):
             if not isinstance(ep, dict) or not id_text(ep.get("id")):
                 continue
             season = to_int(ep.get("season"), to_int(season_key, 0))
+            info = ep.get("info") if isinstance(ep.get("info"), dict) else {}
             out.append({"id": id_text(ep.get("id")), "season": season, "episode": to_int(ep.get("episode_num")),
-                        "title": text(ep.get("title")), "ext": text(ep.get("container_extension")) or "mp4"})
+                        "title": text(ep.get("title")), "ext": text(ep.get("container_extension")) or "mp4",
+                        "plot": text(info.get("plot")), "image": text(info.get("movie_image")),
+                        "air": text(info.get("air_date") or info.get("releasedate")),
+                        "secs": to_int(info.get("duration_secs"))})
     return out
 
 
