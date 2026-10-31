@@ -138,7 +138,7 @@ variables section.
 services:
   # GitHub home for this project with setup instructions: https://github.com/mackid1993/coax
   coax: # This compose file needs no editing. Put your values in .env (or the Environment variables section of Portainer).
-    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version number (for example 1.0.3) to freeze one
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a release number to freeze one
     container_name: ${CONTAINER_NAME:-coax}
     runtime: ${DOCKER_RUNTIME:-runc} # GPU transcoding on NVIDIA only. Set DOCKER_RUNTIME=nvidia. Requires the NVIDIA driver and NVIDIA Container Toolkit on the host
     devices:
@@ -179,7 +179,7 @@ services:
 # ----- TAG -------------------------------------------------------------------------------------------
 # Which coax version to run.
 #   latest  = always the newest release; "docker compose pull" picks up updates.
-#   1.0.3   = a version number freezes coax on that release until you change it.
+#   a release number (from the GitHub releases page) freezes coax on that release until you change it.
 # Default: latest
 TAG=latest
 
@@ -336,7 +336,7 @@ services:
     restart: unless-stopped
 
   coax:
-    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a version number (for example 1.0.3) to freeze one
+    image: ghcr.io/mackid1993/coax:${TAG:-latest} # latest is the newest release. Set TAG to a release number to freeze one
     container_name: ${CONTAINER_NAME:-coax}
     network_mode: service:gluetun # All of coax's traffic goes through Gluetun. No ports here; they are on the gluetun service
     depends_on:
@@ -387,7 +387,7 @@ services:
 # ----- TAG -------------------------------------------------------------------------------------------
 # Which coax version to run.
 #   latest  = always the newest release; "docker compose pull" picks up updates.
-#   1.0.3   = a version number freezes coax on that release until you change it.
+#   a release number (from the GitHub releases page) freezes coax on that release until you change it.
 # (Gluetun always runs its latest version on purpose, so it keeps getting security fixes.)
 # Default: latest
 TAG=latest
