@@ -29,7 +29,7 @@ app/
   snapshots.py       backups of /data as .tar.gz (daily, manual, restore); old .json backups still restore
   cleanup.py         daily removal of stale engine files and orphaned caches
   names.py           strips provider prefixes (US|, [US], NFL| ...) from names; always on
-  vod.py             video on demand: Stream Files in Channels DVR's Imports, collections, sections, visibility
+  vod.py             video on demand: items created through Channels DVR's API, TMDB matching, collections, sections
   vodproxy.py        /vod/... passthrough for those files: one provider connection per play, a hub line slot
   tz.py              time zone (Settings, else TZ, else UTC)
   engine/
@@ -351,16 +351,31 @@ pass record every one of them).
   empty answer is a failure (panels answer empty when they throttle). M3U: `m3u_split` moves video files and
   `/movie/` `/series/` addresses out of the channel catalog; `S01E02`/`1x02` names are episodes.
 - **Library.** Picks live in `provider.vod` (`movies`, `series`, `library` = groups also listed in Movies/TV
-  Shows). `Library.sync` writes one `.strm` per title under `/imports/Movies/coax/<pid>/` and
-  `/imports/TV/coax/<pid>/<Show>/Season NN/` holding `<base_url>/vod/<pid>/<m|e>/<id>.<ext>` (never the
-  provider's URL), deletes stale ones (only inside those folders), `PUT /dvr/scanner/scan` (and
-  `/dvr/scanner/imports/prune` after deletes), waits for the scanner, then keeps one collection per picked group
-  (`/dvr/collections/content`, Items = file ids or show ids from `/api/v1/movies|episodes?source=stream-files`)
-  and one Personal Section per provider (`/dvr/custom_sections`, a `collection` row each). Titles of groups not
-  in `library` are set Hidden (`/dvr/files/<id>/visibility/hidden`; a show group only when all its files are
-  coax's); coax remembers what it hid (`cache/vod-state.json`) and shows them again when a group is switched.
-  The scanner never opens the addresses. Runs on Save and every `refresh_hours`; a provider switched off pauses.
-  Order within a sync: movies and shows with cached episodes are published first (write, scan, collections),
+  Shows). `Library.sync` writes one `.strm` per title under `/imports/Movies/.coax/<pid>/` and
+  `/imports/TV/.coax/<pid>/<Show>/Season NN/` holding `<base_url>/vod/<pid>/<m|e>/<id>.<ext>` (never the
+  provider's URL). The dot matters: Channels DVR's scanner skips any folder starting with `.` (`shouldSkipDir`),
+  so it never imports them (it takes about 2 s a title, serially). coax creates each item itself with the
+  undocumented restore call `POST /dvr/files` (one File JSON; `?multi=1` takes an array but answers only `true`):
+  `ImportPath` `Imports/Movies|TV`, `Path` relative to it, `GroupID` = `ImportGroup` (`movies`, or the show's
+  group id `coax-<pid>-<series id>`, which the first episode creates), `VideoURL`, `CreatedAt`, `VisibilityMode`,
+  and an `Airing` that must have `Source`, `Title`, `Time`, `Duration` and `Channel` (else 400 `invalid file`).
+  No lookup runs in the call. A new show's first episode goes alone, then `PUT /dvr/groups/<id>` names it (Name,
+  Summary, Image, FanArt, Genres, ReleaseYear, ReleaseDate, Categories). `cache/vod-state.json` keeps
+  `files` (path -> DVR id), `groups`, `hidden`, `hidden_shows`, `todo` and `retry`. The files must stay: the
+  DVR's import prune deletes an item whose file is missing, and `DELETE /dvr/files/<id>` removes the file too.
+  Removed titles: `DELETE` then `PUT .../permanently_delete` per item, `DELETE /dvr/groups/<id>` per show, never
+  a DVR-wide prune. Collections: `/dvr/collections/content`, Items = file ids (movies) or group ids (shows); one
+  Personal Section per provider (`/dvr/custom_sections`). The earlier scanned layout (`Movies/coax/<pid>`,
+  `TV/coax/<pid>`) is taken out once (`_migrate`: its items found by path in `/api/v1/movies|episodes`).
+- **TMDB matching.** A `vod-match` thread works through `todo` (`MATCH_WORKERS` 4 at once, shows first): a movie
+  with the provider's TMDB id gets `PUT /dvr/files/<id>/matches/tmdb/movies/<tmdb>`; without one, `GET
+  /dvr/files/<id>/matches/tmdb/movies` (searches the item's title and year; `?q=` is a raw query) and
+  `best_match` (same name, year within one). A show: `GET /dvr/groups/<id>/matches/tmdb?q=<name>`, then `PUT
+  /dvr/groups/<id>/matches/tmdb/<tmdb>` with the search result as the body (`{"id": N}` at least; no body is
+  400), which fills every episode; the group's own Summary/Image come from the result via `PUT /dvr/groups/<id>`.
+  A match is about 1 to 2 s of the DVR's own lookups; an error retries after 10 minutes, "no match" is final.
+  Runs on Save and every `refresh_hours`; a provider switched off pauses.
+  Order within a sync: movies and shows with cached episodes are published first,
   then episode lists newest `last_modified` first in batches (`BATCH_SERIES` 300 or `BATCH_SECONDS` 600, each
   published at once) within `EPISODE_BUDGET` (30 min); series left over set `continue_at` (15 min, or 1 h after
   throttling) so the next sync comes before the daily refresh.

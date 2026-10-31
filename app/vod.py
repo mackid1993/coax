@@ -1,46 +1,70 @@
-"""Video on demand in Channels DVR: the provider's movies and series as Stream Files in the DVR's library.
+"""Video on demand in Channels DVR: the provider's movies and series as library items, created through the DVR's API.
 
-Channels DVR imports a ".strm" file (a text file holding one video address) from its Imports folder as a regular
-library item: matched to its movie or show, searchable, with watch state and resume. coax writes one per movie and
-episode of the VOD groups picked on a provider, into the DVR's Imports folder (mounted at /imports):
+Channels DVR plays a ".strm" file (a text file holding one video address) as a regular library item: listed with the
+user's movies and shows, searchable, with watch state and resume. Its folder scanner imports such files slowly: it
+looks every title up (Channels' ContentDB and TMDB, one title after another) and reads through the whole folder for
+each file, about two seconds a movie, days for a large provider. coax does not wait for it. It writes the files into
+a hidden folder inside the DVR's Imports folder (mounted at /imports), which the scanner skips (it never enters a
+folder whose name starts with a dot):
 
-  Movies/coax/<provider id>/<Title (Year)>.strm
-  TV/coax/<provider id>/<Show (Year)>/Season 01/<Show (Year)> - S01E02.strm
+  Movies/.coax/<provider id>/<Title (Year)>/<Title (Year)>.strm
+  TV/.coax/<provider id>/<Show (Year)>/Season 01/<Show (Year)> - S01E02.strm
+
+(one folder per movie: on every item it adds, the DVR reads through the item's whole folder looking for extras, and a
+folder of 100,000 movies would make each one take a second), and creates each item itself with the DVR's own restore call (POST /dvr/files, the one its backups use), carrying the
+provider's title, year, artwork, plot and TMDB id. That takes milliseconds an item and needs no lookup, so a title is
+in the library as soon as the provider lists it. A show is a DVR group (id coax-<provider>-<series id>) that its first
+episode creates; coax names it and gives it its artwork. The files stay on disk because the DVR plays and keeps an item
+only while its file exists.
+
+Then, in the background, coax fills in what the provider did not have: each movie and show is matched on TMDB through
+the DVR (PUT /dvr/files/<id>/matches/tmdb/movies/<tmdb id>, PUT /dvr/groups/<id>/matches/tmdb/<tmdb id>), by the
+provider's TMDB id when it has one, else by a search for the title and year. The DVR then fetches the full metadata
+(poster, plot, cast, runtime, rating; every episode's title, plot and runtime). Several run at once; the scanner could
+only do one.
 
 Each file holds coax's own address (<Base URL>/vod/<provider>/<m|e>/<id>.<ext>), never the provider's: the login
-stays out of the DVR, and every play goes through coax, which holds a line slot for it (app/vodproxy.py). The DVR's
-scanner reads the files only; it never opens the address.
+stays out of the DVR, and every play goes through coax, which holds a line slot for it (app/vodproxy.py).
 
-After writing, coax asks the DVR to scan (and deletes the titles it removed, one by one: never a DVR-wide prune,
-which would also drop the user's own imports on a drive that is offline), then keeps one DVR collection per picked
-group and one Personal Section per provider showing them. By default the titles are set to Hidden, so they stay out
-of the main Movies and TV Shows listings and live in their section; a group can be set to show its titles with the
-user's own library instead (vod.library), and switching it either way changes them on the next sync. The sync runs when the picks change and on the provider's refresh schedule (default daily).
-Nothing outside Movies/coax and TV/coax is ever written or removed.
+coax keeps one DVR collection per picked group and one Personal Section per provider showing them. By default the
+titles are Hidden in the main Movies and TV Shows listings and live in their section; a group can be set to show
+its titles with the user's own library (vod.library). Removed titles are deleted from the DVR one by one, never with
+a DVR-wide prune. Nothing outside Movies/.coax and TV/.coax is written or removed, except the scanner-imported files
+of the earlier layout (Movies/coax, TV/coax), which are taken out of the DVR once.
 """
 
 import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 log = logging.getLogger("coax.vod")
 
 IMPORTS_DIR = "/imports"
-SUBDIR = "coax"
+SUBDIR = ".coax"             # hidden: Channels DVR's scanner never enters a folder whose name starts with a dot
+OLD_SUBDIR = "coax"          # the earlier, scanned layout
 TICK_SECONDS = 60
 EPISODE_BUDGET = 1800        # seconds of get_series_info calls per sync; the next sync carries on
 BATCH_SERIES = 300           # episode lists read before the batch goes to Channels DVR...
-BATCH_SECONDS = 600          # ...or after this long, whichever comes first (each batch is one DVR scan)
+BATCH_SECONDS = 600          # ...or after this long, whichever comes first
 CONTINUE_AFTER = 900         # a sync that ran out of time carries on this soon, not at the next refresh
 THROTTLE_WAIT = 3600         # after EPISODE_FAILURES failed calls in a row, the panel rests this long
-SCAN_WAIT = 1800             # how long to wait for the DVR's scanner before updating collections anyway
-SCAN_POLL = 5
+CREATE_WORKERS = 6           # items created in the DVR at once
+MATCH_WORKERS = 4            # TMDB matches through the DVR at once (each is about a second of the DVR's lookups)
+MATCH_RETRY = 600            # a match that failed on an error (not "no match") is tried again after this long
+SAVE_EVERY = 30.0            # seconds between state saves during a long run
+COLLECTIONS_EVERY = 60.0     # seconds between collection updates while titles are being added
 SECTION_ICON = "film"
+POSTER = "https://image.tmdb.org/t/p/w780%s"
+FANART = "https://image.tmdb.org/t/p/original%s"
 _BAD_CHARS = re.compile(r'[\\/*?"<>|\x00-\x1f]')
+_GROUP_ID = re.compile(r"[^A-Za-z0-9_-]")
+_EP_TAG = re.compile(r"^.*?\bS\d{1,3}\s*E\d{1,4}\b\s*[-–:.]*\s*", re.IGNORECASE)
 
 
 def imports_ready(path=None):
@@ -88,6 +112,11 @@ def safe_name(text, limit=150):
     return text.strip(" .") or "Untitled"
 
 
+def group_id(pid, series_id):
+    """The DVR group id of one of coax's shows."""
+    return _GROUP_ID.sub("_", "coax-%s-%s" % (pid, series_id))
+
+
 def vod_hours(provider):
     """Hours between VOD syncs: the provider's refresh schedule, at least 12 (the movie and series lists are tens of
     megabytes), None for a provider refreshed by hand (refresh_hours 0)."""
@@ -118,16 +147,45 @@ def group_label(provider, group):
     return "%s · %s" % (provider.get("name") or provider.get("id"), clean_name(group))
 
 
+def _genres(text):
+    return [g.strip() for g in re.split(r"[,/|]", text or "") if g.strip()][:5]
+
+
+def _year(text):
+    match = re.search(r"(?:19|20)\d\d", str(text or ""))
+    return int(match.group(0)) if match else 0
+
+
+def episode_title(title, season, number):
+    """The episode's own name from a panel title like 'Show - S01E02 - Name' ('' when it is only the show)."""
+    text = (title or "").strip()
+    stripped = _EP_TAG.sub("", text, count=1).strip(" -–:.")
+    if stripped != text:
+        return stripped
+    return "" if re.search(r"\bS\d{1,3}\s*E\d{1,4}\b", text, re.IGNORECASE) else text
+
+
+class Plan:
+    """What the provider's picks should look like in the DVR."""
+
+    def __init__(self):
+        self.files = {}      # relative path under /imports -> file content
+        self.meta = {}       # relative path -> what the DVR item carries
+        self.shows = {}      # group id -> the show's details
+        self.members = {}    # (kind, group) -> movie paths, or show group ids
+        self.titles = {}     # (kind, item id) -> name for the log and the Status page
+        self.visible = set()         # paths shown in the main listings
+        self.visible_shows = set()   # group ids shown in the main listings
+
+
 def plan(provider, vod, episodes, base):
-    """Every file the provider's picks should have: {relative path: content}, per group the paths in it, the titles
-    for the log, and the paths shown in the main listings (a title in any group set to show there)."""
+    """Every file and item the provider's picks should have."""
     from app.providers import vod as vodcat
     pid = provider["id"]
+    out = Plan()
     movie_groups, series_groups = selected(provider)
-    files, members = {}, {("movies", g): [] for g in movie_groups}
-    members.update({("series", g): [] for g in series_groups})
-    titles = {}
-    visible = set()
+    out.members = {("movies", g): [] for g in movie_groups}
+    out.members.update({("series", g): [] for g in series_groups})
     lib_movies, lib_series = in_library(provider)
     wanted = set(movie_groups)
     taken = {}   # lower-case path -> the path of the copy that stands for the title
@@ -135,52 +193,187 @@ def plan(provider, vod, episodes, base):
         groups = [g for g in movie.get("groups") or [] if g in wanted]
         if not groups:
             continue
-        name = safe_name(vodcat.display_name(movie.get("name"), movie.get("year")))
-        rel = "Movies/%s/%s/%s.strm" % (SUBDIR, pid, name)
+        title, year = vodcat.title_year(movie.get("name"), movie.get("year"))
+        name = safe_name("%s (%s)" % (title, year) if year else title)
+        rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, name, name)   # a folder each: the DVR reads a file's folder
         key = rel.lower()
         if key in taken:
             rel = taken[key]   # the same title twice (another quality or group): the first copy stands for both
         else:
             taken[key] = rel
-            files[rel] = "%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
-            titles[("movie", str(movie["id"]))] = vodcat.display_name(movie.get("name"), movie.get("year"))
+            out.files[rel] = "%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
+            out.meta[rel] = {"kind": "movie", "title": title, "year": year, "tmdb": movie.get("tmdb") or "",
+                             "image": movie.get("logo") or "", "plot": movie.get("plot") or "",
+                             "genres": _genres(movie.get("genre")), "added": movie.get("added") or 0}
+            out.titles[("movie", str(movie["id"]))] = "%s (%s)" % (title, year) if year else title
         for group in groups:
-            if rel not in members[("movies", group)]:
-                members[("movies", group)].append(rel)
+            if rel not in out.members[("movies", group)]:
+                out.members[("movies", group)].append(rel)
         if lib_movies.intersection(groups):
-            visible.add(rel)
+            out.visible.add(rel)
     wanted = set(series_groups)
     show_dirs = {}
     for show in vod.get("series") or []:
         groups = [g for g in show.get("groups") or [] if g in wanted]
         if not groups:
             continue
-        show_name = vodcat.display_name(show.get("name"), show.get("year"))
+        title, year = vodcat.title_year(show.get("name"), show.get("year") or str(_year(show.get("release")) or ""))
+        show_name = "%s (%s)" % (title, year) if year else title
         folder = safe_name(show_name)
         if folder.lower() in show_dirs and show_dirs[folder.lower()] != show["id"]:
             continue   # two series with one name: keep the first, the DVR would merge them anyway
         show_dirs[folder.lower()] = show["id"]
-        first = None
+        gid = group_id(pid, show["id"])
         seen = set()
+        added = show.get("modified") or 0
         for ep in sorted(episodes.get(show["id"]) or [], key=lambda e: (e.get("season") or 0, e.get("episode") or 0)):
             season, number = int(ep.get("season") or 0), int(ep.get("episode") or 0)
             if number <= 0 or (season, number) in seen:
                 continue
             seen.add((season, number))
             rel = "TV/%s/%s/%s/Season %02d/%s - S%02dE%02d.strm" % (SUBDIR, pid, folder, season, folder, season, number)
-            files[rel] = "%s/vod/%s/e/%s.%s\n" % (base, pid, ep["id"], ep.get("ext") or "mp4")
-            titles[("episode", str(ep["id"]))] = "%s S%02dE%02d" % (show_name, season, number)
-            first = first or rel
+            out.files[rel] = "%s/vod/%s/e/%s.%s\n" % (base, pid, ep["id"], ep.get("ext") or "mp4")
+            out.meta[rel] = {"kind": "episode", "gid": gid, "show": title, "season": season, "episode": number,
+                             "title": episode_title(ep.get("title"), season, number), "plot": ep.get("plot") or "",
+                             "image": ep.get("image") or "", "air": ep.get("air") or "",
+                             "secs": ep.get("secs") or 0, "added": added}
+            out.titles[("episode", str(ep["id"]))] = "%s S%02dE%02d" % (show_name, season, number)
             if lib_series.intersection(groups):
-                visible.add(rel)
-        if first:
+                out.visible.add(rel)
+        if seen:
+            out.shows[gid] = {"name": title, "year": year, "tmdb": show.get("tmdb") or "",
+                              "image": show.get("logo") or "", "fanart": show.get("backdrop") or "",
+                              "plot": show.get("plot") or "", "genres": _genres(show.get("genre")),
+                              "release": show.get("release") or "", "added": added}
             for group in groups:
-                members[("series", group)].append(first)   # a show collection holds the show: any episode finds it
-    return files, members, titles, visible
+                out.members[("series", group)].append(gid)   # a show collection holds the show itself
+            if lib_series.intersection(groups):
+                out.visible_shows.add(gid)
+    return out
+
+
+def file_body(rel, content, meta, hidden, now=None):
+    """The DVR item for one file: the restore call's JSON."""
+    kind, _sub, rest = rel.partition("/")            # "Movies" or "TV", then ".coax/<pid>/..."
+    added = int(meta.get("added") or now or time.time())
+    airing = {"Source": "coax", "Channel": "coax", "Time": added, "Tags": ["Stream"],
+              "Duration": max(1, int(meta.get("secs") or 0))}   # the DVR requires these; a match sets the runtime
+    if meta.get("plot"):
+        airing["Summary"] = meta["plot"]
+    if meta.get("image"):
+        airing["Image"] = meta["image"]
+    if meta["kind"] == "movie":
+        group = "movies"
+        airing.update(Title=meta["title"], Categories=["Movie"])
+        if meta.get("year"):
+            airing["ReleaseYear"] = int(meta["year"])
+        if meta.get("genres"):
+            airing["Genres"] = meta["genres"]
+        if meta.get("tmdb"):
+            airing.update(MovieID="tmdb/%s" % meta["tmdb"], ProgramID="tmdb/movie/%s" % meta["tmdb"])
+    else:
+        group = meta["gid"]
+        airing.update(Title=meta["show"], Categories=["Episode", "Series"], SeriesID=group,
+                      SeasonNumber=meta["season"], EpisodeNumber=meta["episode"])
+        if meta.get("title"):
+            airing["EpisodeTitle"] = meta["title"]
+        if re.fullmatch(r"\d{4}-\d\d-\d\d", meta.get("air") or ""):
+            airing["OriginalDate"] = meta["air"]
+    body = {"GroupID": group, "ImportGroup": group, "ImportPath": "Imports/%s" % kind,
+            "Path": rest, "VideoURL": content.strip(), "Completed": True, "CreatedAt": added, "Airing": airing}
+    if hidden:
+        body["VisibilityMode"] = "hidden"
+    return body
+
+
+def show_body(show, tmdb=None):
+    """The DVR group fields for a show: the provider's, with TMDB's where the provider has none."""
+    tmdb = tmdb or {}
+    release = show.get("release") or tmdb.get("first_air_date") or ""
+    body = {"Name": show["name"], "Categories": ["Show", "Series"],
+            "Summary": show.get("plot") or tmdb.get("overview") or "",
+            "Image": show.get("image") or ((POSTER % tmdb["poster_path"]) if tmdb.get("poster_path") else ""),
+            "FanArt": show.get("fanart") or ((FANART % tmdb["backdrop_path"]) if tmdb.get("backdrop_path") else ""),
+            "Genres": show.get("genres") or [TMDB_GENRES[g] for g in tmdb.get("genre_ids") or []
+                                             if g in TMDB_GENRES][:5]}
+    year = _year(release) or _year(show.get("year"))
+    if year:
+        body["ReleaseYear"] = year
+    if re.fullmatch(r"\d{4}-\d\d-\d\d", release):
+        body["ReleaseDate"] = release
+    return body
+
+
+# TMDB's genre ids (movies and TV), for the genre names a search result leaves out.
+TMDB_GENRES = {
+    28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 18: "Drama",
+    10751: "Family", 14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music", 9648: "Mystery", 10749: "Romance",
+    878: "Science Fiction", 10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western",
+    10759: "Action & Adventure", 10762: "Kids", 10763: "News", 10764: "Reality", 10765: "Sci-Fi & Fantasy",
+    10766: "Soap", 10767: "Talk", 10768: "War & Politics",
+}
+
+
+def needs_lookup(meta):
+    """True when the provider left out something a library item should have: the TMDB id, the poster or the plot."""
+    return not (meta.get("tmdb") and meta.get("image") and meta.get("plot"))
+
+
+def with_tmdb(meta, found):
+    """The provider's details, completed from a TMDB search result: what the provider has stays, what it lacks
+    comes from TMDB. A result whose id is not the provider's own TMDB id is not used."""
+    if not found or (meta.get("tmdb") and str(found.get("id")) != str(meta["tmdb"])):
+        return meta
+    out = dict(meta)
+    out["tmdb"] = str(found["id"])
+    if not out.get("plot") and found.get("overview"):
+        out["plot"] = found["overview"]
+    if not out.get("image") and found.get("poster_path"):
+        out["image"] = POSTER % found["poster_path"]
+    if not out.get("year"):
+        year = _year(found.get("release_date") or found.get("first_air_date"))
+        out["year"] = str(year) if year else ""
+    if not out.get("genres") and found.get("genre_ids"):
+        out["genres"] = [TMDB_GENRES[g] for g in found["genre_ids"] if g in TMDB_GENRES][:5]
+    return out
+
+
+def _norm(text):
+    text = (text or "").lower().replace("&", " and ")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
+
+
+def best_match(results, title, year, name_keys=("title", "original_title"), date_key="release_date"):
+    """The TMDB search result that is this title, or None: the same name (or one that holds the other, for
+    subtitles), the same year give or take one when both are known; the most voted wins a tie."""
+    want = _norm(title)
+    if not want:
+        return None
+    year = _year(year)
+    best, best_score = None, 0
+    for item in results or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        names = [_norm(item.get(k)) for k in name_keys if item.get(k)]
+        if want in names:
+            score = 4
+        elif any(n and (n.startswith(want) or want.startswith(n)) and min(len(n), len(want)) >= 4 for n in names):
+            score = 2
+        else:
+            continue
+        got = _year(item.get(date_key))
+        if year and got:
+            if abs(got - year) > 1:
+                continue
+            score += 2 if got == year else 1
+        score += min(float(item.get("vote_count") or 0), 100000) / 1e6
+        if score > best_score:
+            best, best_score = item, score
+    return best
 
 
 class Library:
-    """Writes the Stream Files, keeps the DVR's collections and sections, and remembers what it did."""
+    """Creates the provider's items in the DVR, matches them on TMDB, keeps the collections and sections."""
 
     def __init__(self, store, data_dir, imports_dir=None, dvr_call=None):
         self.store = store
@@ -188,13 +381,17 @@ class Library:
         self.state_path = os.path.join(data_dir, "cache", "vod-state.json")
         self._dvr_call = dvr_call
         self._lock = threading.Lock()          # one sync at a time
-        self._state_lock = threading.Lock()
+        self._state_lock = threading.RLock()
         self._wake = threading.Event()
+        self._match_wake = threading.Event()
         self._wanted = set()
         self._stop = threading.Event()
         self._thread = None
+        self._matcher = None
         self._titles = {}
         self._titles_read = set()
+        self._local = threading.local()
+        self._saved_at = 0.0
         self.running = {}                      # provider id -> what the running sync is doing
         self.state = self._load_state()
 
@@ -211,9 +408,18 @@ class Library:
         from app.providers.catalog import atomic_write_json
         with self._state_lock:
             atomic_write_json(self.state_path, self.state)
+            self._saved_at = time.monotonic()
+
+    def _save_soon(self):
+        if time.monotonic() - self._saved_at >= SAVE_EVERY:
+            self._save_state()
 
     def _pstate(self, pid):
-        return self.state.setdefault(str(pid), {"collections": {}, "section": None})
+        st = self.state.setdefault(str(pid), {"collections": {}, "section": None})
+        for key in ("files", "groups", "todo"):
+            if not isinstance(st.get(key), dict):
+                st[key] = {}
+        return st
 
     def _titles_path(self, pid):
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", str(pid)) or "_"
@@ -235,116 +441,241 @@ class Library:
     def status(self, provider_id):
         ok, why = imports_ready(self.imports_dir)
         st = dict(self.state.get(str(provider_id)) or {})
-        st.pop("collections", None)
-        st.update(imports_ok=ok, imports_message=why, running=self.running.get(str(provider_id)))
+        for key in ("collections", "files", "groups", "todo", "hidden", "hidden_shows"):
+            st.pop(key, None)
+        todo = (self.state.get(str(provider_id)) or {}).get("todo") or {}
+        st.update(imports_ok=ok, imports_message=why, running=self.running.get(str(provider_id)),
+                  matching=len(todo))
         return st
 
     # -- the DVR ----------------------------------------------------------------------------------------------------
     def _call(self, cfg, method, path, body=None, timeout=30):
         if self._dvr_call is not None:
             return self._dvr_call(cfg, method, path, body)
+        import requests
         from app import channels_dvr
-        return channels_dvr._call(cfg, method, path, body, timeout=timeout)
+        session = getattr(self._local, "session", None)
+        if session is None:   # one kept-alive connection per worker thread: tens of thousands of calls
+            session = self._local.session = requests.Session()
+        url = channels_dvr.dvr_url(cfg) + path
+        try:
+            resp = session.request(method, url, json=body, timeout=timeout,
+                                   headers={"User-Agent": channels_dvr.USER_AGENT})
+        except requests.RequestException as exc:
+            raise channels_dvr.DvrError("could not reach Channels DVR at %s: %s" % (channels_dvr.dvr_url(cfg), exc))
+        if not 200 <= resp.status_code < 300:
+            detail = (resp.text or "").strip()[:300] or resp.reason
+            raise channels_dvr.DvrError("Channels DVR answered %s for %s %s: %s"
+                                        % (resp.status_code, method, path, detail))
+        try:
+            return resp.json()
+        except ValueError:
+            return resp.text
 
-    def _drop(self, cfg, pid, deleted):
-        """Delete the titles whose Stream Files coax removed from Channels DVR, one by one (trash, then for good)."""
-        if not deleted:
-            return
-        movie_ids, episodes = self._dvr_ids(cfg, pid)
-        ids = dict(movie_ids)
-        ids.update({rel: fid for rel, (fid, _show) in episodes.items()})
-        gone = set(deleted)
-        for rel, fid in ids.items():
-            if rel in gone and fid:
-                self._call(cfg, "DELETE", "/dvr/files/%s" % fid)
-                self._call(cfg, "PUT", "/dvr/files/%s/permanently_delete" % fid)
+    def _delete_file(self, cfg, fid):
+        """Delete one DVR item for good (trash, then permanently). Also removes its file, if still there."""
+        try:
+            self._call(cfg, "DELETE", "/dvr/files/%s" % fid)
+            self._call(cfg, "PUT", "/dvr/files/%s/permanently_delete" % fid)
+        except Exception as exc:  # noqa: BLE001 - one item that will not go never stops the rest
+            log.warning("VOD: could not delete DVR item %s: %s", fid, exc)
 
-    def _scan(self, cfg):
-        """Ask the DVR to import the new files, then wait for its scanner."""
-        self._call(cfg, "PUT", "/dvr/scanner/scan")
-        deadline = time.monotonic() + SCAN_WAIT
-        time.sleep(SCAN_POLL if self._dvr_call is None else 0)
-        while time.monotonic() < deadline and not self._stop.is_set():
-            info = self._call(cfg, "GET", "/dvr") or {}
-            busy = [k for k in (info.get("activity") or {}) if "-scanner" in k or "-pruner" in k]
-            if not busy:
-                return True
-            time.sleep(SCAN_POLL if self._dvr_call is None else 0)
-        return False
+    def _pool(self, workers, func, items):
+        """Run func over items on a few threads; stops early when coax is stopping. Returns the results in order."""
+        items = list(items)
+        if not items:
+            return []
+        if self._dvr_call is not None or workers <= 1 or len(items) == 1:
+            return [None if self._stop.is_set() else func(item) for item in items]
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(lambda item: None if self._stop.is_set() else func(item), items))
 
-    def _dvr_ids(self, cfg, pid):
-        """DVR ids of this provider's imported files: {relative path: file id} for movies, and
-        {relative path: (file id, show id)} for episodes."""
-        movies, episodes = {}, {}
-        mark = "Imports/"
-        for kind in ("movies", "episodes"):
-            for item in self._call(cfg, "GET", "/api/v1/%s?source=stream-files" % kind, timeout=300) or []:
-                path = str(item.get("path") or "")
-                at = path.find(mark)
-                if at < 0:
-                    continue
-                rel = path[at + len(mark):]
-                if not rel.startswith(("Movies/%s/%s/" % (SUBDIR, pid), "TV/%s/%s/" % (SUBDIR, pid))):
-                    continue
-                if kind == "movies":
-                    movies[rel] = str(item.get("id") or "")
-                else:
-                    episodes[rel] = (str(item.get("id") or ""), str(item.get("show_id") or ""))
-        return movies, episodes
-
-    def _hide(self, cfg, pid, movie_ids, episodes, visible):
-        """Set each title's visibility in the main Movies and TV Shows listings from its groups' choice: Hidden (it
-        lives in its collections and section) or shown with the user's own library. Only changes are sent; coax
-        remembers what it hid, so switching a group back shows its titles again. A show is hidden as a whole only
-        when every one of its files is coax's and hidden; a show of the user's own with coax episodes in it stays."""
+    # -- items ------------------------------------------------------------------------------------------------------
+    def _create(self, cfg, pid, pl, rels, refresh=None):
+        """Create these files' items in the DVR. A new show's first episode goes alone (it creates the group), then
+        coax names the group; the rest go in parallel. `refresh` (the collections update) runs every
+        COLLECTIONS_EVERY seconds meanwhile, so the collections fill as the titles arrive."""
         st = self._pstate(pid)
-        done = set(st.get("hidden") or [])
-        files = {fid: rel for rel, fid in movie_ids.items()}
-        files.update({fid: rel for rel, (fid, _show) in episodes.items()})
-        want = {fid for fid, rel in files.items() if rel not in visible}
-        for fid in sorted(want - done):
-            self._call(cfg, "PUT", "/dvr/files/%s/visibility/hidden" % fid)
-        for fid in sorted((done - want) & set(files)):
-            self._call(cfg, "PUT", "/dvr/files/%s/visibility/main" % fid)
-        shows_done = set(st.get("hidden_shows") or [])
-        by_show = {}
-        for rel, (fid, show) in episodes.items():
-            if show:
-                by_show.setdefault(show, set()).add(fid)
-        hide_shows = set()
-        for show, fids in sorted(by_show.items()):
-            if fids <= want:
-                if show in shows_done:
-                    hide_shows.add(show)
-                    continue
-                group = self._call(cfg, "GET", "/dvr/groups/%s" % show) or {}
-                if set(str(f) for f in group.get("FileID") or []) <= set(fids):
-                    self._call(cfg, "PUT", "/dvr/groups/%s/visibility/hidden" % show)
-                    hide_shows.add(show)
-            elif show in shows_done:
-                self._call(cfg, "PUT", "/dvr/groups/%s/visibility/main" % show)
-        st["hidden"] = sorted(want)
-        st["hidden_shows"] = sorted(hide_shows)
+        total, done = len(rels), [0]
+        failed = []
+        refreshing = threading.Lock()
+        last = [time.monotonic()]
 
-    def _collections(self, cfg, provider, members, visible):
+        def tick():
+            if refresh is None or time.monotonic() - last[0] < COLLECTIONS_EVERY or not refreshing.acquire(False):
+                return
+            try:
+                last[0] = time.monotonic()
+                refresh()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("VOD provider %s: collections not updated: %s", pid, exc)
+            finally:
+                refreshing.release()
+
+        def make(rel):
+            meta = pl.meta[rel]
+            if meta["kind"] == "movie" and needs_lookup(meta):
+                meta = with_tmdb(meta, self._search_movie(cfg, pid, meta))
+            body = file_body(rel, pl.files[rel], meta, hidden=rel not in pl.visible)
+            try:
+                made = self._call(cfg, "POST", "/dvr/files", body) or {}
+            except Exception as exc:  # noqa: BLE001
+                failed.append(str(exc))
+                return
+            fid = str(made.get("ID") or "") if isinstance(made, dict) else ""
+            if not fid:
+                failed.append("no id in the answer")
+                return
+            with self._state_lock:
+                st["files"][rel] = fid
+                if body.get("VisibilityMode") == "hidden":
+                    st.setdefault("hidden", []).append(fid)
+                if meta["kind"] == "movie":
+                    st["todo"]["f:" + fid] = [meta.get("tmdb") or "", meta["title"], meta.get("year") or ""]
+                done[0] += 1
+                if done[0] % 200 == 0 or done[0] == total:
+                    self.running[pid] = "adding to Channels DVR (%d of %d)" % (done[0], total)
+                self._save_soon()
+            tick()
+
+        new_groups, first, rest = set(), [], []
+        for rel in rels:
+            gid = pl.meta[rel].get("gid")
+            if gid and gid not in st["groups"] and gid not in new_groups:
+                new_groups.add(gid)
+                first.append(rel)
+            else:
+                rest.append(rel)
+        if not self._search_handle(pid):
+            lead = next((r for r in rest if pl.meta[r]["kind"] == "movie"), None)
+            if lead:   # one movie first: TMDB searches go through a DVR item, and this becomes it
+                rest.remove(lead)
+                make(lead)
+        self._pool(CREATE_WORKERS, make, first)
+        made_groups = [g for g in sorted(new_groups) if any(st["files"].get(r) for r in first
+                                                            if pl.meta[r].get("gid") == g)]
+        self._pool(CREATE_WORKERS, lambda g: self._new_show(cfg, pid, pl, g), made_groups)
+        self._pool(CREATE_WORKERS, make, rest)
+        if failed:
+            log.warning("VOD provider %s: %d of %d items not added to Channels DVR (first error: %s); the next sync "
+                        "tries again", pid, len(failed), total, failed[0])
+        self._save_state()
+
+    def _search_handle(self, pid):
+        """A movie item of coax's to run TMDB searches through: the DVR's search takes any item's id with ?q=."""
+        files = self._pstate(pid)["files"]
+        return next((fid for rel, fid in files.items() if rel.startswith("Movies/")), None)
+
+    def _search_movie(self, cfg, pid, meta):
+        """coax's own TMDB lookup for a movie the provider left thin: the DVR's TMDB search (Channels DVR's own
+        access, no API key), the result picked by coax (same name, year within one; the provider's TMDB id wins)."""
+        handle = self._search_handle(pid)
+        if not handle:
+            return None
+        from urllib.parse import quote
+        try:
+            results = self._call(cfg, "GET", "/dvr/files/%s/matches/tmdb/movies?q=%s" % (handle, quote(meta["title"])))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("VOD: TMDB search for %s failed: %s", meta["title"], exc)
+            return None
+        if meta.get("tmdb"):
+            return next((r for r in results or [] if isinstance(r, dict) and str(r.get("id")) == str(meta["tmdb"])),
+                        None)
+        return best_match(results, meta["title"], meta.get("year"))
+
+    def _search_show(self, cfg, gid, show):
+        from urllib.parse import quote
+        try:
+            results = self._call(cfg, "GET", "/dvr/groups/%s/matches/tmdb?q=%s" % (gid, quote(show["name"])))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("VOD: TMDB search for %s failed: %s", show["name"], exc)
+            return None
+        if show.get("tmdb"):
+            return next((r for r in results or [] if isinstance(r, dict) and str(r.get("id")) == str(show["tmdb"])),
+                        None)
+        return best_match(results, show["name"], show.get("year"), ("name", "original_name"), "first_air_date")
+
+    def _new_show(self, cfg, pid, pl, gid):
+        st = self._pstate(pid)
+        show = dict(pl.shows[gid])
+        found = self._search_show(cfg, gid, show) if needs_lookup(show) else None
+        if found:
+            show["tmdb"] = str(found["id"])
+            if not show.get("genres") and found.get("genre_ids"):
+                show["genres"] = [TMDB_GENRES[g] for g in found["genre_ids"] if g in TMDB_GENRES][:5]
+        try:
+            self._call(cfg, "PUT", "/dvr/groups/%s" % gid, show_body(show, found))
+            if gid not in pl.visible_shows:
+                self._call(cfg, "PUT", "/dvr/groups/%s/visibility/hidden" % gid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("VOD: could not name show %s in Channels DVR: %s", show["name"], exc)
+        with self._state_lock:
+            st["groups"][gid] = 1
+            if gid not in pl.visible_shows:
+                hidden = st.setdefault("hidden_shows", [])
+                if gid not in hidden:
+                    hidden.append(gid)
+            st["todo"]["g:" + gid] = [show.get("tmdb") or "", show["name"], show.get("year") or ""]
+
+    def _visibility(self, cfg, pid, pl):
+        """Show or hide existing items when a group's choice changed. Only changes are sent."""
+        st = self._pstate(pid)
+        files = {fid: rel for rel, fid in st["files"].items() if rel in pl.files}
+        want = {fid for fid, rel in files.items() if rel not in pl.visible}
+        done = set(st.get("hidden") or []) & set(files)
+        self._pool(CREATE_WORKERS, lambda f: self._call(cfg, "PUT", "/dvr/files/%s/visibility/hidden" % f),
+                   sorted(want - done))
+        self._pool(CREATE_WORKERS, lambda f: self._call(cfg, "PUT", "/dvr/files/%s/visibility/main" % f),
+                   sorted(done - want))
+        st["hidden"] = sorted(want)
+        groups = set(st["groups"]) & set(pl.shows)
+        want_g = groups - pl.visible_shows
+        done_g = set(st.get("hidden_shows") or []) & groups
+        for gid in sorted(want_g - done_g):
+            self._call(cfg, "PUT", "/dvr/groups/%s/visibility/hidden" % gid)
+        for gid in sorted(done_g - want_g):
+            self._call(cfg, "PUT", "/dvr/groups/%s/visibility/main" % gid)
+        st["hidden_shows"] = sorted(want_g)
+
+    def _drop_missing(self, cfg, pid, pl):
+        """Delete from the DVR the items and shows the picks no longer have."""
+        st = self._pstate(pid)
+        gone = [(rel, fid) for rel, fid in st["files"].items() if rel not in pl.files]
+        self._pool(CREATE_WORKERS, lambda item: self._delete_file(cfg, item[1]), gone)
+        with self._state_lock:
+            for rel, fid in gone:
+                st["files"].pop(rel, None)
+                st["todo"].pop("f:" + fid, None)
+        for gid in [g for g in st["groups"] if g not in pl.shows]:
+            try:
+                self._call(cfg, "DELETE", "/dvr/groups/%s" % gid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("VOD: could not delete show %s from Channels DVR: %s", gid, exc)
+            with self._state_lock:
+                st["groups"].pop(gid, None)
+                st["todo"].pop("g:" + gid, None)
+        return len(gone)
+
+    def _collections(self, cfg, provider, members):
         """One DVR collection per picked group, one Personal Section with a row for each."""
         pid = provider["id"]
         st = self._pstate(pid)
-        movie_ids, episodes = self._dvr_ids(cfg, pid)
-        show_ids = {rel: show for rel, (_fid, show) in episodes.items()}
-        self._hide(cfg, pid, movie_ids, episodes, visible)
         existing = {str(c.get("ID")): c for c in self._call(cfg, "GET", "/dvr/collections/content") or []}
         kept = {}
         rows = []
-        for (kind, group), paths in members.items():
-            ids = movie_ids if kind == "movies" else show_ids
-            items = list(dict.fromkeys(ids[p] for p in paths if ids.get(p)))
+        for (kind, group), keys in members.items():
+            if kind == "movies":
+                items = list(dict.fromkeys(st["files"][k] for k in keys if st["files"].get(k)))
+            else:
+                items = [k for k in keys if k in st["groups"]]
             key = "%s:%s" % (kind, group)
             name = group_label(provider, group)
             cid = (st.get("collections") or {}).get(key)
             body = {"Name": name, "Type": "movies" if kind == "movies" else "shows", "Items": items}
             if cid and cid in existing:
                 current = existing[cid]
+                if "Items" not in current:   # the list leaves the items out
+                    current = self._call(cfg, "GET", "/dvr/collections/content/%s" % cid) or current
                 if current.get("Name") != name or list(current.get("Items") or []) != items:
                     merged = dict(current)
                     merged.update(body)
@@ -384,10 +715,90 @@ class Library:
                               {"Title": title, "Icon": SECTION_ICON, "SectionType": "rows", "Rows": rows}) or {}
             st["section"] = str(made.get("ID") or "") or None
 
+    # -- TMDB matching ----------------------------------------------------------------------------------------------
+    def _match_one(self, cfg, pid, key, hint):
+        """Match one movie or show on TMDB through the DVR. Returns True (matched), False (no match: not tried
+        again) or None (an error: tried again later)."""
+        tmdb, title, year = (list(hint) + ["", "", ""])[:3]
+        kind, _sep, ident = key.partition(":")
+        try:
+            if kind == "f":
+                if not tmdb:
+                    found = best_match(self._call(cfg, "GET", "/dvr/files/%s/matches/tmdb/movies" % ident), title, year)
+                    if found is None:
+                        from urllib.parse import quote
+                        found = best_match(self._call(cfg, "GET", "/dvr/files/%s/matches/tmdb/movies?q=%s"
+                                                      % (ident, quote(title))), title, year)
+                    if found is None:
+                        return False
+                    tmdb = found["id"]
+                self._call(cfg, "PUT", "/dvr/files/%s/matches/tmdb/movies/%s" % (ident, tmdb), timeout=120)
+                return True
+            from urllib.parse import quote
+            results = self._call(cfg, "GET", "/dvr/groups/%s/matches/tmdb?q=%s" % (ident, quote(title))) or []
+            if tmdb:
+                found = next((r for r in results if isinstance(r, dict) and str(r.get("id")) == str(tmdb)), None) \
+                    or {"id": int(tmdb)}
+            else:
+                found = best_match(results, title, year, ("name", "original_name"), "first_air_date")
+                if found is None:
+                    return False
+            self._call(cfg, "PUT", "/dvr/groups/%s/matches/tmdb/%s" % (ident, found["id"]), found, timeout=300)
+            if found.get("overview") or found.get("poster_path"):
+                group = self._call(cfg, "GET", "/dvr/groups/%s" % ident) or {}
+                show = {"name": group.get("Name") or title, "year": year, "plot": group.get("Summary") or "",
+                        "image": group.get("Image") or "", "fanart": group.get("FanArt") or "",
+                        "genres": group.get("Genres") or [], "release": group.get("ReleaseDate") or ""}
+                self._call(cfg, "PUT", "/dvr/groups/%s" % ident, show_body(show, found))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.debug("VOD: TMDB match of %s %s failed: %s", key, title, exc)
+            return None
+
+    def match_pending(self, limit=None):
+        """Work through every provider's unmatched movies and shows, a few at a time. Returns how many were done."""
+        cfg = self.store.get()
+        if not ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
+            return 0
+        handled = 0
+        for pid in list(self.state):
+            provider = next((p for p in cfg.get("providers") or [] if p.get("id") == pid), None)
+            if provider is None or provider.get("enabled", True) is False:
+                continue
+            st = self._pstate(pid)
+            now = time.time()
+            retry = st.setdefault("retry", {})
+            todo = [(k, v) for k, v in list(st["todo"].items()) if retry.get(k, 0) <= now]
+            todo.sort(key=lambda kv: kv[0][0] != "g")   # shows first: one match fills every episode
+            if limit is not None:
+                todo = todo[:limit]
+            if not todo:
+                continue
+            stats = {"matched": 0, "none": 0, "error": 0}
+
+            def one(item):
+                key, hint = item
+                result = self._match_one(cfg, pid, key, hint)
+                with self._state_lock:
+                    if result is None:
+                        retry[key] = time.time() + MATCH_RETRY
+                        stats["error"] += 1
+                    else:
+                        st["todo"].pop(key, None)
+                        retry.pop(key, None)
+                        stats["matched" if result else "none"] += 1
+                    self._save_soon()
+            self._pool(MATCH_WORKERS, one, todo)
+            handled += len(todo)
+            self._save_state()
+            log.info("VOD provider %s: %d matched on TMDB, %d with no match, %d to try again; %d left", pid,
+                     stats["matched"], stats["none"], stats["error"], len(st["todo"]))
+        return handled
+
     # -- files ------------------------------------------------------------------------------------------------------
-    def _roots(self, pid):
-        return [os.path.join(self.imports_dir, "Movies", SUBDIR, str(pid)),
-                os.path.join(self.imports_dir, "TV", SUBDIR, str(pid))]
+    def _roots(self, pid, sub=SUBDIR):
+        return [os.path.join(self.imports_dir, "Movies", sub, str(pid)),
+                os.path.join(self.imports_dir, "TV", sub, str(pid))]
 
     def _existing(self, pid):
         out = {}
@@ -430,7 +841,7 @@ class Library:
                 except OSError as exc:
                     log.warning("VOD: could not remove %s: %s", rel, exc)
         for root in self._roots(pid):
-            folders = [w[0] for w in os.walk(root)] + [os.path.dirname(root)]   # down to Movies/coax, TV/coax
+            folders = [w[0] for w in os.walk(root)] + [os.path.dirname(root)]   # down to Movies/.coax, TV/.coax
             for folder in sorted(folders, key=len, reverse=True):
                 try:
                     if not os.listdir(folder):
@@ -439,9 +850,38 @@ class Library:
                     pass
         return written, deleted
 
+    def _migrate(self, cfg, pid):
+        """Take the earlier, scanner-imported layout (Movies/coax/<pid>, TV/coax/<pid>) out of the DVR and the disk
+        once: its items would stand beside the new ones."""
+        old = [r for r in self._roots(pid, OLD_SUBDIR) if os.path.isdir(r)]
+        if not old:
+            return
+        self.running[pid] = "removing the earlier scanned titles"
+        marks = ("/Imports/Movies/%s/%s/" % (OLD_SUBDIR, pid), "/Imports/TV/%s/%s/" % (OLD_SUBDIR, pid))
+        ids = []
+        if ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
+            for kind in ("movies", "episodes"):
+                for item in self._call(cfg, "GET", "/api/v1/%s?source=stream-files" % kind, timeout=600) or []:
+                    if any(m in str(item.get("path") or "") for m in marks) and item.get("id"):
+                        ids.append(str(item["id"]))
+            ids = list(dict.fromkeys(ids))
+            self._pool(CREATE_WORKERS, lambda fid: self._delete_file(cfg, fid), ids)
+        for root in old:
+            shutil.rmtree(root, ignore_errors=True)
+            parent = os.path.dirname(root)
+            try:
+                if not os.listdir(parent):
+                    os.rmdir(parent)
+            except OSError:
+                pass
+        st = self._pstate(pid)
+        st.pop("hidden", None)
+        st.pop("hidden_shows", None)
+        log.info("VOD provider %s: %d scanned titles of the earlier layout removed from Channels DVR", pid, len(ids))
+
     # -- sync -------------------------------------------------------------------------------------------------------
     def sync(self, provider_id):
-        """Bring one provider's Stream Files, collections and section up to date. Never raises."""
+        """Bring one provider's items, collections and section up to date. Never raises."""
         pid = str(provider_id)
         with self._lock:
             started = time.time()
@@ -460,6 +900,7 @@ class Library:
             finally:
                 self.running.pop(pid, None)
                 self._save_state()
+        self._match_wake.set()
 
     def _sync(self, pid):
         from app.providers import vod as vodcat, catalog
@@ -477,6 +918,7 @@ class Library:
         base = ((cfg.get("server") or {}).get("base_url") or "").strip().rstrip("/")
         if not base:
             raise RuntimeError("set coax's Base URL in Settings first: the Stream Files point at it")
+        self._migrate(cfg, pid)
         self.running[pid] = "reading the provider's movies and series"
         vod = vodcat.load(pid)
         hours = vod_hours(provider)
@@ -519,45 +961,56 @@ class Library:
                      wait // 60)
 
     def _publish(self, cfg, provider, vod, episodes, base):
-        """Write the Stream Files for what is known now, have Channels DVR import them, update the collections."""
+        """Write the files for what is known now, create their items in Channels DVR, update the collections."""
         pid = provider["id"]
-        files, members, titles, visible = plan(provider, vod, episodes, base)
-        self._titles.update(titles)
+        pl = plan(provider, vod, episodes, base)
+        self._titles.update(pl.titles)
         self.running[pid] = "writing Stream Files"
-        written, deleted = self._write(pid, files)
+        written, _deleted = self._write(pid, pl.files)
         st = self._pstate(pid)
-        st.update(movies=sum(1 for r in files if r.startswith("Movies/")),
-                  episodes=sum(1 for r in files if r.startswith("TV/")),
-                  shows=len({r.split("/")[3] for r in files if r.startswith("TV/")}))
-        log.info("VOD provider %s: %d movies, %d episodes of %d shows (%d written, %d removed)", pid,
-                 st["movies"], st["episodes"], st["shows"], written, len(deleted))
+        st.update(movies=sum(1 for r in pl.files if r.startswith("Movies/")),
+                  episodes=sum(1 for r in pl.files if r.startswith("TV/")), shows=len(pl.shows))
         from app.providers import catalog
-        catalog.atomic_write_json(self._titles_path(pid), {"%s:%s" % key: name for key, name in titles.items()})
+        catalog.atomic_write_json(self._titles_path(pid), {"%s:%s" % key: name for key, name in pl.titles.items()})
         if not ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
-            st["dvr_note"] = "Set the Channels DVR URL in Settings so coax can make the collections."
+            st["dvr_note"] = "Set the Channels DVR URL in Settings so coax can add the titles to it."
+            log.info("VOD provider %s: %d movies, %d episodes of %d shows written (%d new); no Channels DVR URL", pid,
+                     st["movies"], st["episodes"], st["shows"], written)
             return
         st.pop("dvr_note", None)
-        self._drop(cfg, pid, deleted)
-        if written or deleted or not st.get("collections"):
-            self.running[pid] = "waiting for Channels DVR to import them"
-            if not self._scan(cfg):
-                log.warning("VOD provider %s: Channels DVR is still scanning; collections updated anyway", pid)
+        removed = self._drop_missing(cfg, pid, pl)
+        # Newest first, so what the provider added last is in the library first.
+        new = [rel for rel in pl.files if rel not in st["files"]]
+        new.sort(key=lambda r: -(pl.meta[r].get("added") or 0))
+        started = time.monotonic()
+        if new:
+            self.running[pid] = "adding to Channels DVR (0 of %d)" % len(new)
+            self._collections(cfg, provider, pl.members)   # the collections and section exist from the start...
+            self._create(cfg, pid, pl, new, refresh=lambda: self._collections(cfg, provider, pl.members))
+        self._visibility(cfg, pid, pl)
+        log.info("VOD provider %s: %d movies, %d episodes of %d shows; %d added to Channels DVR in %.0fs, %d removed",
+                 pid, st["movies"], st["episodes"], st["shows"], sum(1 for r in new if st["files"].get(r)),
+                 time.monotonic() - started, removed)
         self.running[pid] = "updating the collections"
-        self._collections(cfg, provider, members, visible)
+        self._collections(cfg, provider, pl.members)
         self._save_state()
+        self._match_wake.set()
 
     def remove(self, pid, cfg=None):
-        """Take a provider's VOD out of the DVR: its files, collections and section."""
+        """Take a provider's VOD out of the DVR: its items, shows, files, collections and section."""
         cfg = cfg or self.store.get()
         pid = str(pid)
         st = self.state.get(pid)
-        if os.path.isdir(self.imports_dir):
-            _written, deleted = self._write(pid, {})
-        else:
-            deleted = []
-        if st and ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
+        has_dvr = bool(((cfg.get("channels_dvr") or {}).get("url") or "").strip())
+        if st and has_dvr:
             try:
-                self._drop(cfg, pid, deleted)
+                self._pool(CREATE_WORKERS, lambda fid: self._delete_file(cfg, fid),
+                           list((st.get("files") or {}).values()))
+                for gid in st.get("groups") or {}:
+                    try:
+                        self._call(cfg, "DELETE", "/dvr/groups/%s" % gid)
+                    except Exception:  # noqa: BLE001
+                        pass
                 existing = {str(c.get("ID")) for c in self._call(cfg, "GET", "/dvr/collections/content") or []}
                 for cid in (st.get("collections") or {}).values():
                     if cid in existing:
@@ -567,8 +1020,14 @@ class Library:
                     self._call(cfg, "DELETE", "/dvr/custom_sections/%s" % st["section"])
             except Exception as exc:  # noqa: BLE001
                 log.warning("VOD: could not remove provider %s from Channels DVR: %s", pid, exc)
+        deleted = []
+        if os.path.isdir(self.imports_dir):
+            _written, deleted = self._write(pid, {})
+            if has_dvr or not st:
+                self._migrate(cfg, pid)
         if st or deleted:
-            log.info("VOD provider %s removed from Channels DVR (%d Stream Files)", pid, len(deleted))
+            log.info("VOD provider %s removed from Channels DVR (%d items)", pid,
+                     len((st or {}).get("files") or {}) or len(deleted))
         self.state.pop(pid, None)
 
     # -- schedule ---------------------------------------------------------------------------------------------------
@@ -586,6 +1045,9 @@ class Library:
             return bool(st)   # picks cleared: clean up once
         if st.get("continue_at") and time.time() >= st["continue_at"]:
             return True   # episode lists still to read
+        if os.path.isdir(os.path.join(self.imports_dir, "Movies", OLD_SUBDIR, provider["id"])) or \
+                os.path.isdir(os.path.join(self.imports_dir, "TV", OLD_SUBDIR, provider["id"])):
+            return True   # the earlier layout is still there: move over now
         hours = vod_hours(provider)
         if hours is None:
             return False   # manual: Save and Sync now only
@@ -618,10 +1080,24 @@ class Library:
                     log.exception("VOD scheduler pass failed")
                 self._wake.wait(TICK_SECONDS)
                 self._wake.clear()
+
+        def matcher():
+            while not self._stop.is_set():
+                try:
+                    busy = self.match_pending(limit=MATCH_WORKERS * 50)
+                except Exception:  # noqa: BLE001
+                    log.exception("VOD TMDB matching pass failed")
+                    busy = 0
+                if not busy:
+                    self._match_wake.wait(TICK_SECONDS)
+                    self._match_wake.clear()
         self._thread = threading.Thread(target=loop, name="vod", daemon=True)
         self._thread.start()
+        self._matcher = threading.Thread(target=matcher, name="vod-match", daemon=True)
+        self._matcher.start()
         return self
 
     def stop(self):
         self._stop.set()
         self._wake.set()
+        self._match_wake.set()

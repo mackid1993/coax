@@ -433,35 +433,59 @@ class LibraryTests(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_plan(self):
-        files, members, _titles, visible = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
-        self.assertEqual(visible, set())   # by default nothing shows in the main listings
-        self.assertEqual(files, {
-            "Movies/coax/p2/Up (2009).strm": "http://coax:7780/vod/p2/m/1.mkv\n",
-            "Movies/coax/p2/Heat - Redux (1995).strm": "http://coax:7780/vod/p2/m/3.mp4\n",
-            "TV/coax/p2/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E01.strm": "http://coax:7780/vod/p2/e/e1.mkv\n",
-            "TV/coax/p2/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E02.strm": "http://coax:7780/vod/p2/e/e2.mkv\n",
+        pl = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
+        self.assertEqual(pl.visible, set())   # by default nothing shows in the main listings
+        self.assertEqual(pl.files, {
+            "Movies/.coax/p2/Up (2009)/Up (2009).strm": "http://coax:7780/vod/p2/m/1.mkv\n",
+            "Movies/.coax/p2/Heat - Redux (1995)/Heat - Redux (1995).strm": "http://coax:7780/vod/p2/m/3.mp4\n",
+            "TV/.coax/p2/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E01.strm": "http://coax:7780/vod/p2/e/e1.mkv\n",
+            "TV/.coax/p2/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E02.strm": "http://coax:7780/vod/p2/e/e2.mkv\n",
         })
-        self.assertEqual(members[("movies", "4K")], ["Movies/coax/p2/Up (2009).strm"])   # the one copy of Up
-        self.assertEqual(members[("movies", "Action")], ["Movies/coax/p2/Up (2009).strm",
-                                                         "Movies/coax/p2/Heat - Redux (1995).strm"])
-        self.assertEqual(len(members[("series", "Drama")]), 1)
+        self.assertEqual(pl.members[("movies", "4K")], ["Movies/.coax/p2/Up (2009)/Up (2009).strm"])   # the one copy of Up
+        self.assertEqual(pl.members[("movies", "Action")], ["Movies/.coax/p2/Up (2009)/Up (2009).strm",
+                                                            "Movies/.coax/p2/Heat - Redux (1995)/Heat - Redux (1995).strm"])
+        self.assertEqual(pl.members[("series", "Drama")], ["coax-p2-s1"])
+        self.assertEqual(pl.shows["coax-p2-s1"]["name"], "Breaking Bad")
+        self.assertEqual(pl.meta["Movies/.coax/p2/Up (2009)/Up (2009).strm"]["title"], "Up")
 
-    def test_sync_writes_only_its_folders_and_keeps_collections(self):
-        calls = []
-        dvr_files = {}
+    def test_item_bodies_carry_what_channels_requires(self):
+        pl = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
+        rel = "Movies/.coax/p2/Up (2009)/Up (2009).strm"
+        body = vodlib.file_body(rel, pl.files[rel], dict(pl.meta[rel], tmdb="14160"), hidden=True)
+        self.assertEqual((body["ImportPath"], body["Path"], body["GroupID"]),
+                         ("Imports/Movies", ".coax/p2/Up (2009)/Up (2009).strm", "movies"))
+        self.assertEqual(body["VideoURL"], "http://coax:7780/vod/p2/m/1.mkv")
+        self.assertEqual(body["VisibilityMode"], "hidden")
+        air = body["Airing"]
+        for key in ("Source", "Title", "Time", "Duration", "Channel"):   # the DVR answers "invalid file" without
+            self.assertTrue(air.get(key), key)
+        self.assertEqual((air["MovieID"], air["ReleaseYear"]), ("tmdb/14160", 2009))
+        rel = "TV/.coax/p2/Breaking Bad (2008)/Season 01/Breaking Bad (2008) - S01E02.strm"
+        body = vodlib.file_body(rel, pl.files[rel], pl.meta[rel], hidden=False)
+        self.assertEqual((body["ImportPath"], body["GroupID"], body["ImportGroup"]),
+                         ("Imports/TV", "coax-p2-s1", "coax-p2-s1"))
+        self.assertNotIn("VisibilityMode", body)
+        self.assertEqual((body["Airing"]["SeasonNumber"], body["Airing"]["EpisodeNumber"]), (1, 2))
+
+    def _fake_dvr(self, api_items=None):
+        calls, made, sections, files = [], [], [], {}
 
         def dvr(cfg, method, path, body=None):
             calls.append((method, path, body))
-            if path == "/dvr":
-                return {"activity": {}}
-            if path.startswith("/api/v1/movies"):
-                return [{"id": "f%d" % i, "path": "/tv/DVR/Imports/" + rel} for i, rel in enumerate(sorted(dvr_files))
-                        if rel.startswith("Movies/")]
-            if path.startswith("/api/v1/episodes"):
-                return [{"id": "e%d" % i, "show_id": "g1", "path": "/tv/DVR/Imports/" + rel}
-                        for i, rel in enumerate(sorted(dvr_files)) if rel.startswith("TV/")]
-            if path == "/dvr/groups/g1":
-                return {"ID": "g1", "FileID": ["e2", "e3"]}
+            if method == "POST" and path == "/dvr/files":
+                fid = str(100 + len(files))
+                files[fid] = body
+                return dict(body, ID=fid)
+            if path.startswith("/api/v1/"):
+                return api_items or []
+            if method == "GET" and "/matches/tmdb/movies?q=Heat%3A%20Redux" in path:
+                return [{"id": 6, "title": "Heat - Redux", "release_date": "1995-12-15", "overview": "A heist.",
+                         "poster_path": "/h.jpg", "genre_ids": [80, 18]}]
+            if method == "GET" and path.startswith("/dvr/groups/coax-p2-s1/matches/tmdb?q="):
+                return [{"id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20", "overview": "A teacher.",
+                         "poster_path": "/p.jpg"}]
+            if method == "GET" and "/matches/tmdb" in path:
+                return []
             if path == "/dvr/collections/content":
                 return [{"ID": c, "Name": "", "Items": []} for c in made]
             if path == "/dvr/custom_sections":
@@ -473,66 +497,178 @@ class LibraryTests(unittest.TestCase):
                 sections.append(body)
                 return {"ID": "9"}
             return {}
-        made, sections = [], []
-        cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": "http://dvr:8089"},
-               "providers": [self.provider]}
+        return dvr, calls, sections, files
 
+    def _library(self, dvr, cfg):
         class Store:
             def get(self):
                 return cfg
-        lib = vodlib.Library(Store(), self.tmp, imports_dir=self.imports, dvr_call=dvr)
-        orig_load, orig_eps = vodcat.load, vodcat.episodes_for
+        return vodlib.Library(Store(), self.tmp, imports_dir=self.imports, dvr_call=dvr)
+
+    def _patched(self):
+        orig = vodcat.load, vodcat.episodes_for
         vodcat.load = lambda pid: dict(self.vod, fetched_at=vodcat.catalog.now_iso())
         vodcat.episodes_for = lambda provider, series, **kw: self.episodes
+        return orig
+
+    def test_sync_creates_items_through_the_api_and_keeps_collections(self):
+        dvr, calls, sections, files = self._fake_dvr()
+        cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": "http://dvr:8089"},
+               "providers": [self.provider]}
+        lib = self._library(dvr, cfg)
+        orig = self._patched()
         try:
-            files, _m, _t, _v = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
-            dvr_files.update(files)
             lib.sync("p2")
-            self.assertEqual(lib.state["p2"].get("error"), "")
-            self.assertTrue(os.path.isfile(os.path.join(self.imports, "Movies/coax/p2/Up (2009).strm")))
-            for folder in ("Movies/coax", "Movies/coax/p2", "TV/coax/p2/Breaking Bad (2008)/Season 01"):
+            st = lib.state["p2"]
+            self.assertEqual(st.get("error"), "")
+            self.assertTrue(os.path.isfile(os.path.join(self.imports, "Movies/.coax/p2/Up (2009)/Up (2009).strm")))
+            for folder in ("Movies/.coax", "Movies/.coax/p2", "TV/.coax/p2/Breaking Bad (2008)/Season 01"):
                 self.assertEqual(os.stat(os.path.join(self.imports, folder)).st_mode & 0o777, 0o777)
-            self.assertEqual(os.stat(os.path.join(self.imports, "Movies/coax/p2/Up (2009).strm")).st_mode & 0o777,
+            self.assertEqual(os.stat(os.path.join(self.imports, "Movies/.coax/p2/Up (2009)/Up (2009).strm")).st_mode & 0o777,
                              0o666)
-            self.assertIn(("PUT", "/dvr/scanner/scan", None), calls)
+            self.assertFalse([p for m, p, b in calls if "scanner" in p])   # never the slow scanner
+            posted = [b for m, p, b in calls if m == "POST" and p == "/dvr/files"]
+            self.assertEqual(len(posted), 4)
+            self.assertTrue(all(b.get("VisibilityMode") == "hidden" for b in posted))
+            # the show's first episode creates the group, then coax names it and hides it
+            order = [(m, p) for m, p, b in calls if (p in ("/dvr/files", "/dvr/groups/coax-p2-s1")
+                     or p.startswith("/dvr/groups/coax-p2-s1/")) and m != "GET"]
+            first_ep = next(i for i, (m, p) in enumerate(order) if p == "/dvr/files" and
+                            files[str(100 + sum(1 for x in order[:i] if x[1] == "/dvr/files"))].get("GroupID") != "movies")
+            self.assertEqual(order[first_ep + 1], ("PUT", "/dvr/groups/coax-p2-s1"))
+            named = next(b for m, p, b in calls if p == "/dvr/groups/coax-p2-s1")
+            self.assertEqual((named["Name"], named["Categories"]), ("Breaking Bad", ["Show", "Series"]))
+            # coax's own lookup filled what the provider lacked before Channels DVR got the show and the movie
+            self.assertEqual((named["Summary"], named["Image"]), ("A teacher.", vodlib.POSTER % "/p.jpg"))
+            heat = next(b for b in posted if b["Airing"]["Title"] == "Heat: Redux")
+            self.assertEqual((heat["Airing"]["Summary"], heat["Airing"]["MovieID"], heat["Airing"]["Genres"]),
+                             ("A heist.", "tmdb/6", ["Crime", "Drama"]))
+            self.assertEqual(st["todo"]["g:coax-p2-s1"][0], "1396")
+            self.assertIn(("PUT", "/dvr/groups/coax-p2-s1/visibility/hidden", None), calls)
             names = [b["Name"] for m, p, b in calls if p == "/dvr/collections/content/new"]
             self.assertEqual(names, ["TPS · Action", "TPS · 4K", "TPS · Drama"])
+            items = {}   # each collection's latest items: made at the start, filled as the titles arrive
+            for m, p, b in calls:
+                if p.startswith("/dvr/collections/content/") and b:
+                    items[b["Name"]] = b["Items"]
+            self.assertEqual(items["TPS · Drama"], ["coax-p2-s1"])
+            self.assertEqual(len(items["TPS · Action"]), 2)
             self.assertEqual([r["ParentID"] for r in sections[0]["Rows"]], ["1", "2", "3"])
-            hidden = sorted(p for m, p, b in calls if p.endswith("/visibility/hidden"))
-            self.assertEqual(hidden, ["/dvr/files/e2/visibility/hidden", "/dvr/files/e3/visibility/hidden",
-                                      "/dvr/files/f0/visibility/hidden", "/dvr/files/f1/visibility/hidden",
-                                      "/dvr/groups/g1/visibility/hidden"])
+            # movies and the show wait for their TMDB match
+            self.assertEqual(sorted(k[0] for k in st["todo"]), ["f", "f", "g"])
             calls.clear()
-            lib.sync("p2")   # already hidden: nothing asked again
+            lib.sync("p2")   # nothing new: nothing created or changed
+            self.assertFalse([p for m, p, b in calls if m == "POST" and p == "/dvr/files"])
             self.assertFalse([p for m, p, b in calls if "/visibility/" in p])
-            # "Action" and the series group set to show with the library: their titles come back, Up stays shown
-            # through Action although its 4K copy's group stays hidden
+            # "Action" and the series group set to show with the library
             self.provider["vod"]["library"] = {"movies": ["Action"], "series": ["Drama"]}
             lib.sync("p2")
             shown = sorted(p for m, p, b in calls if p.endswith("/visibility/main"))
-            self.assertEqual(shown, ["/dvr/files/e2/visibility/main", "/dvr/files/e3/visibility/main",
-                                     "/dvr/files/f0/visibility/main", "/dvr/files/f1/visibility/main",
-                                     "/dvr/groups/g1/visibility/main"])
+            self.assertEqual(len(shown), 5)   # two movies, two episodes, the show
+            self.assertIn("/dvr/groups/coax-p2-s1/visibility/main", shown)
             calls.clear()
             self.provider["vod"]["library"] = {"movies": [], "series": []}
             lib.sync("p2")   # and hidden again on command
             self.assertEqual(len([p for m, p, b in calls if p.endswith("/visibility/hidden")]), 5)
-            # one group unpicked: its titles are deleted from the DVR one by one, never a DVR-wide prune
+            # the series group unpicked: its episodes and show are deleted one by one, never a DVR-wide prune
             calls.clear()
             self.provider["vod"] = {"movies": ["Action", "4K"], "series": []}
             lib.sync("p2")
-            dropped = [p for m, p, b in calls if p.endswith("/permanently_delete")]
-            self.assertTrue(dropped)
+            self.assertEqual(len([p for m, p, b in calls if p.endswith("/permanently_delete")]), 2)
+            self.assertIn(("DELETE", "/dvr/groups/coax-p2-s1", None), calls)
             self.assertFalse([p for m, p, b in calls if "prune" in p])
-            # picks cleared: files, collections and section go; the user's own file stays
+            self.assertNotIn("g:coax-p2-s1", lib.state["p2"]["todo"])
+            # picks cleared: items, files, collections and section go; the user's own file stays
+            calls.clear()
             self.provider["vod"] = {"movies": [], "series": []}
             lib.sync("p2")
-            self.assertFalse(os.path.exists(os.path.join(self.imports, "Movies", "coax", "p2")))
+            self.assertEqual(len([p for m, p, b in calls if p.endswith("/permanently_delete")]), 2)
+            self.assertFalse(os.path.exists(os.path.join(self.imports, "Movies", ".coax", "p2")))
             self.assertTrue(os.path.isfile(os.path.join(self.imports, "Movies", "Mine", "Keep (2000).strm")))
             self.assertIn(("DELETE", "/dvr/custom_sections/9", None), calls)
             self.assertNotIn("p2", lib.state)
         finally:
-            vodcat.load, vodcat.episodes_for = orig_load, orig_eps
+            vodcat.load, vodcat.episodes_for = orig
+
+    def test_earlier_scanned_layout_is_taken_out_once(self):
+        old = os.path.join(self.imports, "Movies", "coax", "p2")
+        os.makedirs(old)
+        with open(os.path.join(old, "Up (2009).strm"), "w") as handle:
+            handle.write("x")
+        api = [{"id": "7", "path": "/tv/DVR/Imports/Movies/coax/p2/Up (2009).strm"},
+               {"id": "8", "path": "/tv/DVR/Imports/Movies/Mine/Keep (2000).strm"}]
+        dvr, calls, _sections, _files = self._fake_dvr(api)
+        cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": "http://dvr:8089"},
+               "providers": [self.provider]}
+        lib = self._library(dvr, cfg)
+        self.assertTrue(lib._due(self.provider))
+        orig = self._patched()
+        try:
+            lib.sync("p2")
+        finally:
+            vodcat.load, vodcat.episodes_for = orig
+        deleted = [p for m, p, b in calls if p.endswith("/permanently_delete")]
+        self.assertEqual(deleted, ["/dvr/files/7/permanently_delete"])   # never the user's own import
+        self.assertFalse(os.path.exists(os.path.join(self.imports, "Movies", "coax")))
+        self.assertTrue(os.path.isfile(os.path.join(self.imports, "Movies", "Mine", "Keep (2000).strm")))
+        self.assertTrue(os.path.isfile(os.path.join(self.imports, "Movies/.coax/p2/Up (2009)/Up (2009).strm")))
+
+    def test_tmdb_matching_fills_what_the_provider_lacks(self):
+        calls = []
+        searches = {
+            "/dvr/files/101/matches/tmdb/movies": [
+                {"id": 5, "title": "Heat: Redux", "release_date": "1980-01-01"},
+                {"id": 6, "title": "Heat - Redux", "release_date": "1995-12-15", "vote_count": 10}],
+            "/dvr/groups/coax-p2-s1/matches/tmdb?q=Breaking%20Bad": [
+                {"id": 1396, "name": "Breaking Bad", "first_air_date": "2008-01-20", "overview": "A teacher.",
+                 "poster_path": "/p.jpg", "backdrop_path": "/b.jpg"}],
+        }
+
+        def dvr(cfg, method, path, body=None):
+            calls.append((method, path, body))
+            if method == "GET" and path in searches:
+                return searches[path]
+            if method == "GET" and path == "/dvr/groups/coax-p2-s1":
+                return {"Name": "Breaking Bad", "Genres": ["Drama"]}
+            if method == "GET":
+                return []
+            return {}
+        cfg = {"channels_dvr": {"url": "http://dvr:8089"}, "providers": [self.provider]}
+        lib = self._library(dvr, cfg)
+        lib.state = {"p2": {"todo": {"f:100": ["14160", "Up", "2009"], "f:101": ["", "Heat - Redux", "1995"],
+                                     "f:102": ["", "Nothing Like It", "2001"],
+                                     "g:coax-p2-s1": ["", "Breaking Bad", "2008"]}}}
+        self.assertEqual(lib.match_pending(), 4)
+        puts = [(p, b) for m, p, b in calls if m == "PUT"]
+        self.assertIn(("/dvr/files/100/matches/tmdb/movies/14160", None), puts)   # the provider's id, no search
+        self.assertIn(("/dvr/files/101/matches/tmdb/movies/6", None), puts)       # the right year wins
+        self.assertFalse([p for p, b in puts if p.startswith("/dvr/files/102/")])  # no match: left alone
+        group = [b for p, b in puts if p == "/dvr/groups/coax-p2-s1/matches/tmdb/1396"]
+        self.assertEqual(group[0]["id"], 1396)
+        fields = [b for p, b in puts if p == "/dvr/groups/coax-p2-s1"][0]
+        self.assertEqual((fields["Summary"], fields["Image"], fields["ReleaseYear"]),
+                         ("A teacher.", vodlib.POSTER % "/p.jpg", 2008))
+        self.assertEqual(lib.state["p2"]["todo"], {})
+        # an error is tried again later, not dropped
+        lib.state["p2"]["todo"] = {"f:103": ["99", "Up", "2009"]}
+
+        def broken(cfg, method, path, body=None):
+            raise RuntimeError("down")
+        lib._dvr_call = broken
+        lib.match_pending()
+        self.assertIn("f:103", lib.state["p2"]["todo"])
+        self.assertGreater(lib.state["p2"]["retry"]["f:103"], time.time())
+
+    def test_best_match_and_episode_titles(self):
+        results = [{"id": 1, "title": "Up", "release_date": "2009-05-28", "vote_count": 100},
+                   {"id": 2, "title": "Up", "release_date": "1984-01-01"}]
+        self.assertEqual(vodlib.best_match(results, "Up", "2009")["id"], 1)
+        self.assertEqual(vodlib.best_match(results, "Up", "1984")["id"], 2)
+        self.assertIsNone(vodlib.best_match(results, "Down", "2009"))
+        self.assertIsNone(vodlib.best_match(results, "Up", "2015"))
+        self.assertEqual(vodlib.episode_title("Breaking Bad - S01E02 - Cat's in the Bag", 1, 2), "Cat's in the Bag")
+        self.assertEqual(vodlib.episode_title("Breaking Bad - S01E02", 1, 2), "")
+        self.assertEqual(vodlib.episode_title("Pilot", 1, 1), "Pilot")
 
     def test_movies_go_to_channels_before_episodes_are_read_then_batches_and_a_quick_continue(self):
         published = []
@@ -591,7 +727,7 @@ class LibraryTests(unittest.TestCase):
             def get(self):
                 return cfg
         lib = vodlib.Library(Store(), self.tmp, imports_dir=self.imports, dvr_call=lambda *a: {})
-        rel = os.path.join(self.imports, "Movies", "coax", "p2", "Up (2009).strm")
+        rel = os.path.join(self.imports, "Movies", ".coax", "p2", "Up (2009).strm")
         os.makedirs(os.path.dirname(rel))
         with open(rel, "w") as handle:
             handle.write("x")

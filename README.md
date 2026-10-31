@@ -227,7 +227,7 @@ DOCKER_RUNTIME=
 #   Unraid:    CHANNELS_DVR_IMPORTS=/mnt/user/TV/DVR/Imports
 #   Synology:  CHANNELS_DVR_IMPORTS=/volume1/TV/DVR/Imports
 # Channels DVR on another machine: share its Imports folder over the network, mount the share on this
-# machine, and use the mount's path. coax only writes inside Imports/Movies/coax and Imports/TV/coax.
+# machine, and use the mount's path. coax only writes inside Imports/Movies/.coax and Imports/TV/.coax.
 # Empty means /dev/null, a harmless placeholder (Docker needs a path that exists) that leaves it off.
 # Default: /dev/null
 CHANNELS_DVR_IMPORTS=
@@ -438,7 +438,7 @@ DOCKER_RUNTIME=
 #   Unraid:    CHANNELS_DVR_IMPORTS=/mnt/user/TV/DVR/Imports
 #   Synology:  CHANNELS_DVR_IMPORTS=/volume1/TV/DVR/Imports
 # Channels DVR on another machine: share its Imports folder over the network, mount the share on this
-# machine, and use the mount's path. coax only writes inside Imports/Movies/coax and Imports/TV/coax.
+# machine, and use the mount's path. coax only writes inside Imports/Movies/.coax and Imports/TV/.coax.
 # Empty means /dev/null, a harmless placeholder (Docker needs a path that exists) that leaves it off.
 # Default: /dev/null
 CHANNELS_DVR_IMPORTS=
@@ -1061,11 +1061,21 @@ you stopped. They never appear in the guide.
 2. Set the *Base URL* and the *Channels DVR URL* in coax Settings (they are needed for live TV anyway).
 3. On the **Providers** page, press **On demand** on a provider and tick the movie and series groups you want.
 
-coax then writes the titles into Channels DVR and asks it to import them. Movies arrive first, within minutes.
-Series follow in batches, newest shows first: coax asks the provider for each show's episodes one at a time (a
-large panel throttles quick bursts), and every few hundred shows go to Channels DVR as soon as they are read. A
-very large series group keeps filling in over the following hours: a sync reads for half an hour, then carries on
-15 minutes later (an hour later if the provider starts refusing), until every show is in.
+coax then adds the titles to Channels DVR itself, through Channels DVR's own API, without waiting for its folder
+scanner. The scanner looks every title up and reads the whole folder for each file, one title after another: about
+two seconds a movie, days for a large provider. coax creates each title directly instead, with the provider's
+name, year, artwork, plot and TMDB id, in a few milliseconds, so the movies are in the library within minutes of
+pressing *Save*. Series follow in batches, newest shows first: coax asks the provider for each show's episodes one
+at a time (a large panel throttles quick bursts), and every few hundred shows go to Channels DVR as soon as they
+are read. A very large series group keeps filling in over the following hours: a sync reads for half an hour,
+then carries on 15 minutes later (an hour later if the provider starts refusing), until every show is in.
+
+**Filling in the details.** Providers' metadata is often thin: a name and a poster, sometimes not even a year.
+Right after a title is added, coax has Channels DVR match it on TMDB, by the provider's TMDB id when it has one,
+else by searching for the title and year (picking the result with the same name and year). Channels DVR then
+fetches the full details: poster, description, cast, runtime and rating, and for a show every episode's title,
+description and runtime. Several titles are matched at once, shows first; the dialog shows how many are still
+waiting. A title with no match keeps the provider's details.
 
 **How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
 provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with
@@ -1082,7 +1092,8 @@ inside one of your own shows only hide themselves, never your show.
 When the provider adds titles to a picked group, they appear on the provider's refresh schedule (every
 24 hours unless you changed it); titles the provider removes are removed. Untick a group and its titles,
 collection and row go away. Nothing else in Channels DVR is touched: coax only writes inside
-`Imports/Movies/coax` and `Imports/TV/coax`.
+`Imports/Movies/.coax` and `Imports/TV/.coax` (the dot keeps Channels DVR's scanner out of them). The files
+stay there because Channels DVR plays a title, and keeps it, only while its file exists.
 
 **How it plays.** Each title is a Channels DVR *Stream File*: a small text file holding a coax address, never the
 provider's (your login stays out of Channels DVR). When you press play, the Channels app asks coax, and coax
