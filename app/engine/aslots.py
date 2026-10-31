@@ -185,6 +185,9 @@ JUMP = 90000 * 10      # a clock jump (provider restart, wrap): an input's silen
 MAXPES = 60000
 HELPER_REST = 30.0     # a format whose helper decoded nothing plays as silence this long before another try
 HELPER_WAIT = 2.0      # a helper that was given audio but sent nothing back for 2 s is given up (silence instead)
+AUDIO_DEAD = 4.0       # the playing track delivers frames but none reached the encoder for 4 s: start it again
+DEAD_EVERY = 30.0      # at most one such restart per 30 s
+NO_PCM = 600.0         # after one, formats with no input of their own use the closest input of their family
 
 
 def _silent_302m():
@@ -547,6 +550,7 @@ class Feeder:
         self.rest = b""             # a packet split across two chunks
         self.bypass = False         # not MPEG-TS (fMP4 HLS): passed through, the encoder maps the audio itself
         self.built_bypass = None    # what the running encoder was built for
+        self.revived = None         # when the last silent-audio restart was asked for
         self.reset()
 
     def reset(self):
@@ -570,8 +574,27 @@ class Feeder:
         # the video to a PID that never gets data. Until its tables are seen the encoder reads them in band.
         self.pat, self.pmt_pid, self.last_sec, self.pmt_out = b"", None, None, b""
         self.missing = None         # a format family with no open input appeared: the engine restarts at a keyframe
+        self.real = {}              # provider audio pid -> the family its bytes show, where the table says otherwise
+        self.a_in = self.a_out = None   # when the playing track last gave a frame / audio last went to the encoder
         self._end_helper()
         self._drop()
+
+    def _actual(self, pid, pay):
+        """Correct a track's family from its PES payload; True when it changed."""
+        real = aframes.sniff(pay)
+        have = self.fam.get(pid)
+        if real is None or have is None or aframes.GROUP.get(real, real) == aframes.GROUP.get(have, have):
+            return False
+        self.log("audio: a %s track carries %s; reading it as %s" % (have, real, real))
+        self.real[pid] = real
+        self.fam[pid] = real
+        for t in self.tracks:
+            if t["pid"] == pid:
+                t["fam"] = real
+        self.keys.pop(pid, None)
+        if pid == self.cur:
+            self._drop()                # what was cut as the other codec is not audio
+        return True
 
     def _drop(self):
         self.buf = bytearray()      # the playing track's bytes not yet cut into frames
@@ -605,6 +628,27 @@ class Feeder:
         if self.last_sec:
             self._build()
         return None if self.bypass else [SLOTS[x] for x in self.active]
+
+    def dead(self):
+        """The playing track has been delivering frames, but no audio reached the encoder for AUDIO_DEAD."""
+        if self.bypass or self.a_in is None or self.a_out is None:
+            return False
+        if self.revived is not None and time.monotonic() - self.revived < DEAD_EVERY:
+            return False
+        return self.a_in - self.a_out > AUDIO_DEAD and time.monotonic() - self.a_in < 2.0
+
+    def revive(self):
+        """Before the encoder is started again for silent audio: drop the helper and what it learned, and choose
+        the track again (the best one now delivering), as a fresh tune would."""
+        self.revived = time.monotonic()
+        self._end_helper(now=True)
+        self.resting.clear()
+        self.duds.clear()
+        self.said_keys.clear()
+        self.cur = self.pend = self.said = None
+        self.up = [None, 0]
+        self.a_in = self.a_out = None
+        self._drop()
 
     def wants_more(self, d):
         """Whether the bytes a new encoder is about to get need a different encoder: a format it has no input
@@ -680,6 +724,7 @@ class Feeder:
             elif pid in self.fam:
                 pay = p[o:]
                 if pay[:3] == b"\x00\x00\x01" and len(pay) > 9:
+                    self._actual(pid, pay[9 + pay[8]:])
                     f = aframes.frame(self.fam[pid], pay[9 + pay[8]:], 0)
                     if f and f[1] is not None:
                         self.keys.setdefault(pid, set()).add(f[1])
@@ -769,6 +814,10 @@ class Feeder:
                 tracks.append({"pid": pid, "fam": f, "lang": lang, "main": main, "order": len(tracks)})
                 fam[pid] = f
             j += 5 + il
+        for t in tracks:
+            r = self.real.get(t["pid"])
+            if r is not None:
+                t["fam"] = fam[t["pid"]] = r
         changed = [(t["pid"], t["fam"], t["lang"], t["main"]) for t in tracks] != \
             [(t["pid"], t["fam"], t["lang"], t["main"]) for t in self.tracks]
         if changed and send:
@@ -885,6 +934,7 @@ class Feeder:
         if not g:
             return b""
         s, pts, data, dur = g
+        self.a_out = time.monotonic()
         out = self._fill(s, pts) + self._fill_all(pts, but=s) + self._pes(s, pts, b"".join(data))
         self.end[s] = (pts + int(dur)) % WRAP
         self.frac[s] = dur - int(dur)
@@ -950,6 +1000,7 @@ class Feeder:
             out.append(self._fill(PCM, t))
             out.append(self._fill_all(t, but=PCM))   # every other input moves on with it, or the mix waits for them
             out.append(self._pes(PCM, t, f))
+            self.a_out = time.monotonic()
             self.end[PCM] = (t + _samples_302m(f) * 90000 // 48000) % WRAP
         dead = h.stuck()
         if h.done and not h.out or dead:
@@ -1007,6 +1058,9 @@ class Feeder:
                 continue
             dur = samples * 90000 / rate if rate else 0.0
             data = bytes(b[i:i + size_all])
+            self.a_in = time.monotonic()
+            if self.a_out is None:
+                self.a_out = self.a_in
             self.keys.setdefault(self.cur, set()).add(key)
             if key != self.lastkey:
                 if self.lastkey is not None:   # the first one is in the engine's own provider format line
@@ -1015,6 +1069,8 @@ class Feeder:
             s = BYKEY.get(key)
             if s is None or s not in self.active:
                 fb = PCM if PCM_FALLBACK else None
+                if self.revived is not None and time.monotonic() - self.revived < NO_PCM:
+                    fb = None                   # the PCM path just failed: the same family's closest input
                 if fb is None:   # the open input of the same family closest in channels (5.1 to 5.1, 2.0 to 2.0)
                     same = [x for x in self.active if SLOTS[x]["fam"] == fam]
                     fb = min(same, key=lambda x: abs(chans(SLOTS[x]["key"]) - chans(key))) if same else None
@@ -1175,6 +1231,7 @@ class Feeder:
                         q = pay[9:14]
                         pts = ((q[0] >> 1) & 7) << 30 | q[1] << 22 | (q[2] >> 1) << 15 | q[3] << 7 | q[4] >> 1
                     pay = pay[9 + pay[8]:]
+                    self._actual(pid, pay)
                     if pts is not None:
                         self.seen[pid] = pts
                         if self.t0 is None:

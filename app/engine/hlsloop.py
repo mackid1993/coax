@@ -594,6 +594,10 @@ def put(b):
         if FEED.missing and not RP[0]:
             RP[0] = "the provider's audio switched to %s; adding its input" % FEED.missing   # at the next keyframe
             RP[1] = mono()
+        if FEED.dead() and not RP[0]:
+            FEED.revive()   # the track is chosen again; the restart happens at the next keyframe
+            RP[0] = "no audio reached the encoder for %d s; starting it again on the best track" % aslots.AUDIO_DEAD
+            RP[1] = mono()
         b = (FEED.psi() if NB[0] == 0 else b"") + FEED.feed(b)   # a new encoder learns the audio inputs at once
     NB[0] += len(b)
     if TRANSCODE:

@@ -25,6 +25,22 @@ SYNC = {"ac3": b"\x0b\x77", "eac3": b"\x0b\x77", "aac": b"\xff", "latm": b"\x56"
 HEAD = {"ac3": 8, "eac3": 8, "aac": 7, "latm": 3, "mp2": 4, "dts": 11}   # eac3: 8, an AC-3 frame can appear there
 
 
+def sniff(b):
+    """The codec family a PES payload really starts with, or None when it does not start on a frame header."""
+    if len(b) < 7:
+        return None
+    if b[0] == 0x0B and b[1] == 0x77:
+        return "ac3" if b[5] >> 3 <= 10 else "eac3" if b[5] >> 3 <= 16 else None
+    if b[0] == 0xFF and b[1] & 0xF6 == 0xF0:
+        return "aac"
+    if b[0] == 0x56 and b[1] & 0xE0 == 0xE0:
+        return "latm"
+    return None
+
+
+GROUP = {"eac3": "ac3"}   # one parser reads both Dolby codecs (an AC-3 frame may appear in an E-AC-3 track)
+
+
 def frame(fam, b, i):
     n = len(b) - i
     if n < HEAD[fam]:
