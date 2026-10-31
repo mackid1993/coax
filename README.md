@@ -29,6 +29,43 @@ Everything you set lives in one folder, `./data`.
 > offers MPEG-TS, you are better off finding one that offers HLS than relying on coax to make up for it. See
 > [HLS or MPEG-TS](#hls-or-mpeg-ts) for the full comparison.
 
+## Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [Run it without a VPN](#run-it-without-a-vpn)
+- [Run it with a VPN (Gluetun)](#run-it-with-a-vpn-gluetun)
+- [First run](#first-run)
+- [Settings reference](#settings-reference)
+- [How playback stays smooth](#how-playback-stays-smooth)
+  - [The reserve](#the-reserve)
+  - [Keepalive](#keepalive)
+  - [Offline placeholders and failover](#offline-placeholders-and-failover)
+  - [Tuner sharing](#tuner-sharing)
+  - [Recovery](#recovery)
+  - [Smart Standby](#smart-standby)
+- [HLS or MPEG-TS](#hls-or-mpeg-ts)
+- [Recordings](#recordings)
+- [Event channels](#event-channels)
+- [Video on demand](#video-on-demand)
+- [GPU transcoding](#gpu-transcoding)
+  - [Presets](#presets)
+  - [How the GPU is used](#how-the-gpu-is-used)
+  - [Refilling the reserve (3% slower)](#refilling-the-reserve-3-slower)
+  - [Intel](#intel)
+  - [AMD](#amd)
+  - [NVIDIA](#nvidia)
+  - [Unraid](#unraid)
+- [Updating](#updating)
+- [Data folder](#data-folder)
+  - [Automatic cleanup](#automatic-cleanup)
+- [Troubleshooting](#troubleshooting)
+  - [Check that it's working](#check-that-its-working)
+  - [What coax can't fix](#what-coax-cant-fix)
+- [Building from source](#building-from-source)
+- [Credits](#credits)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Screenshots
 
@@ -42,24 +79,6 @@ Channel names, providers and logos below are made up for the demo.
 | **Lineups**: one Channels DVR source each, added with one click | **Providers**: Xtream or M3U, several lines, group picker |
 | ![Logs](assets/screenshots/logs.png) | ![Settings](assets/screenshots/settings.png) |
 | **Logs**: live, filterable | **Settings**: addresses, transcoding, Auto-match region, backups |
-
-## Contents
-
-- [Features](#features)
-- [Run it without a VPN](#run-it-without-a-vpn)
-- [Run it with a VPN (Gluetun)](#run-it-with-a-vpn-gluetun)
-- [First run](#first-run)
-- [Settings reference](#settings-reference)
-- [How playback stays smooth](#how-playback-stays-smooth)
-- [HLS or MPEG-TS](#hls-or-mpeg-ts)
-- [Recordings](#recordings)
-- [Event channels](#event-channels)
-- [Video on demand](#video-on-demand)
-- [GPU transcoding](#gpu-transcoding)
-- [Updating](#updating)
-- [Data folder](#data-folder)
-- [Troubleshooting](#troubleshooting)
-- [Building from source](#building-from-source)
 
 ## Features
 
@@ -81,21 +100,24 @@ Channel names, providers and logos below are made up for the demo.
 - **One-click Add to Channels DVR**: each lineup becomes a Channels DVR source with your choice of guide data,
   stream limit, numbering and logos. **Automatic sync** pushes every later change to the DVR within seconds and
   downloads the guide when it changes, so you never press *Refresh* in Channels DVR.
-- **Gracenote guide data** through Channels DVR's own station search, with one-click suggestions, or
-  **XMLTV** from your provider.
+- **Gracenote guide data** through Channels DVR's own station search, with one-click suggestions and a
+  *Deep search* for names that are hard to find, or **XMLTV** from your provider.
 - **Guide data for event channels**: the numbered sports and PPV channels whose name changes with each game
   ("NHL 01: Devils vs. Golden Knights @ 30 Oct 06:00 PM ET") get a real, recordable airing, matched to the
-  game's Gracenote listing in Channels DVR when your guide has it. See [Event channels](#event-channels).
-- **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps) on Intel or AMD graphics
-  (VAAPI), NVIDIA (NVENC), or the CPU.
-- **Video on demand**: your providers' movies and series in Channels DVR's own library, with a collection for
-  each group you pick and a section per provider, kept apart from your own media or listed with it, per group.
-  No transcoding, no remuxing, no ffmpeg: coax only relays the provider's file, byte for byte, so it goes through
+  game's Gracenote listing in Channels DVR when your guide has it. Built on ideas from
+  [epg3r](https://github.com/maddox/epg3r) by Jon Maddox. See [Event channels](#event-channels).
+- **Transcoding (recommended)** to one fixed format (1080p or 720p, 60/30/50/25 fps, AAC stereo or Dolby
+  Digital 5.1 audio) on Intel or AMD graphics (VAAPI), NVIDIA (NVENC), or the CPU. It is also what makes
+  automatic failover possible.
+- **Video on demand**: your providers' movies and series in Channels DVR's own library, listed in Movies and
+  TV Shows (so search finds them), with a collection for each group you pick and a section per provider. No
+  transcoding, no remuxing, no ffmpeg: coax only relays the provider's file, byte for byte, so it goes through
   coax's VPN and counts against your provider's lines. See [Video on demand](#video-on-demand).
 - **Optional VPN** for all provider traffic using Gluetun.
 - A web UI with a live Status page: sessions, viewers, line usage, throughput, and the log. Each playing
   channel lists all its streams, with **Switch** to move to another one now, **Disable** to stop using one, and
-  a grip to drag them into a new order. The UI works on a phone too.
+  a grip to drag them into a new order. The sidebar shows the public IP address coax uses, with its country
+  and city, so you can see your VPN exit at a glance. The UI works on a phone too.
 
 **User agent.** coax always identifies itself to providers as `TiviMate/5.1.6 (Android 12)`. This is
 hard-coded and the same for every provider; it is not a setting.
@@ -238,7 +260,7 @@ CHANNELS_DVR_IMPORTS=
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `TAG` | `latest` | Image version. `latest` is the newest release; set a version number (for example `1.0.3`) to freeze one. |
+| `TAG` | `latest` | Image version. `latest` is the newest release; set a release number to freeze one. |
 | `CONTAINER_NAME` | `coax` | Container name. |
 | `HOST_PORT` | `7780` | Port for the web UI and the streams. Base URL in coax Settings must use it. |
 | `HOST_DIR` | the compose folder | The folder for coax on the host, without `/data` (for example `/opt/coax`, `/mnt/user/appdata/coax` on Unraid, `/volume1/docker/coax` on Synology). coax keeps everything in a `data` folder inside it. |
@@ -250,8 +272,6 @@ Open `http://<this-host>:7780` and continue with [First run](#first-run).
 
 Docker creates the data folder on first start. If it ends up owned by root, coax fixes that itself: the
 container starts as root only long enough to `chown` `/data` to uid 1000, then runs coax as uid 1000.
-
-Images are only built and published when the maintainer runs the release workflow by hand.
 
 ## Run it with a VPN (Gluetun)
 
@@ -614,15 +634,13 @@ Everything from the table above applies, plus:
      generate on the provider's website.
    - **Server choice** (optional): `SERVER_COUNTRIES`, `SERVER_REGIONS`, `SERVER_CITIES` or
      `SERVER_HOSTNAMES`, using the names on the provider's page.
-   - **DNS** (OpenVPN and WireGuard): to send DNS to your VPN provider's own DNS server, set
-     `DNS_UPSTREAM_RESOLVER_TYPE=plain` and `DNS_UPSTREAM_PLAIN_ADDRESSES` to that server **with the port**, `IP:53` (for
-     example `10.255.255.1:53`; Gluetun refuses to start on a bare IP; it is the `DNS` line of a WireGuard config, or in the provider's help pages).
-     Lookups then go through the tunnel to the provider, so nothing leaks to your ISP. Never use a LAN or
-     router address here; that sends DNS outside the tunnel. Left empty, Gluetun uses its built-in encrypted
-     DNS (DNS over TLS to Cloudflare), which also stays inside the tunnel.
-     Gluetun then logs `DNS server address ... is not in local subnets, make sure to specify it in
-     FIREWALL_OUTBOUND_SUBNETS`. Ignore it: do not add that address to `LAN_SUBNETS`, which would send DNS
-     outside the tunnel.
+   - **DNS** (optional): left empty, Gluetun uses its built-in encrypted DNS (DNS over TLS to Cloudflare)
+     inside the tunnel. To use your VPN provider's own DNS server instead, set `DNS_UPSTREAM_RESOLVER_TYPE=plain`
+     and `DNS_UPSTREAM_PLAIN_ADDRESSES` to that server **with the port** (`IP:53`, for example
+     `10.255.255.1:53`; Gluetun refuses a bare IP). The address is the `DNS` line of a WireGuard config, or in
+     the provider's help pages. Never use a LAN or router address: that sends DNS outside the tunnel. Gluetun
+     then logs `DNS server address ... is not in local subnets`; ignore it, and do not add that address to
+     `LAN_SUBNETS`.
    - **A VPN Gluetun has no page for:** `VPN_SERVICE_PROVIDER=custom`, `VPN_TYPE=wireguard`, and all six
      `WIREGUARD_` values from its WireGuard config (`WIREGUARD_ENDPOINT_IP` must be an IP address). See
      Gluetun's [custom provider page](https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/custom.md).
@@ -638,21 +656,26 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
 ## First run
 
 1. **Settings.** Set the *Base URL* to the address your DVR uses to reach coax, for example
-   `http://192.168.1.50:7780` (use the host's LAN IP, not `localhost`). Set the *Channels DVR URL*, for example
-   `http://192.168.1.60:8089`. It is used for Gracenote search and for the stream engine.
+   `http://192.168.1.50:7780` (use the host's LAN IP, not `localhost`). Set the *DVR server URL* to your
+   Channels DVR, for example `http://192.168.1.60:8089`. coax needs it for Gracenote search, tuner sharing,
+   recordings, event channel guide data, video on demand and the one-click Add to Channels DVR.
 2. **Providers.** Add a provider:
    - *Xtream Codes*: the server URL (`http://host:port`) and a username and password.
    - *M3U*: the playlist URL, and optionally an XMLTV URL.
 
-   Press *Test connection*.
+   Press *Test connection*. Pick the *Stream format* (HLS unless the provider only offers MPEG-TS; see
+   [HLS or MPEG-TS](#hls-or-mpeg-ts)) and how often coax refreshes the provider's channel list (*Refresh every
+   (hours)*, 24 by default; 0 means only when you press *Refresh*). An Xtream provider's card shows the plan
+   expiry the provider reports, in yellow in the last week and red once it has passed.
 
    The switch on a provider's card turns it off without deleting it: coax stops refreshing it, tuning it,
    downloading its guide and suggesting its streams as backups. A channel with a stream on another provider
    plays from that one; a channel whose streams are all on the switched-off provider leaves the lineups until
    you switch it back on. A stream already playing from it keeps playing until the next tune.
-3. **Lines.** Add one line per login you have with that provider and set *max streams* to what your plan
-   allows (0 means unlimited, for M3U sources without a limit). If you have three logins on one service, add
-   three lines; coax spreads tunes across them. Channel list and guide downloads use a line nobody is watching
+3. **Lines.** Add one line per login you have with that provider and set *Max streams* to what your plan
+   allows (0 means unlimited, for M3U providers without a limit). If you have three logins on one service, add
+   three lines; coax spreads tunes across them. *Total stream limit* caps the provider across all its lines
+   (0 means only the per-line limits apply). Channel list and guide downloads use a line nobody is watching
    when there is one, so they only share a login with a playing stream when every line is in use.
 4. **Groups.** coax fetches the provider's live groups. Tick the ones you want (search helps with large
    lists). Only streams in these groups are offered when adding channels, and only they are suggested as
@@ -670,7 +693,11 @@ Everything else about Gluetun (options, health checks, troubleshooting) is in th
    the top; *No backups* counts only backups that can play (not disabled, not vanished from the provider).
 6. **Guide.** Each channel uses one guide source, never two:
    - **Gracenote**: coax searches Channels DVR's station database and suggests the best match with a
-     confidence score. Channels DVR then uses its own guide data for that channel. Best when it matches.
+     confidence score, stations in your *Auto-match region* first and US English feeds ahead of other
+     languages when the match is otherwise equal (foreign-language feeds are labeled). Channels DVR then uses
+     its own guide data for that channel. Best when it matches. If a station cannot be found, tick *Deep
+     search* in the guide dialog: it tries many spellings of the name (NYC for New York, + for Plus,
+     run-together words, fewer words) and is slower.
    - **XMLTV**: use the provider's guide for that channel; pick the XMLTV channel id from the list.
    - **None**: no guide data.
 
@@ -709,10 +736,12 @@ group and stream id (hover a cut-off name to see it in full). The stream playing
 *Blocked* means Smart Standby is resting it: the pill shows the time left, hovering it shows why, and clicking
 it unblocks the stream at once. *Disabled* means you turned it off.
 
-- **Switch** moves playback to that stream right away.
+- **Switch** moves playback to that stream right away. With transcoding off, coax first warns that the
+  picture may freeze and need a retune if the other stream has a different audio format or frame rate (see
+  [Offline placeholders and failover](#offline-placeholders-and-failover)).
 - **Disable** turns a stream off without removing it: it stays listed (dimmed), but coax never tunes it, never
   uses it as a backup and never moves it up. Disabling the stream that is playing moves the channel to the
-  next enabled stream at once. Untick it to use the stream again. One stream of each channel always stays
+  next enabled stream at once (with transcoding off, that switch can freeze the picture the same way). Untick it to use the stream again. One stream of each channel always stays
   enabled. The same checkbox is in the channel's stream editor on the *Channels* page.
 - **Drag** a stream by its grip (or focus the grip and press Alt with the up or down arrow) to change the
   channel's order. It is saved when you let go; the stream playing now keeps playing. The first enabled
@@ -726,12 +755,23 @@ and tends to stay that way. Disable it and coax will not use it again.
 
 ## Settings reference
 
+The *Settings* page. Everything is saved in `data/config.json`.
+
 | Setting | What it does |
 | --- | --- |
-| Base URL | The address written into the M3U stream links. Must be reachable from the DVR. |
-| Channels DVR URL | Your DVR, `http://IP:8089`. Used for Gracenote search and the viewer buffer. |
-| Transcode | One fixed format such as `1080p60` (recommended), or `off` to pass streams through (the default). See [GPU transcoding](#gpu-transcoding). |
-| Provider refresh hours | How often each provider's catalog is refreshed. A failed refresh keeps the last good catalog. |
+| Base URL | Required. The address written into the M3U stream links and the video on demand files. Must be reachable from the DVR. |
+| DVR server URL | Your Channels DVR, `http://IP:8089`. Needed for Gracenote search, tuner sharing, recordings, event channels, video on demand and Add to Channels DVR. |
+| Time zone | For the backup schedule and log times. Empty means the `TZ` variable, else UTC. |
+| Port | The port coax listens on inside the container (7780). Takes effect after a restart; leave it unless you know you need it, and change `HOST_PORT` instead. |
+| Transcode | `off` (the default, passthrough) or one fixed format such as `1080p60` (recommended). See [GPU transcoding](#gpu-transcoding). |
+| Always send Dolby Digital 5.1 (640 kbps) | Transcoding only. Every channel goes out as Dolby Digital 5.1; off means AAC stereo at 192 kbps. See [Presets](#presets). |
+| Audio language | Transcoding only. The language coax plays when a channel carries it; otherwise the provider's main track. |
+| Auto-match region | Country and postal code. Auto-match only trusts Gracenote stations in these areas' lineups. Add several if you watch channels from several countries. |
+| Backups | Daily backup on or off, the time (03:30 by default) and how many to keep (14). Backups hold every setting, provider, channel and lineup, plus Smart Standby history, the bell and each channel's stream history. *Back up now*, *Restore* (which backs up the current state first), *Download* and delete are on the same card. |
+| Standalone XMLTV sources | Extra guide feeds for the per-channel XMLTV picker, each with its own refresh interval, besides each provider's own feed. |
+
+Per-provider settings (stream format, refresh interval, lines and stream limits, groups, auto add, video on
+demand) are on the *Providers* page; see [First run](#first-run).
 
 ## How playback stays smooth
 
@@ -773,8 +813,10 @@ last resort.
 to a backup is seamless. With transcoding off, the provider's stream reaches Channels untouched, and a backup
 often uses a different audio format (AAC on one, Dolby on the other) or frame rate. Players set their decoders
 up when a stream starts, so that change freezes the picture until you retune. With transcoding off, coax
-therefore never switches to a backup on its own: it keeps retrying the stream you tuned. **Switch** on the
-Status page still works, after a warning that the picture may freeze and need a retune.
+therefore never switches to a backup on its own: wherever the table below says coax switches to the next
+stream, with transcoding off it keeps retrying the stream you tuned instead. A new tune still starts on the
+best stream, so a blocked or recently failed stream is skipped then. **Switch** on the Status page still works,
+after a warning that the picture may freeze and need a retune.
 
 | Situation | What coax does |
 | --- | --- |
@@ -790,9 +832,10 @@ Status page still works, after a warning that the picture may freeze and need a 
 | No backup on the channel | Keeps retrying the same feed until the provider comes back. |
 | Sound off its picture with matching timestamps | Not detected. Use **Switch** and **Disable** on the Status page. |
 
-- **Order.** Backups are tried in the order the channel's streams are saved on the *Channels* page.
-  Disabled streams are skipped, and streams Smart Standby has blocked are tried last. A stream that failed
-  recently, on any channel, is also tried last, both for a new tune and for failover. A failed feed is left
+- **Order.** Backups are tried by [Smart Standby](#smart-standby) score, least troubled first, with the
+  order the channel's streams are saved in breaking ties. Disabled streams are skipped, and streams Smart
+  Standby has blocked are tried last. A stream that failed recently, on any channel, is also tried last, both
+  for a new tune and for failover. A failed feed is left
   alone for 1, 2, 4, 8, then 10 minutes, so a channel whose feeds are all down waits instead of hopping between
   dead feeds.
 - **Before switching,** coax checks that the backup answers with a real stream, not the placeholder. Once on
@@ -833,7 +876,7 @@ Example on an HLS channel with 10-second segments:
 | More joins over the evening | up to 40 s | down to the 20 s floor |
 | No joins for 2 minutes, reserve under 30 s | eases down by about 1% | rebuilds to 30 s |
 
-Tuner sharing needs the *Channels DVR URL* in Settings. Without it, or if coax cannot find the channel in
+Tuner sharing needs the *DVR server URL* in Settings. Without it, or if coax cannot find the channel in
 Channels DVR, every device gets the single-viewer head start and playback is otherwise the same. Keep tuner
 sharing on in Channels DVR.
 
@@ -898,6 +941,11 @@ block ends, does not move back on its own, so channels do not flip back and fort
 (restores the order and lifts the block), an **X** to dismiss it, and **Clear all**. A channel with one stream is
 never changed, and neither is a channel with only one stream left enabled. A disabled stream never becomes the
 main stream.
+
+**With transcoding off,** coax does not fail over on its own, so Smart Standby mostly works at the next tune:
+the channel starts on the best stream, and offline slates still block a stream at once. Blocks for streams
+that stop working while another takes over, and moving a stable stream up, follow failovers, so they need
+transcoding on (or a **Switch** by hand).
 
 **What Smart Standby cannot see.** A feed whose sound is off its picture plays without errors, so Smart Standby
 treats it as healthy. Use **Switch** and **Disable** on the Status page for it (see [First run](#first-run)).
@@ -977,7 +1025,7 @@ recording stops, and the ending would be cut off. coax handles this:
   connection open while coax rides out an outage or restarts an engine.
 
 The log line is `recording: <show> on ch N extended by Ns on top of its own padding (...)`, and Channels DVR
-shows the later end time. This needs the *Channels DVR URL* in Settings. If your provider runs more than
+shows the later end time. This needs the *DVR server URL* in Settings. If your provider runs more than
 about 45 seconds behind the broadcast, add a little end padding for those channels yourself.
 
 ## Event channels
@@ -987,18 +1035,23 @@ time: `NHL 01: New Jersey Devils vs. Vegas Golden Knights @ 30 Oct 06:00 PM ET` 
 tomorrow. They have no Gracenote station and rarely a useful XMLTV entry, so Channels DVR shows them blank and
 nothing on them can be recorded.
 
+The approach comes from [epg3r](https://github.com/maddox/epg3r) by Jon Maddox, reimplemented in coax (no code
+copied): reading an event from the channel's name alone, what an empty slot looks like, one listing per game
+across channels through an `episode/` id, marking airings live, new and *Sports*, league titles and game
+lengths, and starting an airing 15 minutes early. [Credits](#credits) lists every idea taken from it.
+
 When a channel has no guide data of its own (no Gracenote station, and no XMLTV id or one the provider's XMLTV
 has no programs for), coax reads the name its main stream has in the provider's channel list right now. If that
 name is an event, the lineup's XMLTV gets an airing for it.
 
 **Matched to your own Gracenote guide.** coax looks the game up in Channels DVR's guide: the upcoming NFL, MLB,
 NBA, NHL, WNBA, MLS and college football and basketball games on the sources you already have in Channels DVR,
-with the same Gracenote data Channels DVR shows for them. Team names are compared word by word, so "Devils" is
-the New Jersey Devils, initials count ("NY Jets", "KC"), and a small misspelling ("Clevland") still matches when
+with the same Gracenote data Channels DVR shows for them (matching games to your guide is coax's own). Team
+names are compared word by word, so "Devils" is the New Jersey Devils, initials count ("NY Jets", "KC"), and a small misspelling ("Clevland") still matches when
 nothing matches exactly. When the same two teams play there at the time the name gives, the airing takes Gracenote's own title (*NFL Football*), matchup (*Baltimore Ravens at Buffalo
 Bills*), description, picture, start and end. That is also how a name with a time but no day
 (`NFL | 02 - 1pm Ravens at Bills`) gets its airing: Channels DVR's guide says which day that game is. This
-needs the *Channels DVR URL* in Settings, and asks Channels DVR once per guide rebuild, only when a lineup has an
+needs the *DVR server URL* in Settings, and asks Channels DVR once per guide rebuild, only when a lineup has an
 event channel.
 
 **Streaming and pay-per-view games** (ESPN+, SECN+, Peacock and the like, which no TV guide lists) are looked
@@ -1047,9 +1100,6 @@ Those channels stay as they were. Any channel that is not an event channel is ne
 with a Gracenote station, or an XMLTV id the provider has programs for, keeps that guide. Lineups set to
 *Gracenote* guide data only take no XMLTV, so they get none of this.
 
-The approach, and what Channels DVR needs to treat these airings as real sports airings, come from
-[epg3r](https://github.com/maddox/epg3r) by Jon Maddox; see [Credits](#credits).
-
 ## Video on demand
 
 Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
@@ -1069,19 +1119,27 @@ Transcode setting applies to live TV only.
 1. Give coax Channels DVR's **Imports** folder: set `CHANNELS_DVR_IMPORTS` in the `.env` to the `Imports`
    folder inside the folder where Channels DVR keeps its recordings, then run `docker compose up -d`. If Channels
    DVR runs on another machine, share that folder over the network and mount it on the coax machine first.
-   coax needs to be able to write in `Imports/Movies` and `Imports/TV`. It never changes an owner: the folders and files it makes are open to every user (folders 777, files 666), so whatever
-   user Channels DVR or your other tools run as can still manage them.
-2. Set the *Base URL* and the *Channels DVR URL* in coax Settings (they are needed for live TV anyway).
+   coax (uid 1000) needs to be able to write in `Imports/Movies` and `Imports/TV`. It never changes an owner:
+   the folders and files it makes are open to every user (folders 777, files 666), so whatever user Channels
+   DVR or your other tools run as can still manage them. The *On demand* dialog says so when the folder is
+   missing or not writable.
+2. Set the *Base URL* and the *DVR server URL* in coax Settings (they are needed for live TV anyway).
 3. On the **Providers** page, press **On demand** on a provider and tick the movie and series groups you want.
 
-coax then adds the titles to Channels DVR itself, through Channels DVR's own API, without waiting for its folder
-scanner. The scanner looks every title up and reads the whole folder for each file, one title after another: about
-two seconds a movie, days for a large provider. coax creates each title directly instead, with the provider's
-name, year, artwork, plot and TMDB id, in a few milliseconds, so the movies are in the library within minutes of
-pressing *Save*. Series follow in batches, newest shows first: coax asks the provider for each show's episodes one
-at a time (a large panel throttles quick bursts), and every few hundred shows go to Channels DVR as soon as they
-are read. A very large series group keeps filling in over the following hours: a sync reads for half an hour,
-then carries on 15 minutes later (an hour later if the provider starts refusing), until every show is in.
+**How titles get into Channels DVR.** coax creates each title through Channels DVR's own API, with the
+provider's name, year, artwork, plot and TMDB id, instead of waiting for Channels DVR's folder scanner (which
+looks every title up one after another, about two seconds a movie). Movies go first, newest first, then the
+shows and their episodes. Each title is visible and playable as soon as it is added, and the collections fill
+in as titles arrive.
+
+How fast depends on your Channels DVR server, which saves one title at a time. Measured on a real server:
+about 150 to 200 titles a minute (9,000 to 12,000 an hour). A provider with about 131,000 titles took an
+estimated 11 to 14 hours to add in full.
+
+Series need one request to the provider per show for its episode list, so they come in batches, newest shows
+first: about every 300 shows (or every 10 minutes) the batch goes to Channels DVR. A sync reads episode lists
+for up to half an hour, then carries on 15 minutes later (an hour later if the provider starts refusing), until
+every show is in. The dialog shows how many series are still to read.
 
 **Filling in the details.** Providers' metadata is often thin: a name and a poster, sometimes not even a year.
 coax fills the gaps in two steps:
@@ -1090,27 +1148,28 @@ coax fills the gaps in two steps:
    search, so no API key is needed) and picks the result with the same name and year; the provider's own TMDB id
    wins when it has one. What the provider lacks (poster, description, year, genres, TMDB id) is taken from TMDB,
    so a title has its poster and description the moment it appears.
-2. **After everything is added**, coax has Channels DVR match each movie and show on TMDB, a few at a time, shows
-   first. Channels DVR then fetches the rest: runtime, cast, content rating and background art, and for a show
-   every episode's title, description and runtime. This waits until the adding is done, because Channels DVR
-   saves one thing at a time and the adding comes first. It runs at about one title a second, so on a large
-   library it takes about a day; until a movie's turn comes its runtime shows as 1 second. The dialog shows how
-   many titles are still waiting. A title with no match keeps the details from step 1.
-
-On a large provider (about 90,000 movies and 40,000 episodes) the titles go in at about 2.5 a second, movies
-first: the movies are in the library overnight, the episodes follow, and new series keep arriving as coax reads
-their episode lists. Channels DVR's own folder scanner would take about two seconds a title, one at a time.
+2. **After the titles are added**, coax has Channels DVR match each movie and show on TMDB, a few at a time,
+   shows first. Channels DVR then fetches the rest: runtime, cast, content rating and background art, and for a
+   show every episode's title, description and runtime. This waits while titles are being added, so the two do
+   not compete for Channels DVR, and on a large library it takes many hours. Until a movie's turn comes its
+   runtime shows as 1 second. The dialog shows how many titles are still waiting. A title with no match keeps
+   the details from step 1.
 
 **How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
-provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with
+provider and the group (for example *My Provider · New Releases*), and each provider gets its own section with
 a row for each of its collections. The titles are also listed in Movies and TV Shows next to your own media:
 Channels DVR's search only finds titles listed there, and a provider with tens of thousands of titles is
-unusable without search. Titles an earlier coax version set to *Hidden* are shown again on the next sync.
-When the provider adds titles to a picked group, they appear on the provider's refresh schedule (every
-24 hours unless you changed it); titles the provider removes are removed. Untick a group and its titles,
-collection and row go away. Nothing else in Channels DVR is touched: coax only writes inside
-`Imports/Movies/.coax` and `Imports/TV/.coax` (the dot keeps Channels DVR's scanner out of them). The files
-stay there because Channels DVR plays a title, and keeps it, only while its file exists.
+unusable without search.
+
+**Staying up to date.** coax syncs on *Save*, on *Sync now* in the dialog, and on the provider's refresh
+schedule (*Refresh every (hours)*, at least 12 hours apart; a provider set to 0 syncs only on *Save* and *Sync
+now*). Titles the provider adds to a picked group appear, and titles it removes are removed. A list that
+suddenly has less than half its titles is treated as a provider hiccup and ignored, unless the provider keeps
+answering that way for three days. Untick a group and its titles, collection and row go away. A provider
+switched off keeps its library (watch state and resume included) but does not sync or play until it is back
+on. Nothing else in Channels DVR is touched: coax only writes inside `Imports/Movies/.coax` and
+`Imports/TV/.coax` (the dot keeps Channels DVR's scanner out of them), one folder per movie. The files stay
+there because Channels DVR plays a title, and keeps it, only while its file exists.
 
 **How it plays.** Each title is a Channels DVR *Stream File*: a small text file holding a coax address, never the
 provider's (your login stays out of Channels DVR). When you press play, the Channels app asks coax, and coax
@@ -1150,12 +1209,15 @@ runs on very weak hardware, set a preset on the *Settings* page. With a GPU the 
 
 Transcoding is what makes coax fully stable, because it is the only way coax can:
 
-- **Keep one format for every feed.** A failover to a backup with a different frame rate or resolution does
-  not make Channels DVR (Apple TV in particular) drop frames or drift the audio.
+- **Keep one format for every feed,** so it can fail over to a backup on its own. A backup with a different
+  frame rate, resolution or audio format does not make Channels DVR (Apple TV in particular) freeze, drop
+  frames or drift the audio.
+- **Keep one audio format,** whatever the provider does with its audio (see *Audio* under [Presets](#presets)).
 - **Refill the reserve on its own** after a long outage (see [Refilling the reserve](#refilling-the-reserve-3-slower)).
 
-Without it, a backup with a different frame rate can upset the player, and a drained reserve only comes back
-on a retune (on MPEG-TS, also through a fresh connection's burst when the provider drifts behind).
+Without it, coax never fails over automatically (see [Offline placeholders and failover](#offline-placeholders-and-failover)),
+and a drained reserve only comes back on a retune (on MPEG-TS, also through a fresh connection's burst when the
+provider drifts behind).
 
 The costs are GPU time (or CPU time without a GPU), a little picture quality, and a few seconds more delay
 behind live.
@@ -1187,25 +1249,34 @@ Pick one on the *Settings* page, under *Transcode*. Every channel leaves coax in
   - **Always send Dolby Digital 5.1 (640 kbps)**, for providers with Dolby audio: every channel goes out as Dolby
     Digital 5.1 at 640 kbps, the most Dolby Digital allows, so your receiver never switches formats. Stereo
     channels and stereo ads are upmixed to 5.1 (dialog to the center, ambience to the surrounds), the way your
-    receiver's own upmixer (Neural:X, Dolby Surround) would: it never sees stereo, so it cannot do it itself. Off (the default): AAC stereo at 192 kbps.
+    receiver's own upmixer (Neural:X, Dolby Surround) would: it never sees stereo, so it cannot do it itself.
+    The upmix adds no LFE channel, so upmixed ads do not drive the subwoofer hot; your receiver's bass
+    management still sends the low bass to it. Off (the default): AAC stereo at 192 kbps.
   - **Audio language**: when a channel carries that language, coax plays it; otherwise the provider's main
     track. The list has every ISO 639-2 language, the most spoken first.
 
-  coax picks the channel's track (your language, else the provider's main one; never an audio-description track
-  when there is another) and keeps it. Whatever the provider does with its audio, nothing restarts and the sound
-  never drops: a switch between 5.1 and stereo for ads, a different codec for an ad (Dolby to AAC and back), the
-  audio moving to another track, a track that stops, a backup with other audio. coax cuts the provider's audio
-  into frames and gives ffmpeg one input per exact format, each fed silence when it is not playing, so the
-  decoder and its filters never see a change. Every stream gets the common ones (Dolby Digital 2.0 and 5.1,
-  Dolby Digital Plus 2.0 and 5.1, AAC stereo at 48 and 44.1 kHz, HE-AAC), plus any other format it shows when
-  you tune (MPEG audio, DTS, AAC 5.1 and others). A rare format that appears mid-stream plays through its
-  family's input with one short hiccup (about a tenth of a second of sound). Providers that send fMP4 instead of
-  MPEG-TS get the provider's audio converted directly. Audio is re-encoded rather than copied, so the 3% refill and the timing correction keep
-  working. Passthrough sends the provider's audio untouched.
+  Both apply to channels tuned after you save. coax picks the channel's track (your language, else the
+  provider's main one; never an audio-description track when there is another) and keeps it through stereo
+  ads. It reads each track's codec from the audio itself, not only from what the provider's stream table
+  says, since providers mislabel tracks. Dolby audio is decoded at the provider's own levels, without the
+  dynamic range compression ffmpeg would otherwise apply, so the volume does not ride up and down.
 
-  This costs a little CPU: the extra audio inputs are decoded all the time, even while silent, and the upmix runs
-  continuously. Measured: about 1.5 to 2% of one core per transcoded channel on a modern CPU, against about 0.5%
-  for the single input of earlier versions. Very low-power hardware will feel it more.
+  Whatever the provider does with its audio, the encoder does not restart and the sound does not drop: a switch
+  between 5.1 and stereo for ads, a different codec for an ad (Dolby to AAC and back), the audio moving to
+  another track, a track that stops, a backup with other audio. coax cuts the provider's audio into frames and
+  gives ffmpeg one input per exact format, each fed silence when it is not playing, so the decoder and its
+  filters never see a change. Every stream gets the common ones (Dolby Digital 2.0 and 5.1, Dolby Digital Plus
+  2.0 and 5.1, AAC stereo at 48 and 44.1 kHz, HE-AAC), plus any other format it shows when you tune (MPEG
+  audio, DTS, AAC 5.1 and others). A rare format that first appears mid-stream is decoded by a small helper
+  ffmpeg and plays through a PCM input, also without a restart. Providers that send fMP4 instead of MPEG-TS get
+  the provider's audio converted directly. If audio stops reaching the encoder for a few seconds while the
+  provider is still sending it, coax restarts the encoder at the next keyframe on the best track. Audio is
+  re-encoded rather than copied, so the 3% refill and the timing correction keep working. Passthrough sends
+  the provider's audio untouched.
+
+  This costs a little CPU: the extra audio inputs are decoded all the time, even while silent, and the upmix
+  runs continuously. Measured: about 1.5 to 2% of one core per transcoded channel on a modern CPU. Very
+  low-power hardware will feel it more.
 - Interlaced sources are deinterlaced.
 
 ### How the GPU is used
@@ -1219,8 +1290,8 @@ With a GPU, the whole transcode stays on it: decoding, deinterlacing, frame rate
 
 If GPU decoding fails on a stream (some codecs or profiles), coax decodes that stream on the CPU and keeps
 encoding on the GPU, and logs `transcode: GPU decoding failed on this stream, decoding on the CPU instead
-(encoding stays on the GPU)`. The image uses Jellyfin's ffmpeg build (8.1.3), which has the full set of
-VAAPI and CUDA filters.
+(encoding stays on the GPU)`. The image uses Jellyfin's ffmpeg build, which has the full set of VAAPI and
+CUDA filters.
 
 ### Refilling the reserve (3% slower)
 
@@ -1330,17 +1401,19 @@ on the host, then set `DOCKER_RUNTIME=nvidia` in `.env`. `NVIDIA_VISIBLE_DEVICES
 
 ## Updating
 
-coax is meant to be frozen. Updating is a deliberate step:
+coax is built to need as few updates as possible: it is meant to be set up once and left alone, so new
+releases are rare on purpose. A long gap since the last release does not mean the project is abandoned. It
+never updates itself; updating is a deliberate step:
 
-1. Read the release notes for the new version on the
-   [releases page](https://github.com/mackid1993/coax/releases).
-2. Back up `./data` (it is small).
-3. On `TAG=latest`, just pull. If you froze a version, change `TAG` in `.env`, for example
-   `1.0.3` to `1.1.0`.
+1. Read the release notes on the [releases page](https://github.com/mackid1993/coax/releases).
+2. Back up `./data` (it is small), or press *Back up now* in Settings.
+3. On `TAG=latest`, just pull. If you froze a release, change `TAG` in `.env` to the new one.
 4. `docker compose pull && docker compose up -d` (add `-f docker-compose.vpn.yml` for the VPN setup).
-5. Check the version at the bottom of the sidebar in the web UI (above the page on a phone, or the first lines of `docker logs coax`).
+5. Check the version at the bottom of the sidebar in the web UI (above the page on a phone, or the first lines
+   of `docker logs coax`).
 
-Gluetun is deliberately not pinned: it is your VPN and firewall, so `docker compose pull` keeps its security fixes current.
+Gluetun is deliberately not pinned: it is your VPN and firewall, so `docker compose pull` keeps its security
+fixes current.
 
 ## Data folder
 
@@ -1350,12 +1423,21 @@ Everything coax keeps is in the one bind mount, `./data` on the host, `/data` in
 data/
   config.json            all settings, providers, lines, channels, lineups (mode 0600, has passwords)
   config.json.bak        the previous config.json, one rolling backup
+  backups/               daily and manual backups (.tar.gz)
+  notifications.json     the bell's list
+  suggestions.json       Auto-match suggestions waiting for Save or Discard
+  automatch.json         the last finished Auto-match
   cache/
     catalog-<provider>.json   last good catalog for each provider
     xmltv-<lineup>.xml        generated guide for each lineup
     xmltv-ids-<provider>.json XMLTV channel ids offered in the Guide picker
+    gracenote-index-*.json    Gracenote stations for each Auto-match region
+    feedhealth.json           Smart Standby history and blocks
     espn-teams-<league>.json  ESPN's team names and logos, for event channels; read again after a week
     gracenote-teams.json      Gracenote team ids seen in Channels DVR's guide, for event channels
+    vod-<provider>*.json      each provider's movie and series lists, group summary and episode lists
+    vod-<provider>-titles.json, vod-state.json
+                              video on demand titles and what coax created in Channels DVR
     history/<channel>.jsonl   each channel's 10-minute stream summaries
     hlsloop-jobs-<channel>.json, tsloop-jobs-<channel>.json
                               original length of recordings coax extended; dropped after 24 hours
@@ -1395,15 +1477,20 @@ it.
   which channel holds each line.
 - **Channels flagged as missing after a refresh.** The provider removed or renumbered that stream. Pick a new
   stream for the channel; coax never deletes channels on its own.
-- **No guide data.** Gracenote mode needs a correct Channels DVR URL. XMLTV mode needs the XMLTV URL added to
-  the DVR source and a guide refresh in coax.
+- **No guide data.** Gracenote needs a correct *DVR server URL*. A lineup added with **Add to Channels DVR**
+  gets coax's XMLTV address automatically; a source added by hand needs it entered in Channels DVR.
 - **Permission denied on `/data`.** See [Data folder](#data-folder).
 - **GPU not used.** Look for the `transcoding with ...` line in the log, run `vainfo` or `nvidia-smi` as
   shown under [GPU transcoding](#gpu-transcoding), and check `GPU_DEVICE` or `DOCKER_RUNTIME` in `.env`.
-- **VPN: coax cannot reach the DVR.** Check `FIREWALL_OUTBOUND_SUBNETS`.
+- **VPN: coax cannot reach the DVR.** Check `LAN_SUBNETS` in `.env` (passed to Gluetun as
+  `FIREWALL_OUTBOUND_SUBNETS`).
+- **No automatic failover.** With transcoding off coax never switches to a backup on its own; turn on a
+  *Transcode* preset. See [Offline placeholders and failover](#offline-placeholders-and-failover).
+- **Video on demand titles do not appear.** Open *On demand* on the provider: it says when the Imports folder
+  is not mounted or not writable, or when the *DVR server URL* or *Base URL* is missing, and shows progress.
 - **Every tune fails with `response is not an m3u8 playlist`.** The provider sends MPEG-TS; set its *Stream
   format* to MPEG-TS. See [HLS or MPEG-TS](#hls-or-mpeg-ts).
-- **Viewer head start or recording extension missing.** Both need the *Channels DVR URL*. The log explains
+- **Viewer head start or recording extension missing.** Both need the *DVR server URL*. The log explains
   lines starting with `viewer buffer: off` or `viewer buffer: waiting`.
 
 ### Check that it's working
@@ -1440,9 +1527,9 @@ Common lines:
   apart. A provider that restarts a channel can cause the same jump without any switch.
 - **A provider outage longer than the reserve** on a channel with no working backup. The picture freezes;
   when the provider comes back coax recovers on its own, but video from the outage is lost.
-- **Feeds with a different resolution, frame rate or codec** can cause a brief flicker at a failover while
-  the player's decoder resets, and a different frame rate can make some players (Channels DVR on Apple TV)
-  drop frames until you tune again. Transcoding hides this.
+- **Feeds with a different resolution, frame rate or audio format** freeze or upset the player at a switch
+  when transcoding is off, which is why coax then only switches when you press **Switch**. Transcoding hides
+  this.
 - **A drained reserve** only comes back on a retune unless transcoding is on (MPEG-TS can also top it up with
   a fresh connection).
 - **A bad feed that keeps running,** for example audio slightly out of sync. coax cannot detect it on its
@@ -1457,7 +1544,7 @@ Common lines:
 ## Building from source
 
 ```sh
-scripts/build-image.sh 1.0.6-1       # stamps the version and builds coax:1.0.6-1
+scripts/build-image.sh <version>     # stamps the version and builds coax:<version>
 python -m unittest discover tests    # tests run on Python 3.11 or newer
 ```
 
@@ -1517,12 +1604,6 @@ Actions by commit SHA.
 - [Gluetun](https://github.com/qdm12/gluetun) by qdm12 (MIT), used unmodified as a separate container.
 - [FFmpeg](https://ffmpeg.org/), [Requests](https://requests.readthedocs.io/) and
   [cryptography](https://cryptography.io/).
-
-## Updates
-
-coax is built to need as few updates as possible. It is meant to be set up once and left alone, so new
-releases are rare on purpose. A long gap since the last release does not mean the project is abandoned;
-it is still used and maintained.
 
 ## Contributing
 
