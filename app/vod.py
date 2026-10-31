@@ -55,6 +55,7 @@ BATCH_SECONDS = 600          # ...or after this long, whichever comes first
 CONTINUE_AFTER = 900         # a sync that ran out of time carries on this soon, not at the next refresh
 THROTTLE_WAIT = 3600         # after EPISODE_FAILURES failed calls in a row, the panel rests this long
 CREATE_WORKERS = 6           # items created in the DVR at once
+DELETION_CHECKS = 300      # hand-picks checked for a deletion in Channels DVR per sync
 MATCH_WORKERS = 4            # TMDB matches through the DVR at once (each is about a second of the DVR's lookups)
 MATCH_RETRY = 600            # a match that failed on an error (not "no match") is tried again after this long
 SAVE_EVERY = 30.0            # seconds between state saves during a long run
@@ -193,11 +194,19 @@ def quality(name, groups=()):
     return "HD"
 
 
-def _copy_name(name, groups):
-    """A second copy's folder and file name: the title with its group, so both copies live side by side."""
+COPY_NAME_LIMIT = 120   # bytes of the title kept in a copy's name, leaving room for the group and a number
+
+
+def _copy_names(name, groups):
+    """Names for another copy of a title, in order of preference: the title with its group, then numbered. The
+    title is trimmed first, so a long name still leaves room for the group and the number (the full name already
+    belongs to the first copy)."""
     from app.names import clean_name
     tag = clean_name(groups[0]) if groups else "copy"
-    return safe_name("%s - %s" % (name, tag))
+    short = safe_name(name, COPY_NAME_LIMIT)
+    yield safe_name("%s - %s" % (short, safe_name(tag, 24)))
+    for n in range(2, 10000):
+        yield safe_name("%s - %s %d" % (short, safe_name(tag, 24), n))
 
 
 def group_label(provider, group):
@@ -240,15 +249,20 @@ class Plan:
         self.folders = {}            # show group id -> "TV/.coax/<pid>/<folder>/" (its episodes' path prefix)
 
 
-def plan(provider, vod, episodes, base):
+def plan(provider, vod, episodes, base, keep=None):
     """Every file and item the provider's Add all groups and hand-picks should have in Channels DVR.
 
     Add all groups work as they always have: every title, one copy of a title that two of them list (filed in both
     collections). A hand-pick is one exact copy (a movie or a series id) from an available group; a pick that an Add
     all group already carries is that group's. A pick of another copy of a title that is already there is a second
     copy beside the first (the user picked it on purpose), in a folder named with its group. A pick goes into the
-    collection of each available group that lists it."""
+    collection of each available group that lists it.
+
+    `keep` ("m:<id>" -> path, "s:<id>" -> folder path, from the library state): a hand-pick that is already in
+    Channels DVR keeps its place, so picking another copy later never moves (and replaces) the one that is there.
+    Those are placed first, before Add all and before new picks."""
     from app.providers import vod as vodcat
+    keep = keep or {}
     pid = provider["id"]
     out = Plan()
     avail_m, avail_s = (set(g) for g in selected(provider))
@@ -258,22 +272,20 @@ def plan(provider, vod, episodes, base):
     out.members.update({("series", g): [] for g in all_s})
     taken = {}   # lower-case path -> the path of the copy that stands for the title
 
-    def add_movie(movie, groups, picked):
+    def add_movie(movie, groups, picked, want=None):
         title, year = vodcat.title_year(movie.get("name"), movie.get("year"))
         name = safe_name("%s (%s)" % (title, year) if year else title)
         rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, name, name)   # a folder each: the DVR reads a file's folder
-        if rel.lower() in taken:
+        if want and want.lower() not in taken:
+            rel = want   # a hand-pick already in Channels DVR stays where it is
+        elif rel.lower() in taken:
             if not picked:
                 rel = taken[rel.lower()]   # Add all: the same title twice, the first copy stands for both
             else:
-                base_name, n = _copy_name(name, groups), 1
-                copy = base_name
-                while True:
+                for copy in _copy_names(name, groups):
                     rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, copy, copy)
                     if rel.lower() not in taken:
                         break
-                    n += 1
-                    copy = safe_name("%s %d" % (base_name, n))
         if rel.lower() not in taken:
             taken[rel.lower()] = rel
             out.files[rel] = "%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
@@ -292,6 +304,20 @@ def plan(provider, vod, episodes, base):
                 members.append(rel)
 
     movies = vod.get("movies") or []
+
+    def pick_groups(item, avail, everything):
+        """The available groups of a hand-pick, or None when it is not a hand-pick of its own."""
+        if everything.intersection(item.get("groups") or []):
+            return None   # an Add all group carries it
+        groups = [g for g in item.get("groups") or [] if g in avail]
+        return groups or None
+
+    for movie in movies:   # hand-picks already in Channels DVR first: they keep their place
+        mid = str(movie.get("id"))
+        if mid in pick_m and keep.get("m:" + mid):
+            groups = pick_groups(movie, avail_m, set(all_m))
+            if groups:
+                add_movie(movie, groups, True, want=keep["m:" + mid])
     for movie in movies:
         groups = [g for g in movie.get("groups") or [] if g in all_m]
         if groups:
@@ -299,26 +325,26 @@ def plan(provider, vod, episodes, base):
     for movie in movies:
         mid = str(movie.get("id"))
         if mid in pick_m and "m:" + mid not in out.present:
-            groups = [g for g in movie.get("groups") or [] if g in avail_m]
+            groups = pick_groups(movie, avail_m, set(all_m))
             if groups:
                 add_movie(movie, groups, True)
 
     show_dirs = {}
 
-    def add_show(show, groups, picked):
+    def add_show(show, groups, picked, want=None):
         title, year = vodcat.title_year(show.get("name"), show.get("year") or str(_year(show.get("release")) or ""))
         show_name = "%s (%s)" % (title, year) if year else title
         folder = safe_name(show_name)
-        if folder.lower() in show_dirs and show_dirs[folder.lower()] != show["id"]:
+        if want and want.lower() not in show_dirs:
+            folder = want   # a hand-picked show already in Channels DVR stays where it is
+        elif folder.lower() in show_dirs and show_dirs[folder.lower()] != show["id"]:
             if not picked:
                 # Add all: two series with one name, keep the first (the DVR would merge them anyway)
                 out.present["s:%s" % show["id"]] = group_id(pid, show_dirs[folder.lower()])
                 return
-            base_name, n = _copy_name(folder, groups), 1
-            folder = base_name
-            while folder.lower() in show_dirs:
-                n += 1
-                folder = safe_name("%s %d" % (base_name, n))
+            for folder in _copy_names(show_name, groups):
+                if folder.lower() not in show_dirs:
+                    break
         show_dirs[folder.lower()] = show["id"]
         gid = group_id(pid, show["id"])
         out.folders[gid] = "TV/%s/%s/%s/" % (SUBDIR, pid, folder)
@@ -354,6 +380,14 @@ def plan(provider, vod, episodes, base):
                 out.picked.add(gid)
 
     series = vod.get("series") or []
+    prefix = "TV/%s/%s/" % (SUBDIR, pid)
+    for show in series:   # hand-picked shows already in Channels DVR first: they keep their folder
+        sid = str(show.get("id"))
+        spot = keep.get("s:" + sid) or ""
+        if sid in pick_s and spot.startswith(prefix):
+            groups = pick_groups(show, avail_s, set(all_s))
+            if groups:
+                add_show(show, groups, True, want=spot[len(prefix):].rstrip("/"))
     for show in series:
         groups = [g for g in show.get("groups") or [] if g in all_s]
         if groups:
@@ -361,7 +395,7 @@ def plan(provider, vod, episodes, base):
     for show in series:
         sid = str(show.get("id"))
         if sid in pick_s and "s:" + sid not in out.present:
-            groups = [g for g in show.get("groups") or [] if g in avail_s]
+            groups = pick_groups(show, avail_s, set(all_s))
             if groups:
                 add_show(show, groups, True)
     return out
@@ -505,6 +539,7 @@ class Library:
         self._match_wake = threading.Event()
         self._wanted = set()
         self._urgent = set()                   # providers with new hand-picks: a running import yields to them
+        self._preempted = False
         self._stop = threading.Event()
         self._thread = None
         self._matcher = None
@@ -561,7 +596,8 @@ class Library:
     def status(self, provider_id):
         ok, why = imports_ready(self.imports_dir)
         st = dict(self.state.get(str(provider_id)) or {})
-        for key in ("collections", "files", "groups", "todo", "hidden", "hidden_shows", "present", "where", "retry"):
+        for key in ("collections", "files", "groups", "todo", "hidden", "hidden_shows", "present", "where", "retry",
+                    "check_from"):
             st.pop(key, None)
         todo = (self.state.get(str(provider_id)) or {}).get("todo") or {}
         st.update(imports_ok=ok, imports_message=why, running=self.running.get(str(provider_id)),
@@ -637,7 +673,7 @@ class Library:
                 refreshing.release()
 
         def make(rel):
-            if preemptible and (stopped[0] or pid in self._urgent):
+            if preemptible and (stopped[0] or self._urgent):   # any provider's new picks
                 stopped[0] = True
                 return
             meta = pl.meta[rel]
@@ -1024,9 +1060,11 @@ class Library:
                 self._sync(pid)
                 st.update(error="", last_sync=started)
             except _Preempted:
-                # Hand-picks came in: start over at once with them first. Not an error, and not a finished sync.
+                # Hand-picks came in: they go first (run_once takes urgent providers first), then this carries on.
+                # Not an error, and not a finished sync.
                 log.info("VOD provider %s: new hand-picks first; the rest carries on right after them", pid)
                 self._wanted.add(pid)
+                self._preempted = True
                 self._wake.set()
             except Exception as exc:  # noqa: BLE001 - a VOD sync must never take coax down
                 from app.providers.net import redact
@@ -1095,11 +1133,9 @@ class Library:
         # any episode list is asked for (that can take half an hour on a big catalog).
         self._publish(cfg, provider, vod, known, base)
         # Then the episode lists, in batches: each batch goes to Channels DVR as soon as it is read.
-        st.pop("continue_at", None)
-        st.pop("series_left", None)
         spent, info = 0.0, {}
         while shows and spent < EPISODE_BUDGET and not self._stop.is_set():
-            if pid in self._urgent:
+            if self._urgent:
                 raise _Preempted()
             started = time.monotonic()
 
@@ -1113,6 +1149,8 @@ class Library:
                 self._publish(cfg, provider, vod, episodes, base)
             if not info.get("left") or info.get("throttled") or not info.get("fetched"):
                 break
+        st.pop("continue_at", None)   # cleared only now: a sync that stops early keeps the backlog's date
+        st.pop("series_left", None)
         if info.get("left"):
             # Not done: carry on soon rather than at the next daily refresh; a throttling panel gets an hour's rest.
             wait = THROTTLE_WAIT if info.get("throttled") else CONTINUE_AFTER
@@ -1123,7 +1161,7 @@ class Library:
     def _publish(self, cfg, provider, vod, episodes, base):
         """Write the files for what is known now, create their items in Channels DVR, update the collections."""
         pid = provider["id"]
-        pl = plan(provider, vod, episodes, base)
+        pl = plan(provider, vod, episodes, base, keep=self._pstate(pid).get("where") or {})
         self._titles.update(pl.titles)
         self.running[pid] = "writing Stream Files"
         written, _deleted = self._write(pid, pl.files)
@@ -1198,6 +1236,11 @@ class Library:
         if not present:
             return False
         where = st.get("where") or {}   # "m:<id>" -> movie path, "s:<id>" -> the show's folder path prefix
+        # A few hundred a sync, in turn: a provider with thousands of picks must not mean thousands of calls.
+        keys = sorted(present)
+        start = int(st.get("check_from") or 0) % len(keys)
+        keys = (keys[start:] + keys[:start])[:DELETION_CHECKS]
+        st["check_from"] = start + len(keys)
         gone = []
 
         def check(key):
@@ -1209,11 +1252,9 @@ class Library:
                         return
                     item = self._call(cfg, "GET", "/dvr/files/%s" % fid)
                 else:
-                    # A show is deleted in Channels DVR when every one of its episodes is (or the show is gone).
-                    item = self._call(cfg, "GET", "/dvr/groups/%s/files" % group_id(pid, ident))
-                    if isinstance(item, list) and all(isinstance(f, dict) and f.get("Deleted") for f in item):
-                        gone.append(key)
-                    return
+                    # The show itself, never its episodes: someone who deletes each episode after watching it
+                    # still wants the next ones.
+                    item = self._call(cfg, "GET", "/dvr/groups/%s" % group_id(pid, ident))
             except channels_dvr.DvrError as exc:
                 if "answered 404 " in str(exc):
                     gone.append(key)
@@ -1222,8 +1263,14 @@ class Library:
                 return
             if isinstance(item, dict) and item.get("Deleted"):
                 gone.append(key)
-        self._pool(CREATE_WORKERS, check, sorted(present))
+        self._pool(CREATE_WORKERS, check, keys)
         if not gone:
+            return False
+        if len(gone) >= 3 and len(gone) * 2 > len(keys):
+            # Most picks gone at once is not the user deleting titles: the DVR server URL points at another (or a
+            # rebuilt) Channels DVR, or something in front of it answers 404. Keep every pick.
+            log.warning("VOD provider %s: Channels DVR does not know %d of %d hand-picked titles checked; keeping "
+                        "them (is the DVR server URL right?)", pid, len(gone), len(keys))
             return False
         gone_m = {k[2:] for k in gone if k.startswith("m:")}
         gone_s = {k[2:] for k in gone if k.startswith("s:")}
@@ -1309,7 +1356,7 @@ class Library:
             return bool(st)   # every group made unavailable: clean up once
         if st.get("continue_at") and time.time() >= st["continue_at"]:
             return True   # episode lists still to read
-        if st.get("files") and "present" not in st:
+        if st.get("files") and "present" not in st and time.time() - (st.get("last_try") or 0) >= 600:
             return True   # an older build's library: learn which titles are in Channels DVR for the On demand page
         from app.providers import vod as vodcat
         if (provider.get("type") or "xtream") == "xtream" and provider.get("enabled", True) is not False and \
@@ -1329,12 +1376,18 @@ class Library:
         cfg = self.store.get()
         wanted, self._wanted = self._wanted, set()
         known = set()
-        for provider in cfg.get("providers") or []:
+        self._preempted = False
+        providers = sorted(cfg.get("providers") or [], key=lambda p: p["id"] not in self._urgent)
+        for index, provider in enumerate(providers):
             known.add(provider["id"])
             if self._stop.is_set():
                 return
-            if provider["id"] in wanted or self._due(provider):
+            if provider["id"] in wanted or provider["id"] in self._urgent or self._due(provider):
                 self.sync(provider["id"])
+            if self._preempted:   # new picks somewhere: start over with them first
+                self._wanted.update(wanted)
+                self._wanted.update(p["id"] for p in providers[index + 1:] if self._due(p))
+                return
         for pid in [p for p in self.state if p not in known]:   # a deleted provider
             with self._lock:
                 self.remove(pid, cfg)

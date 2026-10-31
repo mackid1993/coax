@@ -1283,27 +1283,32 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(value, list) or not all(isinstance(g, str) for g in value):
                 raise bad_request("%s must be a list of group names" % kind)
             groups[kind] = list(dict.fromkeys(value))
-        titles = self.app.ondemand_titles
+        catalog, by_key = self.app.ondemand_titles.get(provider_id)   # before the config is locked
+
+        def kept(kind, ids):
+            """Picks whose title is still in an available group; a title not in the list now (the provider left
+            it out for a while) is kept."""
+            avail = set(groups["movies" if kind == "m" else "series"])
+            out = []
+            for i in ids:
+                t = by_key.get("%s:%s" % (kind, i))
+                if t is None or avail.intersection(t.groups):
+                    out.append(i)
+            return out
 
         def mutate(cfg):
             provider = find_provider(cfg, provider_id)
             vod = ondemand.vodlib.materialize(provider.get("vod"))
             vod.update(groups)
             vod["all"] = {k: [g for g in vod["all"].get(k) or [] if g in groups[k]] for k in ("movies", "series")}
-            catalog, _by_key = titles.get(provider_id)
-            offered = {"m": set(), "s": set()}
-            for t in catalog:
-                if set(groups["movies" if t.kind == "m" else "series"]).intersection(t.groups):
-                    offered[t.kind].add(t.id)
-            if catalog:   # without a catalog yet, nothing can be told apart: keep the picks
-                vod["picks"] = {"movies": [i for i in vod["picks"].get("movies") or [] if str(i) in offered["m"]],
-                                "series": [i for i in vod["picks"].get("series") or [] if str(i) in offered["s"]]}
+            vod["picks"] = {"movies": kept("m", vod["picks"].get("movies") or []),
+                            "series": kept("s", vod["picks"].get("series") or [])}
             provider["vod"] = vod
         self.app.store.update(mutate)
         log.info("provider %s: %d movie and %d series groups available for video on demand", provider_id,
                  len(groups["movies"]), len(groups["series"]))
         if self.app.vod is not None:
-            self.app.vod.request(provider_id)
+            self.app.vod.request(provider_id, urgent=True)   # a running import must not go on adding what left
         return self.h_provider_vod(provider_id)
 
     # ------------------------------------------------------------ on demand page
@@ -1507,16 +1512,17 @@ class Handler(BaseHTTPRequestHandler):
                 or not isinstance(on, bool):
             raise bad_request("provider, kind (movies or series), group and on (true or false) are required")
         k = "m" if kind == "movies" else "s"
-        titles = self.app.ondemand_titles
+        find_provider(self.app.store.get(), pid)
+        catalog, by_key = self.app.ondemand_titles.get(pid)   # before the config is locked
 
         def mutate(cfg):
             find_provider(cfg, pid)
             try:
-                ondemand.set_add_all(cfg, pid, k, group, on, titles)
+                ondemand.set_add_all(cfg, pid, k, group, on, catalog)
             except ValueError as exc:
                 raise bad_request(str(exc))
-        self.app.store.update(mutate)
-        _catalog, by_key = titles.get(pid)
+        with self.app.ondemand_draft.lock:   # a Save running now cannot add a pick inside the group meanwhile
+            self.app.store.update(mutate)
         d = self.app.ondemand_draft
         with d.lock:
             pending = {p: dict(c) for p, c in (d.data.get("pending") or {}).items()}
@@ -1532,7 +1538,7 @@ class Handler(BaseHTTPRequestHandler):
                     log.warning("could not save the On demand page's unsaved changes: %s", exc)
         log.info("On demand: Add all %s for %s group %r of provider %s", "on" if on else "off", kind, group, pid)
         if self.app.vod is not None:
-            self.app.vod.request(pid)
+            self.app.vod.request(pid, urgent=not on)   # off: a running import stops adding the group's titles
         return {"ok": True, "dropped": len(inside)}
 
     def h_provider_vod_sync(self, provider_id):

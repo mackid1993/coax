@@ -114,6 +114,28 @@ class PlanTests(unittest.TestCase):
         self.assertIn(ups[0], pl.picked)
 
 
+class PlanCopyTests(unittest.TestCase):
+    def test_three_copies_of_a_very_long_title_get_names(self):
+        long = "\u5f71" * 60 + " (2001)"
+        vod = {"movies": [{"id": str(i), "name": long, "groups": ["G%d" % i]} for i in range(4)], "series": []}
+        p = {"id": "p2", "name": "P", "vod": {"movies": ["G0", "G1", "G2", "G3"], "series": [],
+                                             "all": {"movies": [], "series": []},
+                                             "picks": {"movies": ["0", "1", "2", "3"], "series": []}}}
+        pl = vodlib.plan(p, vod, {}, "http://coax")
+        self.assertEqual(len(pl.files), 4)
+        self.assertEqual(len({r.lower() for r in pl.files}), 4)
+
+    def test_a_pick_already_in_channels_keeps_its_place_when_another_copy_is_picked(self):
+        p = provider(all={"movies": [], "series": []}, picks={"movies": ["2"], "series": []})
+        first = vodlib.plan(p, VOD, EPISODES, "http://coax")
+        spot = first.present["m:2"]
+        self.assertEqual(spot, "Movies/.coax/p2/Up (2009)/Up (2009).strm")
+        p["vod"]["picks"]["movies"] = ["1", "2"]   # copy 1 comes first in the list
+        again = vodlib.plan(p, VOD, EPISODES, "http://coax", keep={"m:2": spot})
+        self.assertEqual(again.present["m:2"], spot)
+        self.assertEqual(again.present["m:1"], "Movies/.coax/p2/Up (2009) - Action/Up (2009) - Action.strm")
+
+
 class SearchTests(unittest.TestCase):
     def setUp(self):
         self.titles, self.by_key = FakeCatalogs(VOD).get("p2")
@@ -175,19 +197,21 @@ class DraftRuleTests(unittest.TestCase):
 
     def test_add_all_takes_in_the_groups_picks_and_off_takes_the_group_out(self):
         cfg = {"providers": [provider(all={"movies": [], "series": []}, picks={"movies": ["3", "4"], "series": []})]}
-        ondemand.set_add_all(cfg, "p2", "m", "Action", True, self.cats)
+        titles = self.cats.get("p2")[0]
+        ondemand.set_add_all(cfg, "p2", "m", "Action", True, titles)
         vod = cfg["providers"][0]["vod"]
         self.assertEqual((vod["all"]["movies"], vod["picks"]["movies"]), (["Action"], ["4"]))
-        ondemand.set_add_all(cfg, "p2", "m", "Action", False, self.cats)
+        vod["picks"]["movies"].append("3")   # a pick that slipped into the group meanwhile
+        ondemand.set_add_all(cfg, "p2", "m", "Action", False, titles)
         self.assertEqual((vod["all"]["movies"], vod["picks"]["movies"]), ([], ["4"]))
         pl = vodlib.plan(cfg["providers"][0], VOD, EPISODES, "http://coax")
         self.assertEqual([r for r in pl.files if "Heat" in r], [])   # Heat's pick went with Add all
         with self.assertRaises(ValueError):
-            ondemand.set_add_all(cfg, "p2", "m", "Hidden", True, self.cats)
+            ondemand.set_add_all(cfg, "p2", "m", "Hidden", True, titles)
 
     def test_old_config_switching_one_group_off_keeps_the_others(self):
         cfg = {"providers": [provider()]}
-        ondemand.set_add_all(cfg, "p2", "m", "Comedy", False, self.cats)
+        ondemand.set_add_all(cfg, "p2", "m", "Comedy", False, self.cats.get("p2")[0])
         self.assertEqual(cfg["providers"][0]["vod"]["all"], {"movies": ["Action", "4K"], "series": ["Drama"]})
 
     def test_validation_and_estimate(self):
@@ -236,7 +260,7 @@ class LibraryPickTests(unittest.TestCase):
         self.orig = vodcat.load, vodcat.episodes_for
         vodcat.load = lambda pid: dict(VOD, fetched_at=vodcat.catalog.now_iso())
         vodcat.episodes_for = lambda provider, series, **kw: {s["id"]: EPISODES.get(s["id"], []) for s in series}
-        self.files, self.deleted, self.calls = {}, set(), []
+        self.files, self.deleted, self.calls, self.deleted_shows = {}, set(), [], set()
         self.cfg = {"server": {"base_url": "http://coax:7780"}, "channels_dvr": {"url": "http://dvr:8089"},
                     "providers": [provider(all={"movies": ["Action", "Comedy"], "series": []},
                                            picks={"movies": ["2"], "series": ["s2"]})]}
@@ -266,6 +290,11 @@ class LibraryPickTests(unittest.TestCase):
         if method == "GET" and path.startswith("/dvr/files/"):
             fid = path.rsplit("/", 1)[1]
             return dict(self.files.get(fid) or {}, Deleted=fid in self.deleted)
+        if method == "GET" and path.startswith("/dvr/groups/") and path.count("/") == 3:
+            if path.split("/")[3] in self.deleted_shows:
+                from app import channels_dvr
+                raise channels_dvr.DvrError("Channels DVR answered 404 for GET %s: not found" % path)
+            return {"ID": path.split("/")[3]}
         if method == "GET" and path.endswith("/files") and path.startswith("/dvr/groups/"):
             gid = path.split("/")[3]
             return [dict(b, ID=f, Deleted=f in self.deleted) for f, b in self.files.items() if b.get("GroupID") == gid]
@@ -320,6 +349,7 @@ class LibraryPickTests(unittest.TestCase):
         mine = next(f for f, b in self.files.items() if "Up (2009) - 4K" in b["Path"])
         lost = [f for f, b in self.files.items() if b.get("GroupID") == "coax-p2-s2"]
         self.deleted.update([mine] + lost)
+        self.deleted_shows.add("coax-p2-s2")
         posted = len(self.files)
         self.lib.sync("p2")
         self.assertEqual(self.cfg["providers"][0]["vod"]["picks"], {"movies": [], "series": []})
@@ -354,6 +384,39 @@ class LibraryPickTests(unittest.TestCase):
             self.assertFalse(self.lib._due(p))
         finally:
             vodcat.cache_path = orig
+
+    def test_a_show_whose_episodes_were_all_deleted_after_watching_stays_picked(self):
+        self.lib.sync("p2")
+        self.deleted.update(f for f, b in self.files.items() if b.get("GroupID") == "coax-p2-s2")
+        self.lib.sync("p2")
+        self.assertEqual(self.cfg["providers"][0]["vod"]["picks"]["series"], ["s2"])
+
+    def test_most_picks_gone_at_once_is_a_different_dvr_not_deletions(self):
+        p = self.cfg["providers"][0]
+        p["vod"]["all"] = {"movies": [], "series": []}
+        p["vod"]["picks"] = {"movies": ["1", "3", "4"], "series": ["s2"]}
+        self.lib.sync("p2")
+        self.deleted.update(self.files)
+        self.deleted_shows.add("coax-p2-s2")
+        self.lib.sync("p2")
+        self.assertEqual(p["vod"]["picks"], {"movies": ["1", "3", "4"], "series": ["s2"]})
+
+    def test_another_providers_new_picks_stop_a_running_import(self):
+        self.cfg["providers"][0]["vod"]["picks"] = {"movies": [], "series": []}
+        seen = []
+
+        def on_post(body):
+            seen.append(body["Path"])
+            self.lib._urgent.add("p9")
+        self.on_post = on_post
+        create = vodlib.CREATE_WORKERS
+        vodlib.CREATE_WORKERS = 1
+        try:
+            with self.assertRaises(vodlib._Preempted):
+                self.lib._sync("p2")
+        finally:
+            vodlib.CREATE_WORKERS = create
+        self.assertEqual(len(seen), 1)
 
     def test_nothing_chosen_clears_the_library_but_keeps_the_catalog(self):
         self.lib.sync("p2")
@@ -465,7 +528,9 @@ class OnDemandApiTests(ApiTestCase):
         self.assertEqual((status, body["dropped"]), (200, 1), body)
         self.assertEqual((self.vod()["all"]["movies"], self.vod()["picks"]["movies"]), (["Action"], []))
         self.assertEqual(self.request("GET", "/api/ondemand/draft")[1]["pending"], {"p1": {"m:4": "add"}})
-        self.assertEqual(self.lib.requests[-1], ("p1", False))
+        self.assertEqual(self.lib.requests[-1], ("p1", False))   # on: nothing to stop
+        self.request("POST", "/api/ondemand/add-all", {"provider": "p1", "kind": "movies", "group": "Action", "on": False})
+        self.assertEqual(self.lib.requests[-1], ("p1", True))    # off: a running import stops adding it
         status, body, _ = self.request("POST", "/api/ondemand/add-all",
                                        {"provider": "p1", "kind": "movies", "group": "Nope", "on": True})
         self.assertEqual(status, 400)
@@ -482,6 +547,11 @@ class OnDemandApiTests(ApiTestCase):
         vod = self.vod()
         self.assertEqual((vod["movies"], vod["all"], vod["picks"]),
                          (["Action", "Comedy"], {"movies": ["Action"], "series": []}, {"movies": [], "series": []}))
+        # a pick whose title the provider left out for now is kept
+        self.store.update(lambda c: c["providers"][0]["vod"]["picks"].update(movies=["404"]))
+        with mock.patch.object(vodcat, "summary", lambda pid: {}):
+            self.request("PUT", "/api/providers/p1/vod", {"movies": ["Action", "Comedy"], "series": []})
+        self.assertEqual(self.vod()["picks"]["movies"], ["404"])
         # a group made available adds nothing by itself
         self.assertEqual(self.vod()["all"]["movies"], ["Action"])
 

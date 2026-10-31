@@ -276,27 +276,33 @@ def apply(cfg, pending):
         if not changes:
             continue
         vod = vodlib.materialize(provider.get("vod"))
-        picks = {"m": list(vod["picks"].get("movies") or []), "s": list(vod["picks"].get("series") or [])}
+        picks = {"m": [str(i) for i in vod["picks"].get("movies") or []],
+                 "s": [str(i) for i in vod["picks"].get("series") or []]}
+        have = {"m": set(picks["m"]), "s": set(picks["s"])}
+        dropped = {"m": set(), "s": set()}
         added = removed = 0
         for key, change in changes.items():
             kind, ident = key.split(":", 1)
-            have = [str(i) for i in picks[kind]]
-            if change == "add" and ident not in have:
+            if change == "add" and ident not in have[kind]:
                 picks[kind].append(ident)
+                have[kind].add(ident)
                 added += 1
-            elif change == "remove" and ident in have:
-                picks[kind] = [i for i in picks[kind] if str(i) != ident]
+            elif change == "remove" and ident in have[kind]:
+                have[kind].discard(ident)
+                dropped[kind].add(ident)
                 removed += 1
-        vod["picks"] = {"movies": picks["m"], "series": picks["s"]}
+        vod["picks"] = {"movies": [i for i in picks["m"] if i not in dropped["m"]],
+                        "series": [i for i in picks["s"] if i not in dropped["s"]]}
         provider["vod"] = vod
         result[provider["id"]] = (added, removed)
     return result
 
 
-def set_add_all(cfg, pid, kind, group, on, catalogs):
+def set_add_all(cfg, pid, kind, group, on, titles):
     """Switch a group's Add all on or off (in place). On: the group's hand-picks become the group's own (they leave
     the picks; the group carries them now). Off: the whole group leaves Channels DVR, including titles that were
-    hand-picked before Add all was switched on."""
+    hand-picked before Add all was switched on (any pick left in the group goes too). `titles`: the provider's
+    catalog (Catalogs.get), read before the config is locked."""
     for provider in cfg.get("providers") or []:
         if provider.get("id") != pid:
             continue
@@ -307,9 +313,8 @@ def set_add_all(cfg, pid, kind, group, on, catalogs):
         groups = [g for g in vod["all"].get(name) or [] if g != group]
         if on:
             groups.append(group)
-            titles, _by_key = catalogs.get(pid)
-            inside = {t.id for t in titles if t.kind == kind and group in t.groups}
-            vod["picks"][name] = [i for i in vod["picks"].get(name) or [] if str(i) not in inside]
+        inside = {t.id for t in titles if t.kind == kind and group in t.groups}
+        vod["picks"][name] = [i for i in vod["picks"].get(name) or [] if str(i) not in inside]
         vod["all"][name] = groups
         provider["vod"] = vod
         return
