@@ -86,7 +86,8 @@ def default_provider():
     return {
         "id": "", "name": "", "type": "xtream", "server": "", "m3u_url": "", "xmltv_url": "",
         "user_agent": "", "format": "hls", "refresh_hours": 24, "lines": [], "auto_add": False, "groups": [],
-        "max_streams": 0, "enabled": True, "vod": {"movies": [], "series": [], "library": {"movies": [], "series": []}},
+        "max_streams": 0, "enabled": True, "vod": {"movies": [], "series": [], "all": {"movies": [], "series": []},
+                                                    "picks": {"movies": [], "series": []}},
     }
 
 
@@ -161,6 +162,11 @@ def fill_defaults(cfg):
     _fill(cfg, default_config())
     for provider in cfg.get("providers") or []:
         if isinstance(provider, dict):
+            vod = provider.get("vod")
+            if isinstance(vod, dict) and not isinstance(vod.get("all"), dict):
+                # Written before the On demand page: every picked group went to Channels DVR whole, so each one
+                # is an Add all group now and nothing in Channels DVR changes.
+                vod["all"] = {"movies": list(vod.get("movies") or []), "series": list(vod.get("series") or [])}
             _fill(provider, default_provider())
             for line in provider.get("lines") or []:
                 if isinstance(line, dict):
@@ -307,10 +313,12 @@ def validate(cfg):
         _require(isinstance(vod, dict) and all(isinstance(vod.get(k, []), list) and all(isinstance(g, str) for g in vod.get(k, []))
                                                for k in ("movies", "series")),
                  label + ": vod must hold lists of movie and series group names")
-        lib = vod.get("library", {})
-        _require(isinstance(lib, dict) and all(isinstance(lib.get(k, []), list) and all(isinstance(g, str) for g in lib.get(k, []))
-                                               for k in ("movies", "series")),
-                 label + ": vod.library must hold lists of movie and series group names")
+        for key, what in (("library", "group names"), ("all", "group names"), ("picks", "title ids")):
+            part = vod.get(key, {})
+            _require(isinstance(part, dict) and all(isinstance(part.get(k, []), list) and
+                                                    all(isinstance(g, str) for g in part.get(k, []))
+                                                    for k in ("movies", "series")),
+                     label + ": vod.%s must hold lists of movie and series %s" % (key, what))
         lines = provider.get("lines")
         _require(isinstance(lines, list) and lines, label + ": at least one line is required")
         line_ids = set()

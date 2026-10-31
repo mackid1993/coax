@@ -114,6 +114,7 @@ class Play:
         self.content_type = None
         self.source = None             # an M3U title's provider address
         self.sent = 0
+        self.started = time.time()
 
     def stop(self):
         """End the play: close its provider connection, wait for it to be gone, then give the line back."""
@@ -145,6 +146,20 @@ class Plays:
         self._janitor = None
 
     # -- bookkeeping ------------------------------------------------------------------------------------------------
+    def status(self):
+        """The plays holding a line now, for the Status page: each one uses a provider connection like a tune."""
+        with self._lock:
+            plays = [p for p in self._plays.values() if not p.stopped]
+        out = []
+        for p in plays:
+            hold = p.hold
+            out.append({"provider_id": p.provider_id, "provider_name": getattr(hold, "provider_name", "") or "",
+                        "line_id": getattr(hold, "line_id", None), "line_name": getattr(hold, "line_name", "") or "",
+                        "client_ip": p.client_ip, "name": p.name, "kind": "movie" if p.item[0] == "m" else "episode",
+                        "started": p.started, "sent": p.sent, "streaming": p.active > 0})
+        out.sort(key=lambda x: x["started"])
+        return out
+
     def forget(self, play):
         key = (play.client_ip, play.provider_id, play.item)
         with self._lock:

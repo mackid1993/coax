@@ -129,17 +129,75 @@ def vod_hours(provider):
     return max(hours, 12.0) if hours == hours and hours > 0 else 24.0
 
 
+def _vod_of(provider):
+    return provider.get("vod") if isinstance(provider.get("vod"), dict) else {}
+
+
 def selected(provider):
-    vod = provider.get("vod") if isinstance(provider.get("vod"), dict) else {}
+    """The provider's AVAILABLE groups (the Providers page): (movie groups, series groups). Their titles show in the
+    On demand catalog; only Add all groups and hand-picked titles go to Channels DVR."""
+    vod = _vod_of(provider)
     return list(vod.get("movies") or []), list(vod.get("series") or [])
 
 
+def add_all(provider):
+    """Groups whose every title goes to Channels DVR, now and later: (movie groups, series groups), each a subset of
+    the available groups. A config without `vod.all` (written before the catalog existed, when every picked group
+    went to Channels DVR whole) counts every available group as Add all, so an upgrade changes nothing."""
+    movies, series = selected(provider)
+    chosen = _vod_of(provider).get("all")
+    if not isinstance(chosen, dict):
+        return movies, series
+    return ([g for g in chosen.get("movies") or [] if g in movies],
+            [g for g in chosen.get("series") or [] if g in series])
+
+
+def picks(provider):
+    """Hand-picked titles: (movie ids, series ids) as strings."""
+    chosen = _vod_of(provider).get("picks")
+    chosen = chosen if isinstance(chosen, dict) else {}
+    return ({str(i) for i in chosen.get("movies") or []}, {str(i) for i in chosen.get("series") or []})
+
+
+def materialize(vod):
+    """The same choices with `all` and `picks` written out (an older config's implied Add all made explicit), so a
+    change to one of them never changes what the others mean."""
+    vod = dict(vod or {})
+    if not isinstance(vod.get("all"), dict):
+        vod["all"] = {"movies": list(vod.get("movies") or []), "series": list(vod.get("series") or [])}
+    if not isinstance(vod.get("picks"), dict):
+        vod["picks"] = {"movies": [], "series": []}
+    vod.pop("library", None)   # the old per-group "show in Movies" choice: every title is listed now
+    return vod
+
+
 def in_library(provider):
-    """Picked groups whose titles show in the main Movies and TV Shows listings: (movie groups, series groups).
-    Every picked group: Channels DVR's search only finds titles listed there, so hiding them made a large provider
-    unsearchable. An older config's vod.library choice is ignored."""
+    """Groups whose titles show in the main Movies and TV Shows listings: every one. Channels DVR's search only
+    finds titles listed there, so hiding them made a large provider unsearchable."""
     movies, series = selected(provider)
     return set(movies), set(series)
+
+
+_DV = re.compile(r"\b(dolby\s*vision|dovi|dv)\b", re.IGNORECASE)
+_UHD = re.compile(r"\b(4k|uhd|2160p?)\b", re.IGNORECASE)
+
+
+def quality(name, groups=()):
+    """'DV', '4K' or 'HD' for one copy of a title, from the provider's own labels (its name and its groups). A copy
+    with no label counts as HD: that is all a provider's list tells without opening the file."""
+    text = " ".join([name or ""] + [g or "" for g in groups or ()])
+    if _DV.search(text):
+        return "DV"
+    if _UHD.search(text):
+        return "4K"
+    return "HD"
+
+
+def _copy_name(name, groups):
+    """A second copy's folder and file name: the title with its group, so both copies live side by side."""
+    from app.names import clean_name
+    tag = clean_name(groups[0]) if groups else "copy"
+    return safe_name("%s - %s" % (name, tag))
 
 
 def group_label(provider, group):
@@ -176,54 +234,96 @@ class Plan:
         self.titles = {}     # (kind, item id) -> name for the log and the Status page
         self.visible = set()         # paths shown in the main listings
         self.visible_shows = set()   # group ids shown in the main listings
+        self.picked = set()          # paths and show group ids that are hand-picks (they go to Channels DVR first)
+        self.present = {}            # "m:<movie id>" -> path, "s:<series id>" -> show group id
+        self.picked_keys = set()     # "m:<id>" / "s:<id>" of the hand-picks the plan carries itself
+        self.folders = {}            # show group id -> "TV/.coax/<pid>/<folder>/" (its episodes' path prefix)
 
 
 def plan(provider, vod, episodes, base):
-    """Every file and item the provider's picks should have."""
+    """Every file and item the provider's Add all groups and hand-picks should have in Channels DVR.
+
+    Add all groups work as they always have: every title, one copy of a title that two of them list (filed in both
+    collections). A hand-pick is one exact copy (a movie or a series id) from an available group; a pick that an Add
+    all group already carries is that group's. A pick of another copy of a title that is already there is a second
+    copy beside the first (the user picked it on purpose), in a folder named with its group. A pick goes into the
+    collection of each available group that lists it."""
     from app.providers import vod as vodcat
     pid = provider["id"]
     out = Plan()
-    movie_groups, series_groups = selected(provider)
-    out.members = {("movies", g): [] for g in movie_groups}
-    out.members.update({("series", g): [] for g in series_groups})
-    lib_movies, lib_series = in_library(provider)
-    wanted = set(movie_groups)
+    avail_m, avail_s = (set(g) for g in selected(provider))
+    all_m, all_s = add_all(provider)
+    pick_m, pick_s = picks(provider)
+    out.members = {("movies", g): [] for g in all_m}
+    out.members.update({("series", g): [] for g in all_s})
     taken = {}   # lower-case path -> the path of the copy that stands for the title
-    for movie in vod.get("movies") or []:
-        groups = [g for g in movie.get("groups") or [] if g in wanted]
-        if not groups:
-            continue
+
+    def add_movie(movie, groups, picked):
         title, year = vodcat.title_year(movie.get("name"), movie.get("year"))
         name = safe_name("%s (%s)" % (title, year) if year else title)
         rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, name, name)   # a folder each: the DVR reads a file's folder
-        key = rel.lower()
-        if key in taken:
-            rel = taken[key]   # the same title twice (another quality or group): the first copy stands for both
-        else:
-            taken[key] = rel
+        if rel.lower() in taken:
+            if not picked:
+                rel = taken[rel.lower()]   # Add all: the same title twice, the first copy stands for both
+            else:
+                base_name, n = _copy_name(name, groups), 1
+                copy = base_name
+                while True:
+                    rel = "Movies/%s/%s/%s/%s.strm" % (SUBDIR, pid, copy, copy)
+                    if rel.lower() not in taken:
+                        break
+                    n += 1
+                    copy = safe_name("%s %d" % (base_name, n))
+        if rel.lower() not in taken:
+            taken[rel.lower()] = rel
             out.files[rel] = "%s/vod/%s/m/%s.%s\n" % (base, pid, movie["id"], movie.get("ext") or "mp4")
             out.meta[rel] = {"kind": "movie", "title": title, "year": year, "tmdb": movie.get("tmdb") or "",
                              "image": movie.get("logo") or "", "plot": movie.get("plot") or "",
                              "genres": _genres(movie.get("genre")), "added": movie.get("added") or 0}
             out.titles[("movie", str(movie["id"]))] = "%s (%s)" % (title, year) if year else title
-        for group in groups:
-            if rel not in out.members[("movies", group)]:
-                out.members[("movies", group)].append(rel)
-        if lib_movies.intersection(groups):
             out.visible.add(rel)
-    wanted = set(series_groups)
+            if picked:
+                out.picked.add(rel)
+                out.picked_keys.add("m:%s" % movie["id"])
+        out.present["m:%s" % movie["id"]] = rel
+        for group in groups:
+            members = out.members.setdefault(("movies", group), [])
+            if rel not in members:
+                members.append(rel)
+
+    movies = vod.get("movies") or []
+    for movie in movies:
+        groups = [g for g in movie.get("groups") or [] if g in all_m]
+        if groups:
+            add_movie(movie, groups, False)
+    for movie in movies:
+        mid = str(movie.get("id"))
+        if mid in pick_m and "m:" + mid not in out.present:
+            groups = [g for g in movie.get("groups") or [] if g in avail_m]
+            if groups:
+                add_movie(movie, groups, True)
+
     show_dirs = {}
-    for show in vod.get("series") or []:
-        groups = [g for g in show.get("groups") or [] if g in wanted]
-        if not groups:
-            continue
+
+    def add_show(show, groups, picked):
         title, year = vodcat.title_year(show.get("name"), show.get("year") or str(_year(show.get("release")) or ""))
         show_name = "%s (%s)" % (title, year) if year else title
         folder = safe_name(show_name)
         if folder.lower() in show_dirs and show_dirs[folder.lower()] != show["id"]:
-            continue   # two series with one name: keep the first, the DVR would merge them anyway
+            if not picked:
+                # Add all: two series with one name, keep the first (the DVR would merge them anyway)
+                out.present["s:%s" % show["id"]] = group_id(pid, show_dirs[folder.lower()])
+                return
+            base_name, n = _copy_name(folder, groups), 1
+            folder = base_name
+            while folder.lower() in show_dirs:
+                n += 1
+                folder = safe_name("%s %d" % (base_name, n))
         show_dirs[folder.lower()] = show["id"]
         gid = group_id(pid, show["id"])
+        out.folders[gid] = "TV/%s/%s/%s/" % (SUBDIR, pid, folder)
+        if picked:
+            out.picked_keys.add("s:%s" % show["id"])
         seen = set()
         added = show.get("modified") or 0
         for ep in sorted(episodes.get(show["id"]) or [], key=lambda e: (e.get("season") or 0, e.get("episode") or 0)):
@@ -238,17 +338,32 @@ def plan(provider, vod, episodes, base):
                              "image": ep.get("image") or "", "air": ep.get("air") or "",
                              "secs": ep.get("secs") or 0, "added": added}
             out.titles[("episode", str(ep["id"]))] = "%s S%02dE%02d" % (show_name, season, number)
-            if lib_series.intersection(groups):
-                out.visible.add(rel)
+            out.visible.add(rel)
+            if picked:
+                out.picked.add(rel)
+        out.present["s:%s" % show["id"]] = gid
         if seen:
             out.shows[gid] = {"name": title, "year": year, "tmdb": show.get("tmdb") or "",
                               "image": show.get("logo") or "", "fanart": show.get("backdrop") or "",
                               "plot": show.get("plot") or "", "genres": _genres(show.get("genre")),
                               "release": show.get("release") or "", "added": added}
             for group in groups:
-                out.members[("series", group)].append(gid)   # a show collection holds the show itself
-            if lib_series.intersection(groups):
-                out.visible_shows.add(gid)
+                out.members.setdefault(("series", group), []).append(gid)   # a show collection holds the show itself
+            out.visible_shows.add(gid)
+            if picked:
+                out.picked.add(gid)
+
+    series = vod.get("series") or []
+    for show in series:
+        groups = [g for g in show.get("groups") or [] if g in all_s]
+        if groups:
+            add_show(show, groups, False)
+    for show in series:
+        sid = str(show.get("id"))
+        if sid in pick_s and "s:" + sid not in out.present:
+            groups = [g for g in show.get("groups") or [] if g in avail_s]
+            if groups:
+                add_show(show, groups, True)
     return out
 
 
@@ -372,6 +487,10 @@ def best_match(results, title, year, name_keys=("title", "original_title"), date
     return best
 
 
+class _Preempted(Exception):
+    """New hand-picks arrived while a long Add all import ran: the sync starts over with the picks first."""
+
+
 class Library:
     """Creates the provider's items in the DVR, matches them on TMDB, keeps the collections and sections."""
 
@@ -385,6 +504,7 @@ class Library:
         self._wake = threading.Event()
         self._match_wake = threading.Event()
         self._wanted = set()
+        self._urgent = set()                   # providers with new hand-picks: a running import yields to them
         self._stop = threading.Event()
         self._thread = None
         self._matcher = None
@@ -441,7 +561,7 @@ class Library:
     def status(self, provider_id):
         ok, why = imports_ready(self.imports_dir)
         st = dict(self.state.get(str(provider_id)) or {})
-        for key in ("collections", "files", "groups", "todo", "hidden", "hidden_shows"):
+        for key in ("collections", "files", "groups", "todo", "hidden", "hidden_shows", "present", "where", "retry"):
             st.pop(key, None)
         todo = (self.state.get(str(provider_id)) or {}).get("todo") or {}
         st.update(imports_ok=ok, imports_message=why, running=self.running.get(str(provider_id)),
@@ -491,12 +611,16 @@ class Library:
             return list(pool.map(lambda item: None if self._stop.is_set() else func(item), items))
 
     # -- items ------------------------------------------------------------------------------------------------------
-    def _create(self, cfg, pid, pl, rels, refresh=None):
+    def _create(self, cfg, pid, pl, rels, refresh=None, preemptible=False):
         """Create these files' items in the DVR. A new show's first episode goes alone (it creates the group), then
         coax names the group; the rest go in parallel. `refresh` (the collections update) runs every
-        COLLECTIONS_EVERY seconds meanwhile, so the collections fill as the titles arrive."""
+        COLLECTIONS_EVERY seconds meanwhile, so the collections fill as the titles arrive.
+
+        `preemptible`: new hand-picks (request(pid, urgent=True)) stop this run between items with _Preempted, so a
+        pick never waits behind a long Add all import; the sync then starts over with the picks first."""
         st = self._pstate(pid)
         total, done = len(rels), [0]
+        stopped = [False]
         failed = []
         refreshing = threading.Lock()
         last = [time.monotonic()]
@@ -513,6 +637,9 @@ class Library:
                 refreshing.release()
 
         def make(rel):
+            if preemptible and (stopped[0] or pid in self._urgent):
+                stopped[0] = True
+                return
             meta = pl.meta[rel]
             if meta["kind"] == "movie" and needs_lookup(meta):
                 meta = with_tmdb(meta, self._search_movie(cfg, pid, meta))
@@ -534,7 +661,8 @@ class Library:
                     st["todo"]["f:" + fid] = [meta.get("tmdb") or "", meta["title"], meta.get("year") or ""]
                 done[0] += 1
                 if done[0] % 200 == 0 or done[0] == total:
-                    self.running[pid] = "adding to Channels DVR (%d of %d)" % (done[0], total)
+                    self.running[pid] = "%s to Channels DVR (%d of %d)" % (
+                        "adding" if preemptible else "adding hand-picked titles", done[0], total)
                 self._save_soon()
             tick()
 
@@ -562,6 +690,8 @@ class Library:
             log.warning("VOD provider %s: %d of %d items not added to Channels DVR (first error: %s); the next sync "
                         "tries again", pid, len(failed), total, failed[0])
         self._save_state()
+        if stopped[0]:
+            raise _Preempted()
 
     def _search_handle(self, pid):
         """A movie item of coax's to run TMDB searches through: the DVR's search takes any item's id with ?q=."""
@@ -893,6 +1023,11 @@ class Library:
             try:
                 self._sync(pid)
                 st.update(error="", last_sync=started)
+            except _Preempted:
+                # Hand-picks came in: start over at once with them first. Not an error, and not a finished sync.
+                log.info("VOD provider %s: new hand-picks first; the rest carries on right after them", pid)
+                self._wanted.add(pid)
+                self._wake.set()
             except Exception as exc:  # noqa: BLE001 - a VOD sync must never take coax down
                 from app.providers.net import redact
                 cfg = self.store.get()
@@ -908,6 +1043,7 @@ class Library:
 
     def _sync(self, pid):
         from app.providers import vod as vodcat, catalog
+        self._urgent.discard(pid)   # this run starts with every pick there is now
         cfg = self.store.get()
         provider = next((p for p in cfg.get("providers") or [] if p.get("id") == pid), None)
         movie_groups, series_groups = selected(provider or {})
@@ -916,13 +1052,7 @@ class Library:
             return
         if provider.get("enabled", True) is False:
             return   # switched off is a pause: the library stays (watch state, resume), nothing is fetched
-        ok, why = imports_ready(self.imports_dir)
-        if not ok:
-            raise RuntimeError(why)
-        base = ((cfg.get("server") or {}).get("base_url") or "").strip().rstrip("/")
-        if not base:
-            raise RuntimeError("set coax's Base URL in Settings first: the Stream Files point at it")
-        self._migrate(cfg, pid)
+        # The catalog first: the On demand page lists the available groups' titles even when nothing is picked.
         self.running[pid] = "reading the provider's movies and series"
         vod = vodcat.load(pid)
         hours = vod_hours(provider)
@@ -931,20 +1061,46 @@ class Library:
                 (vod is None or age is None or (hours is not None and age >= hours)):
             vod = vodcat.refresh(provider)
         vod = vod or {}
-        wanted = set(series_groups)
-        # Newest first (the panel's last_modified): recently added and airing shows land in the first batch.
-        shows = sorted((s for s in vod.get("series") or [] if wanted.intersection(s.get("groups") or [])),
-                       key=lambda s: -(s.get("modified") or 0))
+        all_m, all_s = add_all(provider)
+        pick_m, pick_s = picks(provider)
+        if not (all_m or all_s or pick_m or pick_s):
+            if self.state.get(pid, {}).get("files") or self.state.get(pid, {}).get("collections"):
+                self.remove(pid, cfg)   # the last title was taken out: clear Channels DVR and the files
+            return
+        ok, why = imports_ready(self.imports_dir)
+        if not ok:
+            raise RuntimeError(why)
+        base = ((cfg.get("server") or {}).get("base_url") or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("set coax's Base URL in Settings first: the Stream Files point at it")
+        self._migrate(cfg, pid)
+        if self._respect_deletions(cfg, provider):
+            cfg = self.store.get()   # picks the user deleted in Channels DVR are no longer picked
+            provider = next((p for p in cfg.get("providers") or [] if p.get("id") == pid), provider)
+            pick_m, pick_s = picks(provider)
+        wanted, avail = set(all_s), set(series_groups)
+        # Picked shows first (they go to Channels DVR before any Add all backlog), then newest first (the panel's
+        # last_modified): recently added and airing shows land in the first batch.
+        shows = sorted((s for s in vod.get("series") or [] if wanted.intersection(s.get("groups") or [])
+                        or (str(s.get("id")) in pick_s and avail.intersection(s.get("groups") or []))),
+                       key=lambda s: (str(s.get("id")) not in pick_s, -(s.get("modified") or 0)))
         st = self._pstate(pid)
+        known = vodcat.episodes_for(provider, shows, fetch=False) if shows else {}
+        # A picked show's episodes are read now (a few calls), so it does not wait for the next batch.
+        picked_shows = [s for s in shows if str(s.get("id")) in pick_s and not known.get(s["id"])]
+        if picked_shows:
+            self.running[pid] = "reading the episodes of hand-picked shows"
+            known.update(vodcat.episodes_for(provider, picked_shows, max_fetch=50))
         # Movies first: the movies and every show whose episodes are already known go to Channels DVR now, before
         # any episode list is asked for (that can take half an hour on a big catalog).
-        known = vodcat.episodes_for(provider, shows, fetch=False) if shows else {}
         self._publish(cfg, provider, vod, known, base)
         # Then the episode lists, in batches: each batch goes to Channels DVR as soon as it is read.
         st.pop("continue_at", None)
         st.pop("series_left", None)
         spent, info = 0.0, {}
         while shows and spent < EPISODE_BUDGET and not self._stop.is_set():
+            if pid in self._urgent:
+                raise _Preempted()
             started = time.monotonic()
 
             def progress(done, total):
@@ -986,11 +1142,22 @@ class Library:
         # Newest first, so what the provider added last is in the library first (movies before episodes: _create).
         new = [rel for rel in pl.files if rel not in st["files"]]
         new.sort(key=lambda r: -(pl.meta[r].get("added") or 0))
+        picked = [rel for rel in new if rel in pl.picked]
+        rest = [rel for rel in new if rel not in pl.picked]
         started = time.monotonic()
-        if new:
-            self.running[pid] = "adding to Channels DVR (0 of %d)" % len(new)
-            self._collections(cfg, provider, pl.members)   # the collections and section exist from the start...
-            self._create(cfg, pid, pl, new, refresh=lambda: self._collections(cfg, provider, pl.members))
+        try:
+            if new:
+                self._collections(cfg, provider, pl.members)   # the collections and section exist from the start...
+            if picked:   # hand-picks never wait behind an Add all import
+                self.running[pid] = "adding hand-picked titles to Channels DVR (0 of %d)" % len(picked)
+                self._create(cfg, pid, pl, picked)
+                self._collections(cfg, provider, pl.members)
+            if rest:
+                self.running[pid] = "adding to Channels DVR (0 of %d)" % len(rest)
+                self._create(cfg, pid, pl, rest, refresh=lambda: self._collections(cfg, provider, pl.members),
+                             preemptible=True)
+        finally:
+            self._note_present(pid, pl)
         self._visibility(cfg, pid, pl)
         log.info("VOD provider %s: %d movies, %d episodes of %d shows; %d added to Channels DVR in %.0fs, %d removed",
                  pid, st["movies"], st["episodes"], st["shows"], sum(1 for r in new if st["files"].get(r)),
@@ -999,6 +1166,96 @@ class Library:
         self._collections(cfg, provider, pl.members)
         self._save_state()
         self._match_wake.set()
+
+    def _note_present(self, pid, pl):
+        """Which titles are in Channels DVR now ("m:<id>", "s:<id>"), for the On demand page's Content list."""
+        st = self._pstate(pid)
+        with self._state_lock:
+            st["present"] = sorted(k for k, v in pl.present.items()
+                                   if (st["files"].get(v) if k.startswith("m:") else v in st["groups"]))
+            # Where each hand-pick lives, so one deleted in Channels DVR can be forgotten (_respect_deletions).
+            st["where"] = {k: (pl.present[k] if k.startswith("m:") else pl.folders.get(pl.present[k], ""))
+                           for k in pl.picked_keys if k in pl.present}
+
+    def present(self, pid):
+        """The set of "m:<id>" / "s:<id>" keys of a provider's titles that are in Channels DVR."""
+        return set((self.state.get(str(pid)) or {}).get("present") or [])
+
+    def _respect_deletions(self, cfg, provider):
+        """A hand-picked title the user deleted inside Channels DVR is no longer picked (it is never added back).
+        True when a pick was dropped. Add all titles keep their old behavior: coax does not re-add what was deleted."""
+        pid = provider["id"]
+        st = self._pstate(pid)
+        pick_m, pick_s = picks(provider)
+        if not (pick_m or pick_s) or not ((cfg.get("channels_dvr") or {}).get("url") or "").strip():
+            return False
+        from app import channels_dvr
+        present = {}
+        for key in (st.get("present") or []):
+            kind, _sep, ident = key.partition(":")
+            if (kind == "m" and ident in pick_m) or (kind == "s" and ident in pick_s):
+                present[key] = ident
+        if not present:
+            return False
+        where = st.get("where") or {}   # "m:<id>" -> movie path, "s:<id>" -> the show's folder path prefix
+        gone = []
+
+        def check(key):
+            kind, ident = key.split(":", 1)
+            try:
+                if kind == "m":
+                    fid = st["files"].get(where.get(key) or "")
+                    if not fid:
+                        return
+                    item = self._call(cfg, "GET", "/dvr/files/%s" % fid)
+                else:
+                    # A show is deleted in Channels DVR when every one of its episodes is (or the show is gone).
+                    item = self._call(cfg, "GET", "/dvr/groups/%s/files" % group_id(pid, ident))
+                    if isinstance(item, list) and all(isinstance(f, dict) and f.get("Deleted") for f in item):
+                        gone.append(key)
+                    return
+            except channels_dvr.DvrError as exc:
+                if "answered 404 " in str(exc):
+                    gone.append(key)
+                return
+            except Exception:  # noqa: BLE001 - unknown: keep the pick
+                return
+            if isinstance(item, dict) and item.get("Deleted"):
+                gone.append(key)
+        self._pool(CREATE_WORKERS, check, sorted(present))
+        if not gone:
+            return False
+        gone_m = {k[2:] for k in gone if k.startswith("m:")}
+        gone_s = {k[2:] for k in gone if k.startswith("s:")}
+
+        def mutate(c):
+            for p in c.get("providers") or []:
+                if p.get("id") == pid and isinstance(p.get("vod"), dict):
+                    vod = materialize(p["vod"])
+                    vod["picks"] = {"movies": [i for i in vod["picks"].get("movies") or [] if str(i) not in gone_m],
+                                    "series": [i for i in vod["picks"].get("series") or [] if str(i) not in gone_s]}
+                    p["vod"] = vod
+        self.store.update(mutate)
+        # Forget them here too: they are gone from Channels DVR, so nothing must try to delete them again, and a
+        # later pick of the same title adds it afresh.
+        with self._state_lock:
+            for key in gone:
+                spot = where.pop(key, "") or ""
+                if key.startswith("m:"):
+                    fid = st["files"].pop(spot, None)
+                    if fid:
+                        st["todo"].pop("f:" + str(fid), None)
+                else:
+                    gid = group_id(pid, key[2:])
+                    st["groups"].pop(gid, None)
+                    st["todo"].pop("g:" + gid, None)
+                    for rel in [r for r in st["files"] if spot and r.startswith(spot)]:
+                        st["todo"].pop("f:" + str(st["files"].pop(rel)), None)
+            st["where"] = where
+            st["present"] = [k for k in st.get("present") or [] if k not in set(gone)]
+        log.info("VOD provider %s: %d hand-picked titles were deleted in Channels DVR; they are no longer picked",
+                 pid, len(gone))
+        return True
 
     def remove(self, pid, cfg=None):
         """Take a provider's VOD out of the DVR: its items, shows, files, collections and section."""
@@ -1035,20 +1292,25 @@ class Library:
         self.state.pop(pid, None)
 
     # -- schedule ---------------------------------------------------------------------------------------------------
-    def request(self, provider_id=None):
-        """Sync one provider (or every provider with picks) soon."""
+    def request(self, provider_id=None, urgent=False):
+        """Sync one provider (or every provider) soon. `urgent` (new hand-picks): a running Add all import of that
+        provider stops between titles and the sync starts over with the picks first."""
         cfg = self.store.get()
         ids = [provider_id] if provider_id else [p["id"] for p in cfg.get("providers") or []]
         self._wanted.update(str(i) for i in ids)
+        if urgent and provider_id:
+            self._urgent.add(str(provider_id))
         self._wake.set()
 
     def _due(self, provider):
         movie_groups, series_groups = selected(provider)
         st = self.state.get(provider["id"]) or {}
         if not (movie_groups or series_groups):
-            return bool(st)   # picks cleared: clean up once
+            return bool(st)   # every group made unavailable: clean up once
         if st.get("continue_at") and time.time() >= st["continue_at"]:
             return True   # episode lists still to read
+        if st.get("files") and "present" not in st:
+            return True   # an older build's library: learn which titles are in Channels DVR for the On demand page
         if os.path.isdir(os.path.join(self.imports_dir, "Movies", OLD_SUBDIR, provider["id"])) or \
                 os.path.isdir(os.path.join(self.imports_dir, "TV", OLD_SUBDIR, provider["id"])):
             return True   # the earlier layout is still there: move over now

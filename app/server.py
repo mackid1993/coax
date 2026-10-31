@@ -25,6 +25,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from app import config as configmod
+from app import ondemand
 
 log = logging.getLogger("coax.server")
 
@@ -32,6 +33,7 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 MAX_BODY = 16 * 1024 * 1024
 JOB_KEYS = ("id", "state", "done", "total", "phase", "ids", "started", "finished", "error")
 STREAM_CHUNK_TIMEOUT = 60
+ONDEMAND_PACE = 150          # titles a minute Channels DVR takes in (measured), for the Add all estimate
 DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 LOCAL_ADDRESSES = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
@@ -217,6 +219,9 @@ class App:
         self.dvr = None             # app.channels_dvr.Syncer, set by main (created on demand otherwise)
         self.vod = None             # app.vod.Library, set by main
         self.vod_plays = None       # app.vodproxy.Plays, set by main
+        # The On demand page: each provider's titles in memory, and its unsaved changes on disk (like suggestions).
+        self.ondemand_titles = ondemand.Catalogs()
+        self.ondemand_draft = ondemand.Draft(store.data_dir)
         self.health = None          # app.feedhealth.FeedHealth, set by main
         self.automatch_job = None   # {id, state, done, total, phase, started, finished, result, error}
         self.automatch_lock = threading.Lock()
@@ -648,6 +653,12 @@ class Handler(BaseHTTPRequestHandler):
         ("GET", r"/api/providers/([A-Za-z0-9_-]+)/vod", "h_provider_vod"),
         ("PUT", r"/api/providers/([A-Za-z0-9_-]+)/vod", "h_provider_vod_save"),
         ("POST", r"/api/providers/([A-Za-z0-9_-]+)/vod/sync", "h_provider_vod_sync"),
+        ("GET", r"/api/ondemand", "h_ondemand"),
+        ("GET", r"/api/ondemand/titles", "h_ondemand_titles"),
+        ("GET", r"/api/ondemand/draft", "h_ondemand_draft_get"),
+        ("PUT", r"/api/ondemand/draft", "h_ondemand_draft_put"),
+        ("POST", r"/api/ondemand/save", "h_ondemand_save"),
+        ("POST", r"/api/ondemand/add-all", "h_ondemand_add_all"),
         ("GET", r"/api/catalog/streams", "h_catalog_streams"),
         ("GET", r"/api/channels", "h_channels_list"),
         ("POST", r"/api/channels", "h_channels_create"),
@@ -1236,49 +1247,262 @@ class Handler(BaseHTTPRequestHandler):
                                % redact(getattr(exc, "args", [exc])[0], secrets_of(provider)))
             counts = vodcat.summary(provider_id)
         counts = counts or {}
-        picks = provider.get("vod") or {}
+        vod = provider.get("vod") or {}
+        all_m, all_s = ondemand.vodlib.add_all(provider)
+        adding = {"movies": set(all_m), "series": set(all_s)}
         out = {"provider": provider_id, "fetched_at": counts.get("fetched_at")}
-        shown = picks.get("library") if isinstance(picks.get("library"), dict) else {}
         for kind in ("movies", "series"):
-            chosen = set(picks.get(kind) or [])
-            lib = set(shown.get(kind) or [])
-            rows = [dict(row, selected=row["name"] in chosen, library=row["name"] in lib)
+            chosen = set(vod.get(kind) or [])
+            rows = [dict(row, selected=row["name"] in chosen, add_all=row["name"] in adding[kind])
                     for row in counts.get(kind) or []]
-            rows += [{"name": g, "count": 0, "selected": True, "library": g in lib} for g in picks.get(kind) or []
-                     if g not in {r["name"] for r in rows}]
+            rows += [{"name": g, "count": 0, "selected": True, "add_all": g in adding[kind]}
+                     for g in vod.get(kind) or [] if g not in {r["name"] for r in rows}]
             out[kind] = rows
         out["library"] = self.app.vod.status(provider_id) if self.app.vod is not None else None
         return out
 
     def h_provider_vod_save(self, provider_id):
+        """Which of the provider's movie and series groups are available on the On demand page. A group made
+        unavailable leaves Channels DVR (its Add all and its hand-picks go); a group made available adds nothing
+        by itself: its titles show in the On demand catalog to be picked, or added whole with Add all."""
         body = self._body_object()
-        picks = {}
+        groups = {}
         for kind in ("movies", "series"):
             value = body.get(kind, [])
             if not isinstance(value, list) or not all(isinstance(g, str) for g in value):
                 raise bad_request("%s must be a list of group names" % kind)
-            picks[kind] = list(dict.fromkeys(value))
-        # Groups whose titles also show in Movies and TV Shows (the rest live in their collections and section).
-        lib = body.get("library", None)
-        if lib is not None:
-            if not isinstance(lib, dict) or not all(isinstance(lib.get(k, []), list)
-                                                    and all(isinstance(g, str) for g in lib.get(k, []))
-                                                    for k in ("movies", "series")):
-                raise bad_request("library must hold lists of movie and series group names")
-            lib = {k: [g for g in dict.fromkeys(lib.get(k, [])) if g in picks[k]] for k in ("movies", "series")}
+            groups[kind] = list(dict.fromkeys(value))
+        titles = self.app.ondemand_titles
 
         def mutate(cfg):
             provider = find_provider(cfg, provider_id)
-            old = provider.get("vod") if isinstance(provider.get("vod"), dict) else {}
-            kept = lib if lib is not None else {k: [g for g in (old.get("library") or {}).get(k, []) if g in picks[k]]
-                                                for k in ("movies", "series")}
-            provider["vod"] = dict(picks, library=kept)
+            vod = ondemand.vodlib.materialize(provider.get("vod"))
+            vod.update(groups)
+            vod["all"] = {k: [g for g in vod["all"].get(k) or [] if g in groups[k]] for k in ("movies", "series")}
+            catalog, _by_key = titles.get(provider_id)
+            offered = {"m": set(), "s": set()}
+            for t in catalog:
+                if set(groups["movies" if t.kind == "m" else "series"]).intersection(t.groups):
+                    offered[t.kind].add(t.id)
+            if catalog:   # without a catalog yet, nothing can be told apart: keep the picks
+                vod["picks"] = {"movies": [i for i in vod["picks"].get("movies") or [] if str(i) in offered["m"]],
+                                "series": [i for i in vod["picks"].get("series") or [] if str(i) in offered["s"]]}
+            provider["vod"] = vod
         self.app.store.update(mutate)
-        log.info("provider %s: %d movie and %d series groups picked for Channels DVR", provider_id,
-                 len(picks["movies"]), len(picks["series"]))
+        log.info("provider %s: %d movie and %d series groups available for video on demand", provider_id,
+                 len(groups["movies"]), len(groups["series"]))
         if self.app.vod is not None:
             self.app.vod.request(provider_id)
         return self.h_provider_vod(provider_id)
+
+    # ------------------------------------------------------------ on demand page
+    def _ondemand_providers(self, cfg):
+        """Providers with at least one available movie or series group."""
+        out = []
+        for p in cfg.get("providers") or []:
+            m, s = ondemand.vodlib.selected(p)
+            if m or s:
+                out.append(p)
+        return out
+
+    def h_ondemand(self):
+        """The page's frame: each provider's available groups (counts, Add all, hand-picks) and library status."""
+        cfg = self.app.store.get()
+        providers = []
+        for p in self._ondemand_providers(cfg):
+            titles, _by_key = self.app.ondemand_titles.get(p["id"])
+            choices = ondemand.Choices(p)
+            present = self.app.vod.present(p["id"]) if self.app.vod is not None else set()
+            counts = {}
+            for t in titles:
+                if not choices.offered(t):
+                    continue
+                via = choices.via(t)
+                for g in t.groups:
+                    if g not in choices.avail[t.kind]:
+                        continue
+                    c = counts.setdefault((t.kind, g), [0, 0, 0])
+                    c[0] += 1
+                    if via == "pick":
+                        c[1] += 1
+                    if via and t.key in present:
+                        c[2] += 1
+            groups = {}
+            for kind, name in (("m", "movies"), ("s", "series")):
+                order = list(p["vod"].get(name) or []) if isinstance(p.get("vod"), dict) else []
+                groups[name] = [{"name": g, "count": counts.get((kind, g), [0, 0, 0])[0],
+                                 "picked": counts.get((kind, g), [0, 0, 0])[1],
+                                 "in_channels": counts.get((kind, g), [0, 0, 0])[2],
+                                 "add_all": g in choices.all[kind]} for g in order]
+            providers.append({"id": p["id"], "name": p.get("name") or p["id"],
+                              "enabled": p.get("enabled", True) is not False,
+                              "has_catalog": bool(titles), "groups": groups,
+                              "library": self.app.vod.status(p["id"]) if self.app.vod is not None else None})
+        return {"providers": providers, "running": self.app.vod is not None, "per_minute": ONDEMAND_PACE}
+
+    def _ondemand_rows(self, cfg, draft_pending):
+        """(provider id, Title, Choices, present, counts, draft changes) for every catalog title the filters keep."""
+        q = self.query
+        view = q.get("view") or "catalog"
+        if view not in ("catalog", "content"):
+            raise bad_request("view must be catalog or content")
+        kind = {"": "", "movies": "m", "series": "s"}.get(q.get("kind") or "", None)
+        if kind is None:
+            raise bad_request("kind must be movies or series")
+        flt = q.get("filter") or ""
+        if flt not in ("", "duplicates", "pending", "picked", "add_all", "draft"):
+            raise bad_request("unknown filter")
+        group = q.get("group") or ""
+        words = ondemand.query_words(q.get("q") or "")
+        providers = self._ondemand_providers(cfg)
+        if q.get("provider"):
+            providers = [p for p in providers if p["id"] == q["provider"]]
+        out = []
+        for p in providers:
+            pid = p["id"]
+            titles, by_key = self.app.ondemand_titles.get(pid)
+            choices = ondemand.Choices(p)
+            present = self.app.vod.present(pid) if self.app.vod is not None else set()
+            changes = draft_pending.get(pid) or {}
+            extra = [by_key[k] for k, c in changes.items() if c == "add" and k in by_key]
+            counts = ondemand.wanted_counts(titles, choices, extra)
+            for t in titles:
+                if not choices.offered(t) or not ondemand.matches(t, kind, group, words):
+                    continue
+                via = choices.via(t)
+                change = changes.get(t.key, "")
+                if view == "content" and not via and change != "add":
+                    continue
+                if flt:
+                    r = ondemand.row(pid, t, choices, present, counts, changes)
+                    if flt == "duplicates" and not r["duplicate"]:
+                        continue
+                    if flt == "pending" and not r["pending"]:
+                        continue
+                    if flt == "picked" and via != "pick":
+                        continue
+                    if flt == "add_all" and via != "all":
+                        continue
+                    if flt == "draft" and not change:
+                        continue
+                out.append((pid, t, choices, present, counts, changes))
+        if len(providers) > 1:
+            out.sort(key=lambda r: -ondemand._num(r[1].added))   # newest first across providers too
+        return out
+
+    def h_ondemand_titles(self):
+        """One page of the Catalog (every title of the available groups) or the Content (every title that is or
+        will be in Channels DVR, Add all titles included), newest first. ?keys=1 lists every selectable key that
+        matches instead (select all across pages): Add all titles are never selectable."""
+        cfg = self.app.store.get()
+        with self.app.ondemand_draft.lock:
+            pending = dict(self.app.ondemand_draft.data.get("pending") or {})
+        rows = self._ondemand_rows(cfg, pending)
+        if self.query.get("keys") in ("1", "true"):
+            keys = [{"provider": pid, "key": t.key} for pid, t, choices, _p, _c, _d in rows
+                    if choices.via(t) != "all"]
+            return {"total": len(keys), "keys": keys}
+        offset = parse_int(self.query.get("offset"), "offset", 0, 0)
+        limit = parse_int(self.query.get("limit"), "limit", 100, 1, ondemand.MAX_LIMIT)
+        items = [ondemand.row(*r) for r in rows[offset:offset + limit]]
+        return {"total": len(rows), "offset": offset, "limit": limit, "items": items}
+
+    def h_ondemand_draft_get(self):
+        """The unsaved changes, tidied: changes to titles the provider no longer offers are dropped, with a note."""
+        cfg = self.app.store.get()
+        d = self.app.ondemand_draft
+        with d.lock:
+            pending = d.data.get("pending") or {}
+            kept, notes = ondemand.tidy(pending, cfg, self.app.ondemand_titles)
+            if kept != pending:
+                try:
+                    d.write(kept, now_iso())
+                except OSError as exc:
+                    log.warning("could not save the On demand page's unsaved changes: %s", exc)
+            return {"rev": d.data.get("rev", 0), "pending": d.data.get("pending") or {},
+                    "saved_at": d.data.get("saved_at"), "notes": notes}
+
+    def h_ondemand_draft_put(self):
+        """Keep the unsaved changes as they are (never applies them: Save does). `rev` must match the stored one,
+        so a stale page (another tab or device) cannot overwrite newer work."""
+        body = self._body_object()
+        pending, rev = body.get("pending"), body.get("rev")
+        if not ondemand.valid_pending(pending):
+            raise bad_request("pending must be an object of provider id -> {title key: add or remove}")
+        if not isinstance(rev, int) or isinstance(rev, bool):
+            raise bad_request("rev is required")
+        pending = {pid: changes for pid, changes in pending.items() if changes}
+        d = self.app.ondemand_draft
+        with d.lock:
+            if rev != d.data.get("rev", 0):
+                raise ApiError(409, "the unsaved changes changed in another window")
+            data = d.write(pending, now_iso())
+        return {"rev": data["rev"], "saved_at": data["saved_at"]}
+
+    def h_ondemand_save(self):
+        """Apply the unsaved changes: adds become hand-picks (they go to Channels DVR ahead of any Add all import),
+        removes leave Channels DVR. The draft is cleared."""
+        body = self._body_object()
+        rev = body.get("rev")
+        if not isinstance(rev, int) or isinstance(rev, bool):
+            raise bad_request("rev is required")
+        d = self.app.ondemand_draft
+        with d.lock:
+            if rev != d.data.get("rev", 0):
+                raise ApiError(409, "the unsaved changes changed in another window")
+            cfg = self.app.store.get()
+            kept, notes = ondemand.tidy(d.data.get("pending") or {}, cfg, self.app.ondemand_titles)
+            result = {}
+
+            def mutate(c):
+                result.update(ondemand.apply(c, kept))
+            if kept:
+                self.app.store.update(mutate)
+            data = d.write({}, now_iso())
+        added = sum(a for a, _r in result.values())
+        removed = sum(r for _a, r in result.values())
+        log.info("On demand: saved %d to add and %d to remove", added, removed)
+        if self.app.vod is not None:
+            for pid in result:
+                self.app.vod.request(pid, urgent=True)
+        return {"rev": data["rev"], "added": added, "removed": removed, "notes": notes}
+
+    def h_ondemand_add_all(self):
+        """Switch a group's Add all on or off. Applies at once (the page confirms first): {provider, kind, group,
+        on}. Unsaved changes inside that group are dropped (Add all takes the whole group in, or out)."""
+        body = self._body_object()
+        pid, kind, group, on = body.get("provider"), body.get("kind"), body.get("group"), body.get("on")
+        if not isinstance(pid, str) or kind not in ("movies", "series") or not isinstance(group, str) \
+                or not isinstance(on, bool):
+            raise bad_request("provider, kind (movies or series), group and on (true or false) are required")
+        k = "m" if kind == "movies" else "s"
+        titles = self.app.ondemand_titles
+
+        def mutate(cfg):
+            find_provider(cfg, pid)
+            try:
+                ondemand.set_add_all(cfg, pid, k, group, on, titles)
+            except ValueError as exc:
+                raise bad_request(str(exc))
+        self.app.store.update(mutate)
+        _catalog, by_key = titles.get(pid)
+        d = self.app.ondemand_draft
+        with d.lock:
+            pending = {p: dict(c) for p, c in (d.data.get("pending") or {}).items()}
+            mine = pending.get(pid) or {}
+            inside = [key for key in mine if key in by_key and by_key[key].kind == k and group in by_key[key].groups]
+            if inside:
+                for key in inside:
+                    mine.pop(key)
+                pending = {p: c for p, c in pending.items() if c}
+                try:
+                    d.write(pending, now_iso())
+                except OSError as exc:
+                    log.warning("could not save the On demand page's unsaved changes: %s", exc)
+        log.info("On demand: Add all %s for %s group %r of provider %s", "on" if on else "off", kind, group, pid)
+        if self.app.vod is not None:
+            self.app.vod.request(pid)
+        return {"ok": True, "dropped": len(inside)}
 
     def h_provider_vod_sync(self, provider_id):
         find_provider(self.app.store.get(), provider_id)
@@ -2297,7 +2521,16 @@ class Handler(BaseHTTPRequestHandler):
                 log.warning("hub status failed: %s", exc)
         off = {p["id"] for p in cfg["providers"] if p.get("enabled", True) is False}
         shown = [c for c in cfg["channels"] if not switched_off(cfg, c, off)]
+        plays = []
+        if self.app.vod_plays is not None:
+            try:
+                now = time.time()
+                plays = [dict(p, seconds=round(max(0.0, now - p.pop("started")), 1))
+                         for p in self.app.vod_plays.status()]
+            except Exception as exc:  # noqa: BLE001
+                log.warning("video on demand status failed: %s", exc)
         return {
+            "vod_plays": plays,
             "uptime": round(time.time() - self.app.started, 1),
             "hub_running": hub is not None,
             "sessions": sessions,
