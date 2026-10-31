@@ -26,9 +26,9 @@ only do one.
 Each file holds coax's own address (<Base URL>/vod/<provider>/<m|e>/<id>.<ext>), never the provider's: the login
 stays out of the DVR, and every play goes through coax, which holds a line slot for it (app/vodproxy.py).
 
-coax keeps one DVR collection per picked group and one Personal Section per provider showing them. By default the
-titles are Hidden in the main Movies and TV Shows listings and live in their section; a group can be set to show
-its titles with the user's own library (vod.library). Removed titles are deleted from the DVR one by one, never with
+coax keeps one DVR collection per picked group and one Personal Section per provider showing them. The titles are
+always listed in the main Movies and TV Shows too: Channels DVR's search only finds titles there, and a large
+provider is unusable without search. Titles an earlier version set to Hidden are shown again on the next sync. Removed titles are deleted from the DVR one by one, never with
 a DVR-wide prune. Nothing outside Movies/.coax and TV/.coax is written or removed, except the scanner-imported files
 of the earlier layout (Movies/coax, TV/coax), which are taken out of the DVR once.
 """
@@ -135,11 +135,11 @@ def selected(provider):
 
 
 def in_library(provider):
-    """Picked groups whose titles also show in the main Movies and TV Shows listings (the rest are Hidden there and
-    live in their collections and section): (movie groups, series groups)."""
-    vod = provider.get("vod") if isinstance(provider.get("vod"), dict) else {}
-    show = vod.get("library") if isinstance(vod.get("library"), dict) else {}
-    return set(show.get("movies") or []), set(show.get("series") or [])
+    """Picked groups whose titles show in the main Movies and TV Shows listings: (movie groups, series groups).
+    Every picked group: Channels DVR's search only finds titles listed there, so hiding them made a large provider
+    unsearchable. An older config's vod.library choice is ignored."""
+    movies, series = selected(provider)
+    return set(movies), set(series)
 
 
 def group_label(provider, group):

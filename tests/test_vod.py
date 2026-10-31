@@ -434,7 +434,8 @@ class LibraryTests(unittest.TestCase):
 
     def test_plan(self):
         pl = vodlib.plan(self.provider, self.vod, self.episodes, "http://coax:7780")
-        self.assertEqual(pl.visible, set())   # by default nothing shows in the main listings
+        self.assertEqual(pl.visible, set(pl.files))   # every title shows in the main listings (search)
+        self.assertEqual(pl.visible_shows, {"coax-p2-s1"})
         self.assertEqual(pl.files, {
             "Movies/.coax/p2/Up (2009)/Up (2009).strm": "http://coax:7780/vod/p2/m/1.mkv\n",
             "Movies/.coax/p2/Heat - Redux (1995)/Heat - Redux (1995).strm": "http://coax:7780/vod/p2/m/3.mp4\n",
@@ -529,10 +530,11 @@ class LibraryTests(unittest.TestCase):
             self.assertFalse([p for m, p, b in calls if "scanner" in p])   # never the slow scanner
             posted = [b for m, p, b in calls if m == "POST" and p == "/dvr/files"]
             self.assertEqual(len(posted), 4)
-            self.assertTrue(all(b.get("VisibilityMode") == "hidden" for b in posted))
+            # every title is listed in Movies and TV Shows, so Channels DVR's search finds it
+            self.assertFalse([b for b in posted if b.get("VisibilityMode") == "hidden"])
             kinds = [b["GroupID"] == "movies" for b in posted]
             self.assertEqual(kinds, sorted(kinds, reverse=True))   # every movie before any episode
-            # the show's first episode creates the group, then coax names it and hides it
+            # the show's first episode creates the group, then coax names it
             order = [(m, p) for m, p, b in calls if (p in ("/dvr/files", "/dvr/groups/coax-p2-s1")
                      or p.startswith("/dvr/groups/coax-p2-s1/")) and m != "GET"]
             first_ep = next(i for i, (m, p) in enumerate(order) if p == "/dvr/files" and
@@ -546,7 +548,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual((heat["Airing"]["Summary"], heat["Airing"]["MovieID"], heat["Airing"]["Genres"]),
                              ("A heist.", "tmdb/6", ["Crime", "Drama"]))
             self.assertEqual(st["todo"]["g:coax-p2-s1"][0], "1396")
-            self.assertIn(("PUT", "/dvr/groups/coax-p2-s1/visibility/hidden", None), calls)
+            self.assertFalse([p for m, p, b in calls if p.endswith("/visibility/hidden")])
             names = [b["Name"] for m, p, b in calls if p == "/dvr/collections/content/new"]
             self.assertEqual(names, ["TPS · Action", "TPS · 4K", "TPS · Drama"])
             items = {}   # each collection's latest items: made at the start, filled as the titles arrive
@@ -562,16 +564,10 @@ class LibraryTests(unittest.TestCase):
             lib.sync("p2")   # nothing new: nothing created or changed
             self.assertFalse([p for m, p, b in calls if m == "POST" and p == "/dvr/files"])
             self.assertFalse([p for m, p, b in calls if "/visibility/" in p])
-            # "Action" and the series group set to show with the library
-            self.provider["vod"]["library"] = {"movies": ["Action"], "series": ["Drama"]}
-            lib.sync("p2")
-            shown = sorted(p for m, p, b in calls if p.endswith("/visibility/main"))
-            self.assertEqual(len(shown), 5)   # two movies, two episodes, the show
-            self.assertIn("/dvr/groups/coax-p2-s1/visibility/main", shown)
-            calls.clear()
+            # an older config's choice to keep groups out of the library is ignored: nothing is hidden
             self.provider["vod"]["library"] = {"movies": [], "series": []}
-            lib.sync("p2")   # and hidden again on command
-            self.assertEqual(len([p for m, p, b in calls if p.endswith("/visibility/hidden")]), 5)
+            lib.sync("p2")
+            self.assertFalse([p for m, p, b in calls if p.endswith("/visibility/hidden")])
             # the series group unpicked: its episodes and show are deleted one by one, never a DVR-wide prune
             calls.clear()
             self.provider["vod"] = {"movies": ["Action", "4K"], "series": []}

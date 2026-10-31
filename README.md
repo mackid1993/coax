@@ -67,8 +67,8 @@ Channel names, providers and logos below are made up for the demo.
 - **Group selection** like Dispatcharr: pick which provider groups to bring in from a searchable checklist.
 - **Connection pools**: several lines (logins) per provider, each with its own max streams. A tune takes the
   first stream of the channel that has a free line, across providers.
-- **Backup streams per channel**, mixed across providers, with automatic failover in the stream engine and
-  suggested matches (same name, call sign, or provider guide ID).
+- **Backup streams per channel**, mixed across providers, with automatic failover in the stream engine (with
+  transcoding on) and suggested matches (same name, call sign, or provider guide ID).
 - **Tuner sharing**: a second viewer of the same channel shares the running stream and uses no extra line.
 - **Smart Standby**: switches to a backup only on real trouble, tries the least troubled backup first, blocks
   streams that keep failing for a while (never deletes them), and moves the stream that proves stable ahead of
@@ -769,6 +769,13 @@ clock time needed to line them up, so a switch to a backup always jumps forward 
 coax therefore stays on the feed you are watching through anything it can ride out, and switches only as a
 last resort.
 
+**Failover needs transcoding.** With transcoding on, coax sends one fixed format whatever the feed, so a switch
+to a backup is seamless. With transcoding off, the provider's stream reaches Channels untouched, and a backup
+often uses a different audio format (AAC on one, Dolby on the other) or frame rate. Players set their decoders
+up when a stream starts, so that change freezes the picture until you retune. With transcoding off, coax
+therefore never switches to a backup on its own: it keeps retrying the stream you tuned. **Switch** on the
+Status page still works, after a warning that the picture may freeze and need a retune.
+
 | Situation | What coax does |
 | --- | --- |
 | Late segments, stalls, stale playlists, provider restarts, refused or timed-out requests | Keeps retrying the same feed. On HLS, video that comes back within about a minute is fetched from the playlist, so you continue where you were. Busy answers (429, 503, 509) back off, honoring `Retry-After` up to 30 seconds. |
@@ -1046,8 +1053,8 @@ The approach, and what Channels DVR needs to treat these airings as real sports 
 ## Video on demand
 
 Most providers also have a large library of movies and series. coax can put the groups you pick into Channels
-DVR's own library: in collections and a section of their own, and if you like under **Movies** and **TV Shows**
-next to your recordings and your own media. They get artwork and descriptions and remember where you stopped.
+DVR's own library: under **Movies** and **TV Shows** next to your recordings and your own media, where Channels
+DVR's search finds them, and in collections and a section of their own. They get artwork and descriptions and remember where you stopped.
 They never appear in the guide.
 
 **Passthrough only.** Video on demand is never transcoded or remuxed, and ffmpeg is not involved at all. coax is
@@ -1096,16 +1103,9 @@ their episode lists. Channels DVR's own folder scanner would take about two seco
 
 **How it looks in Channels DVR.** Every group you pick becomes a Channels DVR collection named after the
 provider and the group (for example *My Provider · 2025 Releases*), and each provider gets its own section with
-a row for each of its collections. You choose per group where its titles show:
-
-- **Out of the way (the default).** The titles are set to *Hidden* in Channels DVR, so they stay out of Movies
-  and TV Shows and your own library, and live in their collection and the provider's section.
-- **In library.** Turn on *In library* for the group (or *All* for every picked group at once) and its titles
-  are also listed in Movies and TV Shows next to your own media.
-
-Switching a group either way changes its titles in Channels DVR right after you press *Save*. A title in several
-picked groups is listed in the library when any of them is set to *In library*. A provider's episodes that land
-inside one of your own shows only hide themselves, never your show.
+a row for each of its collections. The titles are also listed in Movies and TV Shows next to your own media:
+Channels DVR's search only finds titles listed there, and a provider with tens of thousands of titles is
+unusable without search. Titles an earlier coax version set to *Hidden* are shown again on the next sync.
 When the provider adds titles to a picked group, they appear on the provider's refresh schedule (every
 24 hours unless you changed it); titles the provider removes are removed. Untick a group and its titles,
 collection and row go away. Nothing else in Channels DVR is touched: coax only writes inside
