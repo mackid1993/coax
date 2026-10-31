@@ -1,6 +1,6 @@
 // Status: live sessions with sparklines, line usage, refresh results, network, and the log tail. Polls every 3 s.
 import { api } from "../api.js";
-import { $, esc, flag, icon, logo, emptyState, fmtBytes, fmtRate, fmtDuration, fmtAgo, fmtInt, toast, toastError } from "../ui.js";
+import { $, esc, flag, icon, logo, emptyState, fmtBytes, fmtRate, fmtDuration, fmtAgo, fmtInt, toast, toastError, confirmDialog } from "../ui.js";
 import { refreshNetwork, placeName } from "../app.js";
 
 const POLL_MS = 3000;
@@ -185,6 +185,8 @@ function fmtHtml(x) {
 function feedsHtml(x) {
   const f = x.feeds || [];
   if (!f.length) return "";
+  const tc = x.transcode || {};
+  const pt = !tc.on && (!tc.profile || tc.profile === "off") ? " data-pt" : "";   // passthrough: Switch warns first
   const at = (s) => `data-ch="${esc(x.channel_id)}" data-inst="${esc(x.instance || 0)}" data-p="${esc(s.provider)}" data-s="${esc(s.stream_id)}" data-n="${esc(s.name || "Stream " + s.stream_id)}" data-g="${esc(s.group || "")}" data-pn="${esc(s.provider_name)}"`;
   return `<div class="feeds"><div class="stat-label">Streams for this channel</div>${f.map((s, i) => `<div class="feed${s.playing ? " playing" : ""}${s.disabled ? " off" : ""}" ${at(s)}>
     <button type="button" class="drag-handle" data-feed-drag aria-label="Move ${esc(s.name || "stream " + s.stream_id)}, Alt plus arrow keys" title="Drag to change the order">${icon("grip")}</button>
@@ -193,7 +195,7 @@ function feedsHtml(x) {
     ${s.playing ? `<span class="badge badge-ok"><span class="dot pulse"></span>Playing now</span>` : ""}
     ${s.disabled ? `<span class="badge badge-bad" title="Disabled by you: never played or used as a backup">Disabled</span>` : ""}
     ${s.blocked && !s.disabled ? `<button type="button" class="badge badge-blocked" data-unblock ${at(s)} data-pop="Blocked for ${esc(timeLeft(s.blocked_until))}" data-pop-sub="${esc((s.block_why ? `Smart Standby blocked it because ${s.block_why}. ` : "") + "Click to unblock it now.")}" data-pop-always>Blocked · ${esc(timeLeft(s.blocked_until))}</button>` : ""}
-    <button class="btn btn-sm" data-feed-switch ${at(s)} ${s.playing || s.disabled ? "disabled" : ""}>Switch</button>
+    <button class="btn btn-sm" data-feed-switch${pt} ${at(s)} ${s.playing || s.disabled ? "disabled" : ""}>Switch</button>
     <label class="f-off" title="A disabled stream is never played or used as a backup"><input type="checkbox" data-feed-off ${at(s)} ${s.disabled ? "checked" : ""}> Disable</label>
   </div>`).join("")}</div>`;
 }
@@ -268,6 +270,14 @@ async function onFeedClick(e) {
   }
   const b = e.target.closest("[data-feed-switch]");
   if (!b || b.disabled) return;
+  if (b.hasAttribute("data-pt") && !(await confirmDialog({
+    title: "Switch streams with transcoding off?",
+    message: "Transcoding is off, so coax passes the provider's stream through untouched. If the other stream "
+      + "uses a different audio format or frame rate, the picture will freeze in Channels and you will have to "
+      + "retune the channel. With transcoding on, switching is seamless.",
+    confirm: "Switch anyway",
+    danger: true,
+  }))) return;
   b.disabled = true;
   try {
     await api.switchFeed(b.dataset.ch, { instance: Number(b.dataset.inst), provider: b.dataset.p, stream_id: b.dataset.s });

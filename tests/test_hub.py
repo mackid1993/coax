@@ -394,6 +394,23 @@ class BlockedBackupTest(unittest.TestCase):
         s.close()
 
 
+class PassthroughNoFailoverTest(unittest.TestCase):
+    def test_passthrough_engine_gets_only_the_playing_stream(self):
+        # A backup can carry other codecs or another frame rate, which freezes a player that is not transcoded to.
+        cfg = config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b")])], transcode="off")
+        h, _ = make(cfg)
+        s = h.open("uuid-1", "ip", "ua")
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a"])
+        s.close()
+
+    def test_transcoding_engine_gets_every_stream(self):
+        cfg = config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b")])])
+        h, _ = make(cfg)
+        s = h.open("uuid-1", "ip", "ua")
+        self.assertEqual(h.backup_urls(1), ["fake://p1/l1/a", "fake://p1/l1/b"])
+        s.close()
+
+
 class RankedFailoverTest(unittest.TestCase):
     def test_failover_list_in_score_order_playing_first(self):
         cfg = config([provider("p1", 0)], [channel(1, [("p1", "a"), ("p1", "b"), ("p1", "c")])])

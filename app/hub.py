@@ -941,6 +941,12 @@ class Hub:
                                            self._is_bad(sp[1].get("id"), sp[0].get("stream_id"))))
             if any(not self._blocked(channel_id, sp) for sp in cands):
                 cands = [sp for sp in cands if not self._blocked(channel_id, sp)]
+            if not own.encoder and str(cfg.get("transcode") or "off") == "off":
+                # Passthrough: no automatic failover. A backup can carry other codecs or another frame rate,
+                # and a player that set its decoders up for the first stream freezes on it. The engine gets
+                # only the stream playing now; Switch on the Status page still moves it by hand.
+                cands = [sp for sp in cands if (str(sp[1].get("id")), str(sp[0].get("stream_id"))) ==
+                         (str(own.cur_key[0]), str(own.cur_key[1]))]
             # Failover order is by score: the stream that has been least bad comes first. The playing stream
             # stays first in the list so the engine knows where it is; the engine tries the rest in this order.
             if self.health is not None:

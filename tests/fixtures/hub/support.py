@@ -29,9 +29,10 @@ def channel(cid, streams, enabled=True):
             "streams": [{"provider": p, "stream_id": s} for p, s in streams]}
 
 
-def config(providers, channels, behind=0, delay=0):
+def config(providers, channels, behind=0, delay=0, transcode="1080p60"):
+    # Transcoding on by default: automatic failover to backups runs only then (passthrough keeps one stream).
     return {"server": {"new_client_behind_seconds": behind, "channel_shutdown_delay": delay},
-            "providers": providers, "channels": channels}
+            "providers": providers, "channels": channels, "transcode": transcode}
 
 
 class EngineCommand:
