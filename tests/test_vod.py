@@ -530,6 +530,8 @@ class LibraryTests(unittest.TestCase):
             posted = [b for m, p, b in calls if m == "POST" and p == "/dvr/files"]
             self.assertEqual(len(posted), 4)
             self.assertTrue(all(b.get("VisibilityMode") == "hidden" for b in posted))
+            kinds = [b["GroupID"] == "movies" for b in posted]
+            self.assertEqual(kinds, sorted(kinds, reverse=True))   # every movie before any episode
             # the show's first episode creates the group, then coax names it and hides it
             order = [(m, p) for m, p, b in calls if (p in ("/dvr/files", "/dvr/groups/coax-p2-s1")
                      or p.startswith("/dvr/groups/coax-p2-s1/")) and m != "GET"]

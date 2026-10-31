@@ -551,11 +551,13 @@ class Library:
             if lead:   # one movie first: TMDB searches go through a DVR item, and this becomes it
                 rest.remove(lead)
                 make(lead)
+        # Movies first (most of a library, and every one is a title of its own), then the shows, then their episodes.
+        self._pool(CREATE_WORKERS, make, [r for r in rest if pl.meta[r]["kind"] == "movie"])
         self._pool(CREATE_WORKERS, make, first)
         made_groups = [g for g in sorted(new_groups) if any(st["files"].get(r) for r in first
                                                             if pl.meta[r].get("gid") == g)]
         self._pool(CREATE_WORKERS, lambda g: self._new_show(cfg, pid, pl, g), made_groups)
-        self._pool(CREATE_WORKERS, make, rest)
+        self._pool(CREATE_WORKERS, make, [r for r in rest if pl.meta[r]["kind"] != "movie"])
         if failed:
             log.warning("VOD provider %s: %d of %d items not added to Channels DVR (first error: %s); the next sync "
                         "tries again", pid, len(failed), total, failed[0])
@@ -765,6 +767,8 @@ class Library:
             provider = next((p for p in cfg.get("providers") or [] if p.get("id") == pid), None)
             if provider is None or provider.get("enabled", True) is False:
                 continue
+            if self.running.get(pid):
+                continue   # titles are being added: the DVR writes one thing at a time, adding comes first
             st = self._pstate(pid)
             now = time.time()
             retry = st.setdefault("retry", {})
@@ -979,7 +983,7 @@ class Library:
             return
         st.pop("dvr_note", None)
         removed = self._drop_missing(cfg, pid, pl)
-        # Newest first, so what the provider added last is in the library first.
+        # Newest first, so what the provider added last is in the library first (movies before episodes: _create).
         new = [rel for rel in pl.files if rel not in st["files"]]
         new.sort(key=lambda r: -(pl.meta[r].get("added") or 0))
         started = time.monotonic()
