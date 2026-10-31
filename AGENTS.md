@@ -363,14 +363,20 @@ pass record every one of them).
   (numbered if needed), in its own group's collection. `Plan.picked` (paths and show ids created first),
   `present` (`m:<id>`/`s:<id>` -> path or group id), `picked_keys`, `folders` (show id -> episode path prefix).
 - **Order and preemption.** `_publish` creates hand-picks first, then the rest with `preemptible=True`:
-  `request(pid, urgent=True)` (the page's Save) puts the provider in `_urgent`, the running `_create` stops
-  between items and raises `_Preempted`, and `sync` requeues at once (not an error, no `last_sync`). Picked shows
+  `request(pid, urgent=True)` (Save, Add all off, a Providers save) puts the provider in `_urgent`; a running
+  `_create` or episode loop of ANY provider stops between items and raises `_Preempted`, `sync` requeues it (not an
+  error, no `last_sync`), and `run_once` starts over with urgent providers first. Picked shows
   sort first and their episode lists are read before the publish. `_note_present` records `present` (keys in
   Channels DVR) and `where` (pick key -> path or show folder) in vod-state.
-- **Deletions.** `_respect_deletions` (each sync, before planning): a pick whose DVR file reads `Deleted` or 404,
-  or a picked show whose `GET /dvr/groups/<id>/files` are all `Deleted`, leaves `vod.picks` and the state (never
-  re-added; picking it again adds it afresh). Unknown answers keep the pick. Add all titles keep the old rule
-  (the state keeps their id, so coax never re-creates them).
+- **Deletions.** `_respect_deletions` (each sync, before planning, at most `DELETION_CHECKS` 300 picks in turn):
+  a pick whose DVR file reads `Deleted` or 404, or a picked show whose `GET /dvr/groups/<id>` reads `Deleted` or
+  404 (never judged by its episodes: deleting each episode after watching keeps the show), leaves `vod.picks` and
+  the state (never re-added; picking it again adds it afresh). Unknown answers keep the pick, and when most picks
+  checked are gone at once (3 or more, over half) nothing is dropped: that is another DVR, not deletions. Add all
+  titles keep the old rule (the state keeps their id, so coax never re-creates them).
+- **Places.** `plan(keep=where)`: picks already in Channels DVR keep their path or show folder and are placed
+  first, so picking another copy never moves the one that is there. Copy names trim the title to 120 bytes so the
+  group and a number always fit.
 - **Library.** `Library.sync` writes one `.strm` per title under `/imports/Movies/.coax/<pid>/` and
   `/imports/TV/.coax/<pid>/<Show>/Season NN/` holding `<base_url>/vod/<pid>/<m|e>/<id>.<ext>` (never the
   provider's URL). The dot matters: Channels DVR's scanner skips any folder starting with `.` (`shouldSkipDir`),
